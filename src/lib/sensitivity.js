@@ -26,7 +26,8 @@ export const METRICS = {
   equityMultiple:  { label: 'Equity multiple',format: 'x',   get: (m) => m.returns.equityMultiple },
   yieldOnCost:     { label: 'Yield on cost',  format: 'pct', get: (m) => m.operating.yieldOnCost },
   developmentSpreadBps: { label: 'Dev spread', format: 'bps', get: (m) => m.operating.developmentSpreadBps },
-  minDSCR:         { label: 'Minimum DSCR',   format: 'x',   get: (m) => m.operating.minDSCR },
+  minDSCR:         { label: 'Min DSCR (incl. lease-up)', format: 'x', get: (m) => m.operating.minDSCR },
+  minStabilizedDSCR: { label: 'Min DSCR (stabilized)',   format: 'x', get: (m) => m.operating.minStabilizedDSCR },
   profit:          { label: 'Profit',         format: '$',   get: (m) => m.returns.profit },
 };
 

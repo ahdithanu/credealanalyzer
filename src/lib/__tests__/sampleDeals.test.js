@@ -1,11 +1,23 @@
-import { SAMPLE_DEALS } from '../sampleDeals';
+import { SAMPLE_DEALS, DEAL_STAGES } from '../sampleDeals';
+import { findMarket } from '../markets';
 import { runModel, calculateMetrics } from '../finance';
 
 describe('sample deals', () => {
   it('all have unique ids and a resolvable market', () => {
     const ids = SAMPLE_DEALS.map((d) => d.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const d of SAMPLE_DEALS) expect(d.location).toMatch(/, (TX|FL)$/);
+    for (const d of SAMPLE_DEALS) {
+      expect(d.location).toMatch(/, (TX|FL)$/);
+      expect(findMarket(d.location)).not.toBeNull();
+    }
+  });
+
+  it('all carry the pipeline fields the ledger renders', () => {
+    for (const d of SAMPLE_DEALS) {
+      expect(DEAL_STAGES).toContain(d.stage);
+      expect(typeof d.owner).toBe('string');
+      expect(typeof d.program).toBe('string');
+    }
   });
 
   it.each(SAMPLE_DEALS.map((d) => [d.name, d]))(

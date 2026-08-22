@@ -16,6 +16,8 @@ export const propertyTypes = {
     avgOpEx: 35,
     avgCapRate: 7.5,
     constructionCostPSF: { groundUp: 250, ti: 75, acquisition: 60 },
+    // Owner-operated; no tenant to reimburse.
+    expenseRecoveryRate: 0,
     leaseUpMonths: 9,          // membership ramp
     capexReservePerSF: 0.35,
   },
@@ -27,6 +29,8 @@ export const propertyTypes = {
     avgOpEx: 45,
     avgCapRate: 5.5,
     constructionCostPSF: { groundUp: 180, ti: 45, acquisition: 35 },
+    // Gross leases; the landlord carries taxes and operating cost.
+    expenseRecoveryRate: 0,
     leaseUpMonths: 15,
     capexReservePerSF: 0.30,
     capexReservePerUnit: 300,
@@ -39,6 +43,8 @@ export const propertyTypes = {
     avgOpEx: 40,
     avgCapRate: 6.5,
     constructionCostPSF: { groundUp: 200, ti: 85, acquisition: 55 },
+    // Base-year stops recover roughly half of expense growth in practice.
+    expenseRecoveryRate: 0.55,
     leaseUpMonths: 24,
     capexReservePerSF: 0.25,
   },
@@ -50,6 +56,8 @@ export const propertyTypes = {
     avgOpEx: 38,
     avgCapRate: 7.0,
     constructionCostPSF: { groundUp: 175, ti: 65, acquisition: 45 },
+    // NNN: tenants reimburse CAM, insurance and taxes pro rata.
+    expenseRecoveryRate: 0.90,
     leaseUpMonths: 12,
     capexReservePerSF: 0.20,
   },
@@ -61,6 +69,8 @@ export const propertyTypes = {
     avgOpEx: 25,
     avgCapRate: 7.5,
     constructionCostPSF: { groundUp: 120, ti: 35, acquisition: 25 },
+    // NNN: near-full reimbursement is the market standard.
+    expenseRecoveryRate: 0.95,
     leaseUpMonths: 9,
     capexReservePerSF: 0.15,
   },

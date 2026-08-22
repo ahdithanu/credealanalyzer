@@ -18,7 +18,7 @@
  * weights are a documented prior, labelled as such.
  */
 
-import { markets as defaultMarkets, distanceMiles } from './markets';
+import { markets as defaultMarkets } from './markets';
 
 /**
  * Feature definitions.

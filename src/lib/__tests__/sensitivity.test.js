@@ -198,3 +198,23 @@ describe('scenarios', () => {
     expect(DEFAULT_SCENARIOS.map((s) => s.key)).toEqual(['downside', 'base', 'upside']);
   });
 });
+
+describe('DSCR metric consistency', () => {
+  it('exposes stabilized DSCR as its own metric, distinct from lease-up-inclusive', () => {
+    expect(METRICS.minStabilizedDSCR).toBeDefined();
+    const m = runModel(base);
+    expect(METRICS.minStabilizedDSCR.get(m)).toBe(m.operating.minStabilizedDSCR);
+    expect(METRICS.minDSCR.get(m)).toBe(m.operating.minDSCR);
+    // These differ materially: coverage during lease-up is far below the
+    // stabilized figure a covenant is tested against.
+    expect(m.operating.minDSCR).toBeLessThan(m.operating.minStabilizedDSCR);
+  });
+
+  it('solves the rate that pushes stabilized DSCR to its covenant', () => {
+    const solved = breakeven(base, { variable: 'interestRate', metric: 'minStabilizedDSCR', target: 1.25 });
+    expect(solved).not.toBeNull();
+    // Raising the rate must be what breaches the covenant, not lowering it.
+    expect(solved).toBeGreaterThan(base.interestRate);
+    expect(runModel({ ...base, interestRate: solved }).operating.minStabilizedDSCR).toBeCloseTo(1.25, 4);
+  });
+});

@@ -328,3 +328,71 @@ describe('markets', () => {
     expect(d).toBeLessThan(235);
   });
 });
+
+describe('expense recovery (NNN leases)', () => {
+  const industrial = {
+    propertyType: 'industrial', constructionType: 'groundUp', location: 'Houston, TX',
+    purchasePrice: 8_000_000, constructionCost: 61_000_000, buildingSize: 642_000,
+    grossRevenue: 6_740_000, vacancyRate: 5, operatingExpenseRatio: 25,
+    downPayment: 35, interestRate: 6.6, loanTerm: 25, exitCapRate: 6.9, holdPeriod: 7,
+  };
+
+  it('reimburses operating cost and tax under an NNN property type', () => {
+    const r = runModel(industrial);
+    const m = r.months[r.timeline.constructionMonths + 24];
+    expect(m.recoveries).toBeGreaterThan(0);
+    expect(m.recoveries).toBeCloseTo((m.opex + m.tax) * 0.95 * m.occ, 6);
+  });
+
+  it('recovers nothing for gross-lease property types', () => {
+    const mf = runModel({ ...industrial, propertyType: 'multifamily', units: 300 });
+    const m = mf.months[mf.timeline.constructionMonths + 24];
+    expect(m.recoveries).toBe(0);
+  });
+
+  it('scales recoveries with occupancy during lease-up', () => {
+    const r = runModel(industrial);
+    const ops = r.months.slice(r.timeline.constructionMonths);
+    const early = ops[0];
+    const stable = ops.find((x) => x.phase === 'stabilized');
+    expect(early.recoveries / (early.opex + early.tax))
+      .toBeLessThan(stable.recoveries / (stable.opex + stable.tax));
+  });
+
+  it('makes a Texas NNN deal financeable where a gross model would not', () => {
+    const withRecovery = runModel(industrial);
+    const without = runModel({ ...industrial, expenseRecoveryRate: 0 });
+    expect(withRecovery.operating.yieldOnCost).toBeGreaterThan(without.operating.yieldOnCost);
+    expect(without.operating.yieldOnCost).toBeLessThan(0.05);
+    expect(withRecovery.operating.yieldOnCost).toBeGreaterThan(0.06);
+  });
+
+  it('honours an explicit per-deal override of the type default', () => {
+    const half = runModel({ ...industrial, expenseRecoveryRate: 0.5 });
+    expect(half.assumptions.expenseRecoveryRate).toBe(0.5);
+  });
+});
+
+describe('annual roll-up', () => {
+  const r = runModel(groundUpDeal);
+
+  it('carries every line the cash flow statement renders', () => {
+    for (const key of ['gpr', 'egi', 'recoveries', 'opex', 'tax', 'reserve', 'noi', 'debtService', 'cashFlow']) {
+      expect(r.annual[0]).toHaveProperty(key);
+      expect(Number.isFinite(r.annual[0][key])).toBe(true);
+    }
+  });
+
+  it('marks a stub final period rather than letting it read as a collapse', () => {
+    // 18 construction + 60 operating months = 78 = six and a half years.
+    const last = r.annual[r.annual.length - 1];
+    expect(last.partial).toBe(true);
+    expect(last.months).toBe(6);
+    expect(r.annual.slice(0, -1).every((y) => y.partial === false)).toBe(true);
+  });
+
+  it('reconciles annual NOI to the sum of its months', () => {
+    const monthly = r.months.slice(12, 24).reduce((s, m) => s + m.noi, 0);
+    expect(r.annual[1].noi).toBeCloseTo(monthly, 6);
+  });
+});

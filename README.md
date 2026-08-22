@@ -152,10 +152,39 @@ Domain logic lives in `src/lib` and is unit-tested independently of the UI:
 | `markets.js` | Market records, tax rate resolution, great-circle distance |
 | `marketScore.js` | Explainable market scorecard + ridge-regression weight fitting |
 | `siteSelection.js` | Nearby-market discovery and expansion candidates |
+| `validation.js` | Covenant and sanity rules, each naming the field it indicts |
+| `sensitivity.js` | Two-variable grids, tornado, scenarios, breakeven solver |
+| `firmDefaults.js` | Firm-level assumption defaults and override detection |
 | `storage.js` | Versioned persistence with schema migration |
 | `sampleDeals.js` | First-run sample portfolio |
+| `format.js` | Display formatting; renders unknowns as `n/a`, never `0` |
+| `exportCsv.js` | CSV export with honest column names |
 
-Run the suite with `CI=true npm test` (106 tests).
+The interface lives in `src/screens` (Pipeline, Deal Model, Cash Flow, Sensitivity,
+Market Intelligence) over shared primitives in `src/ui`.
+
+Run the suite with `CI=true npm test` (157 tests).
+
+## 🖥 Interface
+
+Dark, data-dense, institutional — built to the Nocturne design system from the
+wireframe set. Five screens over a fixed icon rail:
+
+- **Pipeline** — ranked ledger with a portfolio line, saved views, and an inline
+  cash-flow sparkline per deal. Landing screen for VP / IC.
+- **Deal Model** — assumption band across the top, live metric strip, sources & uses,
+  capital stack, draw curve, and validation that attaches each warning to the
+  offending input. Landing screen for analysts. Form and grid postures.
+- **Cash Flow** — frozen line-item column, annual/monthly toggle, construction period
+  sunk, stabilization marked by an accent rule, stub periods labelled.
+- **Sensitivity** — scenario columns, two-variable grid, tornado, breakeven readouts.
+- **Market Intelligence** — ranked markets with a score decomposition drawer.
+
+Role determines the landing screen; the switcher in the header changes it.
+
+Two conventions are enforced throughout: every figure uses **tabular numerals** so
+columns align, and an unknown renders as `n/a` rather than `0` — a zero and a
+missing value are different claims.
 
 ## 🧭 Market Intelligence
 
@@ -185,6 +214,10 @@ Sample deals are illustrative and internally consistent, not sourced comps.
 
 - Single-user and browser-local. No authentication, tenancy, roles, or audit trail.
 - Construction draws are straight-line rather than S-curve.
+- The Market Intelligence map is a plain equirectangular projection, not a real map layer.
+- Firm defaults are a static baseline; the shipped product versions them server-side
+  with an approval trail.
+- No IC memo export, assumptions library, or audit log yet — wireframed, not built.
 - No rent roll, lease-level modelling, or tenant rollover.
 - No waterfall or promote structure for JV equity.
 - Market data is seed data (see above).

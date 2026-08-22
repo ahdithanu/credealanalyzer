@@ -143,6 +143,7 @@ export function runModel(deal = {}, overrides = {}) {
   // stabilises; amortising from completion charges principal against a
   // building that is still leasing up.
   const interestOnlyMonths = a.interestOnlyMonths ?? leaseUpMonths;
+  const expenseRecoveryRate = deal.expenseRecoveryRate ?? typeCfg.expenseRecoveryRate ?? 0;
   const capexReserveAnnual =
     typeCfg.revenueBasis === 'unit' && units > 0
       ? (typeCfg.capexReservePerUnit ?? 300) * units
@@ -263,7 +264,14 @@ export function runModel(deal = {}, overrides = {}) {
     const tax = (assessed * (propertyTaxRate / 100)) / 12;
     const reserve = (capexReserveAnnual / 12) * Math.pow(1 + a.expenseGrowth, yr);
 
-    return { gpr, occ, egi, opex, tax, reserve, noi: egi - opex - tax - reserve };
+    // Expense reimbursements. Under NNN and NN leases the tenant repays
+    // operating cost and property tax pro rata to occupied space — without
+    // this an industrial or retail deal in Texas, where tax runs 2.3-2.8% of
+    // basis, cannot be modelled at all. Recoveries scale with occupancy:
+    // vacant space has nobody to bill, and the landlord eats its share.
+    const recoveries = (opex + tax) * expenseRecoveryRate * occ;
+
+    return { gpr, occ, egi, recoveries, opex, tax, reserve, noi: egi + recoveries - opex - tax - reserve };
   };
 
   let balance = permanentLoanBalance;
@@ -362,7 +370,7 @@ export function runModel(deal = {}, overrides = {}) {
   return {
     months,
     annual: rollUpAnnual(months),
-    assumptions: { ...a, leaseUpMonths, propertyTaxRate, capexReserveAnnual },
+    assumptions: { ...a, leaseUpMonths, interestOnlyMonths, propertyTaxRate, capexReserveAnnual, expenseRecoveryRate },
     budget: {
       land, hardCost, softCost, ffe, contingency, contingencyRate, financingCosts,
       baseProjectCost, capitalizedInterest, totalProjectCost,
@@ -397,7 +405,11 @@ function rollUpAnnual(months) {
     const sum = (k) => slice.reduce((s, m) => s + (m[k] || 0), 0);
     years.push({
       year: Math.floor(i / 12) + 1,
+      months: slice.length,
+      partial: slice.length < 12,
+      gpr: sum('gpr'),
       egi: sum('egi'),
+      recoveries: sum('recoveries'),
       opex: sum('opex'),
       tax: sum('tax'),
       reserve: sum('reserve'),
