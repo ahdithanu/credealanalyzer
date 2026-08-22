@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calculator, BarChart3, Download, Settings, TrendingUp, DollarSign, Percent, Calendar, Building, Eye, Trash2, Copy, FileText, Target, PieChart, Activity, Car, Home, Store, Users, Hammer, Wrench } from 'lucide-react';
+import { Plus, Calculator, Download, TrendingUp, DollarSign, Building, Eye, Trash2, Copy, Activity, AlertTriangle, Car, Home, Store, Users, Hammer, Wrench } from 'lucide-react';
+import {
+  propertyTypes as basePropertyTypes,
+  constructionTypes as baseConstructionTypes,
+  suggestGrossRevenue,
+  suggestConstructionCost,
+} from './lib/propertyTypes';
+import { calculateMetrics } from './lib/finance';
+import { getPropertyTaxRate } from './lib/markets';
+import { loadDeals, saveDeals, isPersistenceAvailable } from './lib/storage';
+import { SAMPLE_DEALS } from './lib/sampleDeals';
 
 const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-US', {
@@ -14,218 +24,30 @@ const formatPercent = (value) => {
   return `${(value || 0).toFixed(2)}%`;
 };
 
-const formatNumber = (num) => {
-  return new Intl.NumberFormat('en-US').format(num || 0);
+// Domain configuration, the underwriting engine, market data and persistence all
+// live in src/lib and are unit-tested there. This file is presentation only.
+const propertyTypeIcons = {
+  carwash: Car,
+  multifamily: Home,
+  office: Building,
+  retail: Store,
+  industrial: Users,
 };
 
-const propertyTaxRates = {
-  'houston, tx': 2.81,
-  'houston': 2.81,
-  'dallas, tx': 2.42,
-  'dallas': 2.42,
-  'austin, tx': 2.23,
-  'austin': 2.23,
-  'san antonio, tx': 2.34,
-  'san antonio': 2.34,
-  'fort worth, tx': 2.38,
-  'fort worth': 2.38,
-  'plano, tx': 2.15,
-  'plano': 2.15,
-  'arlington, tx': 2.33,
-  'arlington': 2.33,
-  'corpus christi, tx': 2.45,
-  'corpus christi': 2.45,
-  'lubbock, tx': 2.28,
-  'lubbock': 2.28,
-  'irving, tx': 2.41,
-  'irving': 2.41,
-  'miami, fl': 1.02,
-  'miami': 1.02,
-  'orlando, fl': 1.18,
-  'orlando': 1.18,
-  'tampa, fl': 1.23,
-  'tampa': 1.23,
-  'jacksonville, fl': 1.15,
-  'jacksonville': 1.15,
-  'fort lauderdale, fl': 1.04,
-  'fort lauderdale': 1.04,
-  'tallahassee, fl': 0.89,
-  'tallahassee': 0.89,
-  'gainesville, fl': 1.31,
-  'gainesville': 1.31,
-  'pensacola, fl': 0.95,
-  'pensacola': 0.95,
-  'clearwater, fl': 1.08,
-  'clearwater': 1.08,
-  'west palm beach, fl': 1.12,
-  'west palm beach': 1.12,
-  'texas': 2.35,
-  'tx': 2.35,
-  'florida': 1.08,
-  'fl': 1.08
+const constructionTypeIcons = {
+  groundUp: Hammer,
+  ti: Wrench,
+  acquisition: Building,
 };
 
-const getPropertyTaxRate = (location) => {
-  if (!location) return 1.5;
-  const locationLower = location.toLowerCase().trim();
-  if (propertyTaxRates[locationLower]) {
-    return propertyTaxRates[locationLower];
-  }
-  for (const city in propertyTaxRates) {
-    if (locationLower.includes(city)) {
-      return propertyTaxRates[city];
-    }
-  }
-  return 1.5;
-};
+const propertyTypes = Object.fromEntries(
+  Object.entries(basePropertyTypes).map(([k, v]) => [k, { ...v, icon: propertyTypeIcons[k] }])
+);
 
-const propertyTypes = {
-  carwash: {
-    name: 'Car Wash',
-    icon: Car,
-    color: '#8b5cf6',
-    avgRevenue: 150000,
-    avgOpEx: 35,
-    avgCapRate: 7.5,
-    constructionCostPSF: { groundUp: 250, ti: 75 }
-  },
-  multifamily: {
-    name: 'Multifamily',
-    icon: Home,
-    color: '#059669',
-    avgRevenue: 12000,
-    avgOpEx: 45,
-    avgCapRate: 5.5,
-    constructionCostPSF: { groundUp: 180, ti: 45 }
-  },
-  office: {
-    name: 'Office',
-    icon: Building,
-    color: '#3b82f6',
-    avgRevenue: 28,
-    avgOpEx: 40,
-    avgCapRate: 6.5,
-    constructionCostPSF: { groundUp: 200, ti: 85 }
-  },
-  retail: {
-    name: 'Retail',
-    icon: Store,
-    color: '#dc2626',
-    avgRevenue: 22,
-    avgOpEx: 38,
-    avgCapRate: 7.0,
-    constructionCostPSF: { groundUp: 175, ti: 65 }
-  },
-  industrial: {
-    name: 'Industrial',
-    icon: Users,
-    color: '#ea580c',
-    avgRevenue: 8,
-    avgOpEx: 25,
-    avgCapRate: 7.5,
-    constructionCostPSF: { groundUp: 120, ti: 35 }
-  }
-};
+const constructionTypes = Object.fromEntries(
+  Object.entries(baseConstructionTypes).map(([k, v]) => [k, { ...v, icon: constructionTypeIcons[k] }])
+);
 
-const constructionTypes = {
-  groundUp: {
-    name: 'Ground-Up Development',
-    icon: Hammer,
-    timeframe: 18,
-    riskMultiplier: 1.4,
-    contingency: 0.15
-  },
-  ti: {
-    name: 'Tenant Improvement',
-    icon: Wrench,
-    timeframe: 6,
-    riskMultiplier: 1.1,
-    contingency: 0.08
-  },
-  acquisition: {
-    name: 'Acquisition/Renovation',
-    icon: Building,
-    timeframe: 12,
-    riskMultiplier: 1.2,
-    contingency: 0.10
-  }
-};
-
-const calculateMetrics = (deal) => {
-  const {
-    propertyType,
-    constructionType,
-    purchasePrice = 0,
-    constructionCost = 0,
-    buildingSize = 0,
-    units = 0,
-    downPayment = 25,
-    interestRate = 6.5,
-    loanTerm = 25,
-    grossRevenue = 0,
-    vacancyRate = 5,
-    operatingExpenseRatio = 35,
-    exitCapRate = 6.5,
-    holdPeriod = 5,
-    location = ''
-  } = deal;
-
-  const totalProjectCost = purchasePrice + constructionCost;
-  const propertyTaxRate = getPropertyTaxRate(location);
-  const assessedValue = totalProjectCost;
-  const annualPropertyTax = assessedValue * (propertyTaxRate / 100);
-  const loanAmount = totalProjectCost * (1 - downPayment / 100);
-  const downPaymentAmount = totalProjectCost * (downPayment / 100);
-  const monthlyRate = interestRate / 100 / 12;
-  const totalPayments = loanTerm * 12;
-  
-  const monthlyPayment = loanAmount > 0 && monthlyRate > 0 ? 
-    loanAmount * (monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / 
-    (Math.pow(1 + monthlyRate, totalPayments) - 1) : 0;
-  
-  const annualDebtService = monthlyPayment * 12;
-  const effectiveGrossRevenue = grossRevenue * (1 - vacancyRate / 100);
-  const baseOperatingExpenses = effectiveGrossRevenue * (operatingExpenseRatio / 100);
-  const totalOperatingExpenses = baseOperatingExpenses + annualPropertyTax;
-  const noi = effectiveGrossRevenue - totalOperatingExpenses;
-  const cashFlow = noi - annualDebtService;
-  const cashOnCash = downPaymentAmount > 0 ? (cashFlow / downPaymentAmount) * 100 : 0;
-  const capRate = totalProjectCost > 0 ? (noi / totalProjectCost) * 100 : 0;
-  const dscr = annualDebtService > 0 ? noi / annualDebtService : 0;
-  const exitValue = exitCapRate > 0 ? noi / (exitCapRate / 100) : totalProjectCost;
-  const totalCashFlow = cashFlow * holdPeriod;
-  const totalReturn = exitValue - totalProjectCost + totalCashFlow;
-  const totalEquity = downPaymentAmount;
-  const totalROI = totalEquity > 0 ? (totalReturn / totalEquity) * 100 : 0;
-  const annualizedReturn = holdPeriod > 0 ? (Math.pow(1 + totalROI / 100, 1 / holdPeriod) - 1) * 100 : 0;
-  const constructionTimeframe = constructionTypes[constructionType]?.timeframe || 12;
-  const riskScore = (constructionTypes[constructionType]?.riskMultiplier || 1) * 
-    (propertyType === 'carwash' ? 1.2 : propertyType === 'multifamily' ? 0.9 : 1.0);
-  
-  return {
-    totalProjectCost,
-    downPaymentAmount,
-    loanAmount,
-    monthlyPayment,
-    annualDebtService,
-    effectiveGrossRevenue,
-    baseOperatingExpenses,
-    annualPropertyTax,
-    totalOperatingExpenses,
-    propertyTaxRate,
-    noi,
-    cashFlow,
-    cashOnCash,
-    capRate,
-    dscr,
-    exitValue,
-    totalReturn,
-    totalROI,
-    annualizedReturn,
-    constructionTimeframe,
-    riskScore
-  };
-};
 
 const DealInput = ({ deal, onSave, onCancel }) => {
   const [formData, setFormData] = useState({
@@ -258,21 +80,9 @@ const DealInput = ({ deal, onSave, onCancel }) => {
     onSave({ ...formData, metrics, id: deal?.id || Date.now() });
   };
 
-  const getPlaceholderRevenue = () => {
-    const type = propertyTypes[formData.propertyType];
-    if (formData.propertyType === 'multifamily') {
-      return type.avgRevenue * (formData.units || 50);
-    } else {
-      return type.avgRevenue * (formData.buildingSize || 5000) / 
-        (formData.propertyType === 'carwash' ? 1 : formData.buildingSize || 5000);
-    }
-  };
+  const getPlaceholderRevenue = () => suggestGrossRevenue(formData);
 
-  const getPlaceholderConstructionCost = () => {
-    const type = propertyTypes[formData.propertyType];
-    const costPSF = type.constructionCostPSF[formData.constructionType] || 150;
-    return costPSF * (formData.buildingSize || 5000);
-  };
+  const getPlaceholderConstructionCost = () => suggestConstructionCost(formData);
 
   const inputStyle = {
     width: '100%',
@@ -424,7 +234,7 @@ const DealInput = ({ deal, onSave, onCancel }) => {
             />
           </div>
           <div>
-            <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500' }}>Operating Expense Ratio (%)</label>
+            <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500' }}>Operating Expense Ratio (%, excl. property tax)</label>
             <input
               type="number"
               step="0.1"
@@ -536,11 +346,18 @@ const DealComparison = ({ deals, selectedDeals, onSelectionChange }) => {
     marginBottom: '20px'
   };
 
-  const getRiskColor = (riskScore) => {
-    if (riskScore <= 1.0) return '#059669';
-    if (riskScore <= 1.3) return '#d97706';
+  // Minimum DSCR across any rolling operating year, banded against a typical
+  // 1.25x lender covenant. This replaces the previous "risk score", which was
+  // an undocumented multiplier with no stated methodology.
+  const getDSCRColor = (dscr) => {
+    if (dscr === null || dscr === undefined) return '#6b7280';
+    if (dscr >= 1.35) return '#059669';
+    if (dscr >= 1.25) return '#d97706';
     return '#dc2626';
   };
+
+  const formatDSCR = (dscr) =>
+    dscr === null || dscr === undefined || !Number.isFinite(dscr) ? 'n/a' : `${dscr.toFixed(2)}x`;
 
   const getROIColor = (roi) => {
     if (roi >= 20) return '#059669';
@@ -580,9 +397,9 @@ const DealComparison = ({ deals, selectedDeals, onSelectionChange }) => {
           >
             <option value="totalROI">Total ROI</option>
             <option value="cashOnCash">Cash on Cash</option>
-            <option value="capRate">Cap Rate</option>
+            <option value="capRate">Yield on Cost</option>
             <option value="dscr">DSCR</option>
-            <option value="annualizedReturn">IRR</option>
+            <option value="annualizedReturn">Levered IRR</option>
           </select>
         </div>
       </div>
@@ -603,11 +420,11 @@ const DealComparison = ({ deals, selectedDeals, onSelectionChange }) => {
                 <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>NOI</th>
                 <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Property Tax</th>
                 <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Cash Flow</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Cap Rate</th>
+                <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Yield on Cost</th>
                 <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Cash on Cash</th>
                 <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Total ROI</th>
-                <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>IRR</th>
-                <th style={{ padding: '12px', textAlign: 'center', fontWeight: '600' }}>Risk</th>
+                <th style={{ padding: '12px', textAlign: 'right', fontWeight: '600' }}>Levered IRR</th>
+                <th style={{ padding: '12px', textAlign: 'center', fontWeight: '600' }}>Min DSCR</th>
                 <th style={{ padding: '12px', textAlign: 'center', fontWeight: '600' }}>Timeline</th>
               </tr>
             </thead>
@@ -686,10 +503,10 @@ const DealComparison = ({ deals, selectedDeals, onSelectionChange }) => {
                         borderRadius: '12px',
                         fontSize: '11px',
                         fontWeight: '600',
-                        backgroundColor: `${getRiskColor(deal.metrics.riskScore)}20`,
-                        color: getRiskColor(deal.metrics.riskScore)
+                        backgroundColor: `${getDSCRColor(deal.metrics.minDSCR)}20`,
+                        color: getDSCRColor(deal.metrics.minDSCR)
                       }}>
-                        {deal.metrics.riskScore.toFixed(1)}x
+                        {formatDSCR(deal.metrics.minDSCR)}
                       </span>
                     </td>
                     <td style={{ padding: '12px', textAlign: 'center', fontSize: '12px' }}>
@@ -706,108 +523,46 @@ const DealComparison = ({ deals, selectedDeals, onSelectionChange }) => {
   );
 };
 
+const round = (n, dp = 0) =>
+  n === null || n === undefined || !Number.isFinite(n) ? null : Number(n.toFixed(dp));
+
+const withMetrics = (deals) =>
+  (deals || []).map((deal) => ({ ...deal, metrics: calculateMetrics(deal) }));
+
 export default function CREDealAnalyzer() {
   const [deals, setDeals] = useState([]);
   const [selectedDeals, setSelectedDeals] = useState([]);
   const [currentView, setCurrentView] = useState('dashboard');
   const [editingDeal, setEditingDeal] = useState(null);
+  const [hydrated, setHydrated] = useState(false);
 
+  const [storageState, setStorageState] = useState({ available: true, error: null });
+
+  // Load persisted deals once. A stored empty array means the user deleted
+  // everything and must not be re-seeded; only a total absence of saved state
+  // seeds the samples.
   useEffect(() => {
-    const sampleDeals = [
-      {
-        id: 1,
-        name: "Houston Express Car Wash",
-        propertyType: "carwash",
-        constructionType: "groundUp",
-        location: "Houston, TX",
-        purchasePrice: 500000,
-        constructionCost: 1200000,
-        buildingSize: 4800,
-        grossRevenue: 580000,
-        vacancyRate: 3,
-        operatingExpenseRatio: 32,
-        downPayment: 30,
-        interestRate: 6.8,
-        exitCapRate: 7.2
-      },
-      {
-        id: 2,
-        name: "Austin Multifamily Development",
-        propertyType: "multifamily",
-        constructionType: "groundUp",
-        location: "Austin, TX",
-        purchasePrice: 2500000,
-        constructionCost: 8500000,
-        buildingSize: 72000,
-        units: 80,
-        grossRevenue: 1920000,
-        vacancyRate: 5,
-        operatingExpenseRatio: 45,
-        downPayment: 25,
-        interestRate: 6.2,
-        exitCapRate: 5.8
-      },
-      {
-        id: 3,
-        name: "Dallas Office TI Project",
-        propertyType: "office",
-        constructionType: "ti",
-        location: "Dallas, TX",
-        purchasePrice: 3200000,
-        constructionCost: 850000,
-        buildingSize: 25000,
-        grossRevenue: 750000,
-        vacancyRate: 8,
-        operatingExpenseRatio: 40,
-        downPayment: 20,
-        interestRate: 5.9,
-        exitCapRate: 6.5
-      },
-      {
-        id: 4,
-        name: "Miami Beach Car Wash",
-        propertyType: "carwash",
-        constructionType: "groundUp",
-        location: "Miami, FL",
-        purchasePrice: 800000,
-        constructionCost: 1400000,
-        buildingSize: 5200,
-        grossRevenue: 720000,
-        vacancyRate: 2,
-        operatingExpenseRatio: 30,
-        downPayment: 35,
-        interestRate: 6.5,
-        exitCapRate: 6.8
-      },
-      {
-        id: 5,
-        name: "Tampa Retail Center TI",
-        propertyType: "retail",
-        constructionType: "ti",
-        location: "Tampa, FL",
-        purchasePrice: 2800000,
-        constructionCost: 650000,
-        buildingSize: 18000,
-        grossRevenue: 540000,
-        vacancyRate: 6,
-        operatingExpenseRatio: 38,
-        downPayment: 25,
-        interestRate: 6.1,
-        exitCapRate: 7.0
-      }
-    ].map(deal => ({
-      ...deal,
-      metrics: calculateMetrics(deal)
-    }));
-
-    setDeals(sampleDeals);
+    const { deals: saved, error } = loadDeals();
+    setStorageState({ available: isPersistenceAvailable(), error });
+    setDeals(withMetrics(saved === null ? SAMPLE_DEALS : saved));
+    setHydrated(true);
   }, []);
 
+  // Persist on every change, but only after hydration, so the initial empty
+  // state can never overwrite saved deals.
+  useEffect(() => {
+    if (!hydrated) return;
+    const { ok, error } = saveDeals(deals);
+    if (!ok) setStorageState((s) => ({ ...s, error }));
+  }, [deals, hydrated]);
+
+
   const handleSaveDeal = (dealData) => {
+    const withFresh = { ...dealData, metrics: calculateMetrics(dealData) };
     if (dealData.id && deals.find(d => d.id === dealData.id)) {
-      setDeals(deals.map(d => d.id === dealData.id ? dealData : d));
+      setDeals(deals.map(d => d.id === dealData.id ? withFresh : d));
     } else {
-      setDeals([...deals, { ...dealData, id: Date.now() }]);
+      setDeals([...deals, { ...withFresh, id: Date.now() }]);
     }
     setCurrentView('dashboard');
     setEditingDeal(null);
@@ -819,42 +574,49 @@ export default function CREDealAnalyzer() {
   };
 
   const handleDuplicateDeal = (deal) => {
-    const newDeal = {
-      ...deal,
-      id: Date.now(),
-      name: `${deal.name} (Copy)`
-    };
-    setDeals([...deals, newDeal]);
+    const copy = { ...deal, id: Date.now(), name: `${deal.name} (Copy)` };
+    setDeals([...deals, { ...copy, metrics: calculateMetrics(copy) }]);
   };
 
   const exportToCSV = () => {
-    const headers = [
-      'Deal Name', 'Property Type', 'Construction Type', 'Location',
-      'Total Project Cost', 'NOI', 'Cash Flow', 'Cap Rate', 'Cash on Cash',
-      'Total ROI', 'IRR', 'Risk Score', 'Construction Timeline'
+    // Column names state the metric actually computed. The previous export
+    // labelled a CAGR-on-total-return figure as "IRR".
+    const columns = [
+      ['Deal Name',              d => d.name],
+      ['Property Type',          d => propertyTypes[d.propertyType]?.name ?? d.propertyType],
+      ['Construction Type',      d => constructionTypes[d.constructionType]?.name ?? d.constructionType],
+      ['Location',               d => d.location],
+      ['Total Project Cost ($)', d => round(d.metrics.totalProjectCost)],
+      ['Capitalized Interest ($)', d => round(d.metrics.capitalizedInterest)],
+      ['Equity ($)',             d => round(d.metrics.downPaymentAmount)],
+      ['Peak Equity ($)',        d => round(d.metrics.peakEquity)],
+      ['Stabilized NOI ($)',     d => round(d.metrics.noi)],
+      ['Yield on Cost (%)',      d => round(d.metrics.yieldOnCost, 2)],
+      ['Exit Cap Rate (%)',      d => d.exitCapRate],
+      ['Development Spread (bps)', d => round(d.metrics.developmentSpreadBps)],
+      ['Stabilized DSCR',        d => round(d.metrics.dscr, 2)],
+      ['Minimum DSCR',           d => round(d.metrics.minDSCR, 2)],
+      ['Debt Yield (%)',         d => round(d.metrics.debtYield, 2)],
+      ['Gross Sale Price ($)',   d => round(d.metrics.exitValue)],
+      ['Net Sale Proceeds ($)',  d => round(d.metrics.netSaleProceeds)],
+      ['Levered IRR (%)',        d => round(d.metrics.leveredIRR, 2)],
+      ['Unlevered IRR (%)',      d => round(d.metrics.unleveredIRR, 2)],
+      ['Equity Multiple (x)',    d => round(d.metrics.equityMultiple, 2)],
+      ['Profit ($)',             d => round(d.metrics.profit)],
+      ['Construction Months',    d => d.metrics.constructionTimeframe],
     ];
-    
-    const rows = deals.map(deal => [
-      deal.name,
-      propertyTypes[deal.propertyType].name,
-      constructionTypes[deal.constructionType].name,
-      deal.location,
-      deal.metrics.totalProjectCost,
-      deal.metrics.noi,
-      deal.metrics.cashFlow,
-      deal.metrics.capRate,
-      deal.metrics.cashOnCash,
-      deal.metrics.totalROI,
-      deal.metrics.annualizedReturn,
-      deal.metrics.riskScore,
-      deal.metrics.constructionTimeframe
-    ]);
 
-    const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\n');
+    const rows = deals.map(d => columns.map(([, get]) => {
+      const v = get(d);
+      return v === null || v === undefined ? 'n/a' : v;
+    }));
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const escape = (cell) => '"' + String(cell).replace(/"/g, '""') + '"';
+    const csvContent = [columns.map(([label]) => label), ...rows]
+      .map(row => row.map(escape).join(','))
+      .join('\r\n');
+
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -862,6 +624,31 @@ export default function CREDealAnalyzer() {
     a.click();
     window.URL.revokeObjectURL(url);
   };
+
+
+  const persistenceNotice = (() => {
+    if (storageState.error === 'corrupt') {
+      return 'Saved deals could not be read and have been set aside for recovery. Starting from the sample portfolio.';
+    }
+    if (storageState.error === 'quota') {
+      return 'Browser storage is full. Recent changes are not being saved. Export to CSV to avoid losing work.';
+    }
+    if (storageState.error || !storageState.available) {
+      return 'Browser storage is unavailable, so deals will not persist when you close this tab. Export to CSV to keep your work.';
+    }
+    return null;
+  })();
+
+  const noticeBar = persistenceNotice ? (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '8px',
+      padding: '10px 24px', backgroundColor: '#fef3c7',
+      borderBottom: '1px solid #fcd34d', color: '#92400e', fontSize: '13px'
+    }}>
+      <AlertTriangle size={16} />
+      <span>{persistenceNotice}</span>
+    </div>
+  ) : null;
 
   const containerStyle = {
     minHeight: '100vh',
@@ -902,6 +689,7 @@ export default function CREDealAnalyzer() {
   if (currentView === 'input') {
     return (
       <div style={containerStyle}>
+        {noticeBar}
         <div style={headerStyle}>
           <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Commercial Real Estate Deal Analyzer</h1>
@@ -929,6 +717,7 @@ export default function CREDealAnalyzer() {
 
   return (
     <div style={containerStyle}>
+      {noticeBar}
       <div style={headerStyle}>
         <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

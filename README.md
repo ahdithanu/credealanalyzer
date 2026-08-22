@@ -25,7 +25,7 @@ A powerful, browser-based React application for analyzing and comparing commerci
 - **Hold Period Projections**: Calculate long-term returns over custom timeframes
 
 ### Data Management
-- **Local Storage**: Automatically saves all your deals
+- **Local Storage**: Deals persist to browser `localStorage` under a versioned schema with migration. Per-device and per-browser, cleared with site data — a stopgap, not multi-user persistence. The app warns when storage is unavailable or full.
 - **Deal Comparison**: Select and compare multiple deals side-by-side
 - **CSV Export**: Export all deals for further analysis in Excel or other tools
 - **Duplicate & Edit**: Quickly create variations of existing deals
@@ -99,13 +99,27 @@ This creates an optimized production build in the `build` folder.
 
 ### Key Metrics Calculated
 
-- **Total Project Cost**: Purchase price + construction costs
-- **Net Operating Income (NOI)**: Revenue after operating expenses and property taxes
-- **Cap Rate**: NOI / Total Project Cost
-- **Cash-on-Cash Return**: Annual cash flow / down payment
-- **DSCR**: NOI / Annual debt service
-- **Total ROI**: (Exit value - project cost + total cash flow) / equity
-- **Annualized Return**: Compound annual growth rate over hold period
+All figures are derived from a monthly discrete-period model (`src/lib/finance.js`)
+covering the construction/renovation period and the operating hold, terminating in a sale.
+No shortcut formulas are layered on top of the schedule.
+
+- **Total Development Cost**: Land + hard cost x contingency + soft cost + capitalized construction interest
+- **Stabilized NOI**: Effective gross income less operating expenses, property tax and capital reserves, at stabilized occupancy
+- **Yield on Cost**: Stabilized NOI / Total Development Cost
+- **Development Spread**: Yield on cost less exit cap rate, in basis points — the metric that decides a ground-up deal
+- **Levered / Unlevered IRR**: True IRR solved from dated monthly cash flows by bisection
+- **Equity Multiple**: Total distributions / total equity contributed
+- **Peak Equity**: Maximum cumulative equity outstanding
+- **Stabilized & Minimum DSCR**: NOI / debt service, stabilized and across any rolling operating year
+- **Debt Yield**: Stabilized NOI / permanent loan balance
+- **Net Sale Proceeds**: Gross sale price less cost of sale less **outstanding** loan balance
+
+The exit is priced off forward 12-month NOI. Revenue, operating expenses and assessed value
+escalate over the hold, and lease-up is modelled with an occupancy ramp.
+
+> **Convention**: the Operating Expense Ratio input **excludes property tax**, which the
+> engine computes separately from the market's effective rate. A ratio quoted in the market
+> usually *includes* taxes — mixing the two double-counts the largest expense line in Texas.
 
 ## 🗺️ Property Tax Rates
 
@@ -126,6 +140,54 @@ Pre-loaded property tax rates for:
 - And 6 more Florida cities
 
 *Default rate: 1.5% for unlisted locations*
+
+## 🏗 Architecture
+
+Domain logic lives in `src/lib` and is unit-tested independently of the UI:
+
+| Module | Responsibility |
+| --- | --- |
+| `finance.js` | Monthly underwriting model, IRR solver, amortization, exit mechanics |
+| `propertyTypes.js` | Property and construction type config, program sizing helpers |
+| `markets.js` | Market records, tax rate resolution, great-circle distance |
+| `marketScore.js` | Explainable market scorecard + ridge-regression weight fitting |
+| `siteSelection.js` | Nearby-market discovery and expansion candidates |
+| `storage.js` | Versioned persistence with schema migration |
+| `sampleDeals.js` | First-run sample portfolio |
+
+Run the suite with `CI=true npm test` (106 tests).
+
+## 🧭 Market Intelligence
+
+Markets are scored 0–100 per property type as a linear scorecard over peer-normalized
+features — population and employment growth, median income, supply pipeline, rent growth,
+tax burden, traffic count, market scale, exit liquidity. Feature directions and weights are
+declared explicitly, and every score returns its per-feature contributions: an investment
+committee asking *"why 82?"* gets a decomposition, not a black box.
+
+`fitWeights()` re-fits those weights from a firm's own realized deal outcomes by ridge
+regression, reporting in-sample R², observation count, and any feature whose realized sign
+contradicts its assumed direction. It refuses to fit below 12 observations rather than
+returning a confident-looking model built on noise.
+
+### ⚠️ Data provenance
+
+Property tax rates are carried over from the original application. **Every other market
+feature is directional seed data** — plausible ordering for development and demos, but not
+sourced, not current, and not suitable for underwriting a real deal or presenting to an
+investment committee. Each record carries a `provenance` block with a `dataQuality` flag so
+the UI can degrade visibly. See the header comment in `src/lib/markets.js` for the
+replacement path per feature.
+
+Sample deals are illustrative and internally consistent, not sourced comps.
+
+## 🚧 Known Limitations
+
+- Single-user and browser-local. No authentication, tenancy, roles, or audit trail.
+- Construction draws are straight-line rather than S-curve.
+- No rent roll, lease-level modelling, or tenant rollover.
+- No waterfall or promote structure for JV equity.
+- Market data is seed data (see above).
 
 ## 🔧 Technologies Used
 
@@ -167,4 +229,4 @@ For questions or feedback, please open an issue on GitHub.
 
 ---
 
-**Note**: This application stores all data locally in your browser. No data is sent to external servers. Clear your browser data will delete all saved deals.
+**Note**: This application stores all data locally in your browser under the key `cre-deal-analyzer:deals`. No data is sent to external servers. Clearing browser data will delete all saved deals — export to CSV first.
