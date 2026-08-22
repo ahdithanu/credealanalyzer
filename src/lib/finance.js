@@ -28,7 +28,7 @@ export const DEFAULT_ASSUMPTIONS = {
   assessmentGrowth: 0.025,    // annual growth in assessed value
   variableOpexShare: 0.30,    // share of opex that scales with occupancy
   costOfSalePct: 0.015,       // brokerage + closing at disposition
-  interestOnlyMonths: 0,      // post-completion IO period
+  interestOnlyMonths: null,   // post-completion IO period; null = through stabilization
   initialOccupancy: 0,        // occupancy at completion, before lease-up
   inPlaceRevenue: 0,          // annual in-place revenue during renovation
 };
@@ -139,16 +139,27 @@ export function runModel(deal = {}, overrides = {}) {
 
   const propertyTaxRate = deal.propertyTaxRate ?? getPropertyTaxRate(location);
   const leaseUpMonths = a.leaseUpMonths ?? typeCfg.leaseUpMonths ?? 12;
+  // Lenders hold construction-to-perm debt interest-only until the asset
+  // stabilises; amortising from completion charges principal against a
+  // building that is still leasing up.
+  const interestOnlyMonths = a.interestOnlyMonths ?? leaseUpMonths;
   const capexReserveAnnual =
     typeCfg.revenueBasis === 'unit' && units > 0
       ? (typeCfg.capexReservePerUnit ?? 300) * units
       : (typeCfg.capexReservePerSF ?? 0.25) * buildingSize;
 
   // Budget ------------------------------------------------------------------
+  // Line items mirror a standard sources & uses schedule so the UI can render
+  // it directly: contingency and the interest reserve are their own lines
+  // rather than being folded into hard cost.
   const land = Math.max(0, purchasePrice);
-  const hardCost = Math.max(0, constructionCost) * (1 + constCfg.contingency);
-  const softCost = hardCost * constCfg.softCostPct;
-  const baseProjectCost = land + hardCost + softCost;
+  const hardCost = Math.max(0, constructionCost);
+  const softCost = hardCost * (deal.softCostPct ?? constCfg.softCostPct);
+  const ffe = Math.max(0, deal.ffe ?? 0);
+  const contingencyRate = deal.contingencyRate ?? constCfg.contingency;
+  const contingency = (hardCost + softCost + ffe) * contingencyRate;
+  const financingCosts = Math.max(0, deal.financingCosts ?? 0);
+  const baseProjectCost = land + hardCost + softCost + ffe + contingency + financingCosts;
 
   const equityCommitment = baseProjectCost * (downPayment / 100);
   const loanCommitment = baseProjectCost - equityCommitment;
@@ -169,10 +180,13 @@ export function runModel(deal = {}, overrides = {}) {
   // Cost draw schedule: land at closing, hard+soft straight-line across the
   // construction period. (An S-curve is more realistic; straight-line is the
   // conservative, auditable default and is overridable via `drawSchedule`.)
+  const spreadCost = hardCost + softCost + ffe + contingency;
   const costAt = (i) => {
-    let c = i === 0 ? land : 0;
-    if (C > 0) { if (i < C) c += (hardCost + softCost) / C; }
-    else if (i === 0) { c += hardCost + softCost; }
+    // Land and financing costs are incurred at closing; everything else draws
+    // straight-line across the construction period.
+    let c = i === 0 ? land + financingCosts : 0;
+    if (C > 0) { if (i < C) c += spreadCost / C; }
+    else if (i === 0) { c += spreadCost; }
     return c;
   };
 
@@ -257,7 +271,7 @@ export function runModel(deal = {}, overrides = {}) {
     const m = operatingMonth(t);
     const interest = balance * monthlyRate;
     let debtService;
-    if (t < a.interestOnlyMonths) {
+    if (t < interestOnlyMonths) {
       debtService = interest;
     } else {
       debtService = Math.min(payment, balance + interest);
@@ -328,13 +342,19 @@ export function runModel(deal = {}, overrides = {}) {
   const stabilizedDSCR = stabilizedDebtService > 0 ? stabilizedNOI / stabilizedDebtService : null;
   const debtYield = permanentLoanBalance > 0 ? stabilizedNOI / permanentLoanBalance : null;
 
-  // Minimum DSCR across any rolling operating year.
+  // Minimum DSCR across any rolling operating year, and separately across any
+  // rolling year from stabilization onward — the window a covenant governs.
   let minDSCR = null;
+  let minStabilizedDSCR = null;
   for (let t = 0; t + 12 <= N; t++) {
     let n = 0;
     let d = 0;
     for (let k = t; k < t + 12; k++) { n += months[C + k].noi; d += months[C + k].debtService; }
-    if (d > 0) { const v = n / d; minDSCR = minDSCR === null ? v : Math.min(minDSCR, v); }
+    if (d > 0) {
+      const v = n / d;
+      minDSCR = minDSCR === null ? v : Math.min(minDSCR, v);
+      if (t >= stabStart) minStabilizedDSCR = minStabilizedDSCR === null ? v : Math.min(minStabilizedDSCR, v);
+    }
   }
 
   const profit = equityFlows.reduce((s, f) => s + f, 0);
@@ -343,11 +363,29 @@ export function runModel(deal = {}, overrides = {}) {
     months,
     annual: rollUpAnnual(months),
     assumptions: { ...a, leaseUpMonths, propertyTaxRate, capexReserveAnnual },
-    budget: { land, hardCost, softCost, contingency: constCfg.contingency, baseProjectCost, capitalizedInterest, totalProjectCost },
-    financing: { equityCommitment, loanCommitment, permanentLoanBalance, monthlyPayment: payment, annualDebtService: payment * 12, ltc: baseProjectCost > 0 ? loanCommitment / baseProjectCost : 0 },
+    budget: {
+      land, hardCost, softCost, ffe, contingency, contingencyRate, financingCosts,
+      baseProjectCost, capitalizedInterest, totalProjectCost,
+      lines: [
+        { key: 'land',           label: 'Land & acquisition',   amount: land },
+        { key: 'hardCost',       label: 'Hard cost',            amount: hardCost },
+        { key: 'softCost',       label: 'Soft cost',            amount: softCost },
+        { key: 'ffe',            label: 'FF&E and amenities',   amount: ffe },
+        { key: 'contingency',    label: 'Contingency',          amount: contingency },
+        { key: 'financingCosts', label: 'Financing costs',      amount: financingCosts },
+        { key: 'interestReserve',label: 'Interest reserve',     amount: capitalizedInterest },
+      ].filter((l) => l.amount > 0),
+    },
+    financing: {
+      equityCommitment, loanCommitment, permanentLoanBalance,
+      monthlyPayment: payment, annualDebtService: payment * 12,
+      ltc: baseProjectCost > 0 ? loanCommitment / baseProjectCost : 0,
+      gpCoInvest: equityCommitment * (deal.gpCoInvestShare ?? 0.20),
+      lpEquity: equityCommitment * (1 - (deal.gpCoInvestShare ?? 0.20)),
+    },
     exit: { forwardNoi, grossSalePrice, costOfSale, loanPayoff, netSaleProceeds, exitCapRate },
     returns: { leveredIRR, unleveredIRR, equityMultiple, peakEquity, profit, totalEquityInvested: outflows, totalDistributions: inflows },
-    operating: { stabilizedNOI, stabilizedDebtService, yieldOnCost, developmentSpreadBps, stabilizedDSCR, minDSCR, debtYield, stabilizationMonth: C + stabStart },
+    operating: { stabilizedNOI, stabilizedDebtService, yieldOnCost, developmentSpreadBps, stabilizedDSCR, minDSCR, minStabilizedDSCR, debtYield, stabilizationMonth: C + stabStart, interestOnlyMonths },
     timeline: { constructionMonths: C, operatingMonths: N, leaseUpMonths, saleMonth: C + N - 1 },
   };
 }
@@ -378,11 +416,11 @@ function degenerateResult({ baseProjectCost, propertyTaxRate, equityCommitment, 
   return {
     months: [], annual: [],
     assumptions: { ...a, propertyTaxRate },
-    budget: { land: 0, hardCost: 0, softCost: 0, contingency: 0, baseProjectCost, capitalizedInterest: 0, totalProjectCost: baseProjectCost },
-    financing: { equityCommitment, loanCommitment, permanentLoanBalance: 0, monthlyPayment: 0, annualDebtService: 0, ltc: 0 },
+    budget: { land: 0, hardCost: 0, softCost: 0, ffe: 0, contingency: 0, contingencyRate: 0, financingCosts: 0, baseProjectCost, capitalizedInterest: 0, totalProjectCost: baseProjectCost, lines: [] },
+    financing: { equityCommitment, loanCommitment, permanentLoanBalance: 0, monthlyPayment: 0, annualDebtService: 0, ltc: 0, gpCoInvest: 0, lpEquity: 0 },
     exit: { forwardNoi: 0, grossSalePrice: 0, costOfSale: 0, loanPayoff: 0, netSaleProceeds: 0, exitCapRate: 0 },
     returns: nulls,
-    operating: { stabilizedNOI: 0, stabilizedDebtService: 0, yieldOnCost: null, developmentSpreadBps: null, stabilizedDSCR: null, minDSCR: null, debtYield: null, stabilizationMonth: 0 },
+    operating: { stabilizedNOI: 0, stabilizedDebtService: 0, yieldOnCost: null, developmentSpreadBps: null, stabilizedDSCR: null, minDSCR: null, minStabilizedDSCR: null, debtYield: null, stabilizationMonth: 0, interestOnlyMonths: 0 },
     timeline: { constructionMonths: C, operatingMonths: N, leaseUpMonths: 0, saleMonth: 0 },
     incomplete: true,
   };
@@ -412,6 +450,7 @@ export function calculateMetrics(deal) {
     developmentSpreadBps: r.operating.developmentSpreadBps,
     dscr: r.operating.stabilizedDSCR,
     minDSCR: r.operating.minDSCR,
+    minStabilizedDSCR: r.operating.minStabilizedDSCR,
     debtYield: pct(r.operating.debtYield),
     exitValue: r.exit.grossSalePrice,
     netSaleProceeds: r.exit.netSaleProceeds,

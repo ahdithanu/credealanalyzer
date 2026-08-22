@@ -97,11 +97,26 @@ describe('runModel — structure', () => {
     );
   });
 
-  it('applies contingency and soft costs to the hard cost budget', () => {
-    // 1,200,000 hard * 1.15 contingency = 1,380,000; soft = 14% of that
-    expect(r.budget.hardCost).toBeCloseTo(1_380_000, 6);
-    expect(r.budget.softCost).toBeCloseTo(1_380_000 * 0.14, 6);
-    expect(r.budget.baseProjectCost).toBeCloseTo(500_000 + 1_380_000 + 1_380_000 * 0.14, 6);
+  it('breaks the budget into discrete sources & uses lines', () => {
+    const hard = 1_200_000;
+    const soft = hard * 0.14;
+    const contingency = (hard + soft) * 0.15;
+    expect(r.budget.hardCost).toBeCloseTo(hard, 6);
+    expect(r.budget.softCost).toBeCloseTo(soft, 6);
+    expect(r.budget.contingency).toBeCloseTo(contingency, 6);
+    expect(r.budget.baseProjectCost).toBeCloseTo(500_000 + hard + soft + contingency, 6);
+  });
+
+  it('emits sources & uses lines that reconcile to total development cost', () => {
+    const sum = r.budget.lines.reduce((s, l) => s + l.amount, 0);
+    expect(sum).toBeCloseTo(r.budget.totalProjectCost, 4);
+    expect(r.budget.lines.map((l) => l.key)).toContain('interestReserve');
+  });
+
+  it('splits the capital stack into senior debt, LP and GP equity', () => {
+    const { equityCommitment, lpEquity, gpCoInvest } = r.financing;
+    expect(lpEquity + gpCoInvest).toBeCloseTo(equityCommitment, 6);
+    expect(gpCoInvest).toBeCloseTo(equityCommitment * 0.2, 6);
   });
 
   it('draws equity before debt during construction', () => {
