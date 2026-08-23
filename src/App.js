@@ -116,7 +116,7 @@ export default function App() {
   return (
     <div className="app">
       <nav className="rail">
-        <div className="rail-mark">IQ</div>
+        <div className="rail-mark" title="CRE Deal Analyzer">CRE</div>
         {VIEWS.map(({ key, label, Icon }) => (
           <button
             key={key}
