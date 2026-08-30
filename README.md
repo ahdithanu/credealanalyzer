@@ -157,13 +157,14 @@ Domain logic lives in `src/lib` and is unit-tested independently of the UI:
 | `firmDefaults.js` | Firm-level assumption defaults and override detection |
 | `storage.js` | Versioned persistence with schema migration |
 | `sampleDeals.js` | First-run sample portfolio |
+| `memo.js` | IC memorandum document model — paginated, figure-bound, testable |
 | `format.js` | Display formatting; renders unknowns as `n/a`, never `0` |
 | `exportCsv.js` | CSV export with honest column names |
 
 The interface lives in `src/screens` (Pipeline, Deal Model, Cash Flow, Sensitivity,
-Market Intelligence) over shared primitives in `src/ui`.
+Market Intelligence, IC Memo) over shared primitives in `src/ui`.
 
-Run the suite with `CI=true npm test` (157 tests).
+Run the suite with `CI=true npm test` (183 tests).
 
 ## 🖥 Interface
 
@@ -179,6 +180,9 @@ wireframe set. Five screens over a fixed icon rail:
   sunk, stabilization marked by an accent rule, stub periods labelled.
 - **Sensitivity** — scenario columns, two-variable grid, tornado, breakeven readouts.
 - **Market Intelligence** — ranked markets with a score decomposition drawer.
+- **IC Memo** — a six-section memorandum rendered on paper, with an outline rail and page
+  thumbnails. Print and Save-as-PDF go through the browser's own print pipeline, so
+  pagination is correct and the text stays selectable.
 
 Role determines the landing screen; the switcher in the header changes it.
 
@@ -210,6 +214,22 @@ replacement path per feature.
 
 Sample deals are illustrative and internally consistent, not sourced comps.
 
+## 📄 The IC memorandum
+
+The memo is the artifact that leaves the building, so two rules govern it:
+
+1. **Every figure is computed from the live model at generation time.** Nothing is
+   transcribed, and each block records the `source` it was bound from. The outline rail
+   reports how many figures the document computed, how many assumptions depart from the
+   firm set, and how many validation flags are open.
+2. **Limitations travel with the document.** The seed-data caveat, the absence of a rent
+   roll or promote structure, and the fact that the screening result is a mechanical test
+   rather than a recommendation all appear on the memo's own disclosure page — not in a
+   caveat someone can forget to repeat.
+
+`screeningVerdict()` reports which of the firm's stated thresholds a deal meets. It is
+deliberately not an investment recommendation, and says so on the page.
+
 ## 🚧 Known Limitations
 
 - Single-user and browser-local. No authentication, tenancy, roles, or audit trail.
@@ -217,7 +237,9 @@ Sample deals are illustrative and internally consistent, not sourced comps.
 - The Market Intelligence map is a plain equirectangular projection, not a real map layer.
 - Firm defaults are a static baseline; the shipped product versions them server-side
   with an approval trail.
-- No IC memo export, assumptions library, or audit log yet — wireframed, not built.
+- No assumptions library or audit log yet — wireframed, not built.
+- The memo has no editable prose sections and no firm template picker; it renders from
+  the model only.
 - No rent roll, lease-level modelling, or tenant rollover.
 - No waterfall or promote structure for JV equity.
 - Market data is seed data (see above).

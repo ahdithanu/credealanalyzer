@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { List, Calculator, Table, TrendingUp, Map, Plus, Download, AlertTriangle } from 'lucide-react';
+import { List, Calculator, Table, TrendingUp, Map, FileText, Plus, Download, AlertTriangle } from 'lucide-react';
 
 import './ui/theme.css';
 import { calculateMetrics } from './lib/finance';
@@ -14,6 +14,7 @@ import DealModel from './screens/DealModel';
 import CashFlow from './screens/CashFlow';
 import Sensitivity from './screens/Sensitivity';
 import MarketIntelligence from './screens/MarketIntelligence';
+import ICMemo from './screens/ICMemo';
 
 const VIEWS = [
   { key: 'pipeline', label: 'Pipeline',     Icon: List },
@@ -21,6 +22,7 @@ const VIEWS = [
   { key: 'cashflow', label: 'Cash Flow',    Icon: Table },
   { key: 'sensitivity', label: 'Sensitivity', Icon: TrendingUp },
   { key: 'market',   label: 'Market Intel', Icon: Map },
+  { key: 'memo',     label: 'IC Memo',      Icon: FileText },
 ];
 
 /** Role decides the landing screen: analysts model, VPs triage. */
@@ -173,7 +175,7 @@ export default function App() {
           <div className="notice"><AlertTriangle size={14} /><span>{notice}</span></div>
         )}
 
-        <main className="content">
+        <main className={`content${view === "memo" ? " flush" : ""}`}>
           {!deals.length ? (
             <div className="empty">
               No deals yet. Create one to begin underwriting.
@@ -188,8 +190,10 @@ export default function App() {
             <CashFlow deal={selected} />
           ) : view === 'sensitivity' ? (
             <Sensitivity deal={selected} />
-          ) : (
+          ) : view === 'market' ? (
             <MarketIntelligence deal={selected} />
+          ) : (
+            <ICMemo deal={selected} />
           )}
         </main>
       </div>

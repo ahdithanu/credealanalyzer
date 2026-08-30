@@ -248,3 +248,132 @@ select.inp { cursor: pointer; }
   display: inline-flex; align-items: center; gap: 5px;
 }
 .prov::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--warn); }
+
+/* ── IC memo ──────────────────────────────────────────────────────────────
+   The memo renders on paper, not on the dark app surface. It is a document
+   proof: a reader is looking at what will be circulated, and what circulates
+   is printed or a PDF. Inverting the palette here is deliberate. */
+
+.desk { background: #0b0d16; padding: 22px; overflow: auto; flex: 1; min-height: 0; }
+
+.sheet {
+  width: 816px;               /* US Letter at 96dpi */
+  min-height: 1056px;
+  margin: 0 auto 22px;
+  padding: 56px 64px;
+  background: #ffffff;
+  color: #16161a;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.5;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet .doc-hd {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding-bottom: 12px; margin-bottom: 18px;
+  border-bottom: 1.5px solid #16161a;
+}
+.sheet .doc-hd .mark {
+  width: 26px; height: 26px; flex: none; border-radius: 3px;
+  background: #16161a; color: #fff;
+  display: grid; place-items: center; font-size: 8.5px; font-weight: 700;
+}
+.sheet .doc-title { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.sheet .doc-sub { font-size: 10px; color: #5c5c66; margin-top: 1px; }
+.sheet .doc-conf {
+  margin-left: auto; text-align: right;
+  font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #8a2f2f;
+}
+
+.sheet h2 {
+  font-size: 12px; font-weight: 600; margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+.sheet h3 {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: #5c5c66; margin: 18px 0 6px;
+}
+.sheet h3:first-of-type { margin-top: 0; }
+
+.sheet table { width: 100%; border-collapse: collapse; font-size: 10px; font-variant-numeric: tabular-nums; }
+.sheet th {
+  text-align: left; font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #5c5c66;
+  padding: 4px 6px; border-bottom: 1px solid #16161a;
+}
+.sheet td { padding: 3.5px 6px; border-bottom: 1px solid #e7e7ec; }
+.sheet td.r, .sheet th.r { text-align: right; }
+.sheet tr.total td { border-top: 1px solid #16161a; border-bottom: 0; font-weight: 600; }
+
+.sheet .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 16px; margin-bottom: 4px; }
+.sheet .facts .k { font-size: 8.5px; letter-spacing: 0.07em; text-transform: uppercase; color: #5c5c66; }
+.sheet .facts .v { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.sheet .headline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; padding: 12px 0; border-top: 1px solid #e7e7ec; border-bottom: 1px solid #e7e7ec; }
+.sheet .headline .k { font-size: 8.5px; letter-spacing: 0.07em; text-transform: uppercase; color: #5c5c66; }
+.sheet .headline .v { font-size: 20px; font-weight: 500; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+
+.sheet .verdict { border: 1px solid #16161a; padding: 11px 13px; margin: 14px 0; }
+.sheet .verdict .vt { font-size: 12px; font-weight: 600; }
+.sheet .verdict .vs { font-size: 10px; color: #45454e; margin-top: 3px; }
+.sheet .verdict.fail { border-color: #8a2f2f; }
+.sheet .verdict.fail .vt { color: #8a2f2f; }
+.sheet .verdict .tests { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.sheet .verdict .tests .t { font-size: 9.5px; }
+.sheet .verdict .tests .tl { color: #5c5c66; font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.sheet .verdict .tests .tv { font-variant-numeric: tabular-nums; font-weight: 500; }
+.sheet .verdict .tests .tv.no { color: #8a2f2f; }
+.sheet .verdict .tests .th2 { color: #8a8a94; font-size: 9px; }
+
+.sheet .matrix td.c { text-align: right; font-variant-numeric: tabular-nums; }
+.sheet .matrix td.mid { font-weight: 700; }
+
+.sheet .note { font-size: 9.5px; color: #45454e; margin-top: 14px; padding-top: 8px; border-top: 1px solid #e7e7ec; }
+.sheet .note .nt { font-weight: 600; color: #16161a; display: block; margin-bottom: 2px; }
+
+.sheet .memo-flag { display: flex; gap: 7px; padding: 5px 0; border-bottom: 1px solid #e7e7ec; font-size: 9.5px; }
+.sheet .memo-flag .d { width: 5px; height: 5px; border-radius: 50%; margin-top: 5px; flex: none; }
+.sheet .memo-flag .d.error { background: #8a2f2f; }
+.sheet .memo-flag .d.warning { background: #9a6a12; }
+.sheet .memo-flag .d.info { background: #45454e; }
+.sheet .memo-flag .ft { font-weight: 600; }
+.sheet .memo-flag .fd { color: #5c5c66; }
+
+.sheet ol.disc { margin: 6px 0 0; padding-left: 16px; font-size: 9.5px; color: #45454e; }
+.sheet ol.disc li { margin-bottom: 5px; }
+
+.sheet .doc-ft {
+  margin-top: auto; padding-top: 14px; border-top: 1px solid #e7e7ec;
+  display: flex; font-size: 8.5px; color: #8a8a94; letter-spacing: 0.03em;
+}
+
+.thumbs { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--bg-raised); overflow-x: auto; flex: none; }
+.thumb {
+  width: 44px; height: 57px; flex: none; cursor: pointer;
+  background: #fff; border: 1px solid var(--line); border-radius: 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  padding-bottom: 3px; font-size: 8px; color: #5c5c66; position: relative; overflow: hidden;
+}
+.thumb::before {
+  content: ''; position: absolute; top: 5px; left: 5px; right: 5px; height: 1.5px; background: #16161a;
+}
+.thumb::after {
+  content: ''; position: absolute; top: 11px; left: 5px; right: 5px; bottom: 12px;
+  background: repeating-linear-gradient(#d8d8de 0 1px, transparent 1px 4px);
+}
+.thumb.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media print {
+  .rail, .topbar, .thumbs, .notice, .memo-outline, .no-print { display: none !important; }
+  .app, .main, .content, .desk { display: block !important; height: auto !important; overflow: visible !important; padding: 0 !important; background: #fff !important; }
+  .sheet {
+    width: auto; min-height: auto; margin: 0; box-shadow: none;
+    padding: 0.5in 0.6in; break-after: page; page-break-after: always;
+  }
+  .sheet:last-child { break-after: auto; page-break-after: auto; }
+  @page { size: letter; margin: 0.4in; }
+}
