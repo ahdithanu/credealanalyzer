@@ -89,6 +89,105 @@ not stay seeded and stay flagged; `licensedOnlyFeatures()` names them, and the
 default plan still *attempts* the licensed source so the gap is reported on
 every run rather than quietly forgotten.
 
+## Outbound HTTP
+
+`transport.js` is the only module that touches the network. Everything upstream
+and downstream of it is pure, so this is where the unpleasant properties of the
+real world are handled once instead of in each adapter.
+
+| Concern | Why it is here |
+| --- | --- |
+| **Egress allowlist** | Source URLs come from a registry today, but the moment a county endpoint comes from configuration, an unvalidated fetch is an SSRF. `transportFor(plan)` derives the allowlist from the plan, so it cannot drift out of step with what the pipeline actually calls. https only. |
+| **Secret redaction** | Secrets are passed per request, never stored on a descriptor, and scrubbed from every log line and error message — including a provider that echoes your key back in an error body. |
+| **Timeouts** | A hung county server must not hold a run open indefinitely. AbortController, reported as a timeout rather than a generic failure. |
+| **Conditional requests** | ETag / Last-Modified. An unchanged annual roll costs one 304 instead of re-downloading the file. |
+| **Circuit breaker** | Per host. A source that is down fails fast instead of consuming the run's whole retry budget; it half-opens after a cooldown and closes on success. One host being down never trips a healthy one. |
+| **Accept modes** | json, text, binary. |
+| **Identification** | A `userAgent` with a contact address is mandatory. Anonymous clients get rate-limited or blocked, and an unidentified crawler on a county server is how an IP ends up banned. |
+
+### The four sources genuinely differ
+
+Flattening them to "GET, then `.json()`" breaks three of the four:
+
+| Source | Shape |
+| --- | --- |
+| Census ACS | GET, json. Key optional as a query parameter below 500 calls/day. |
+| BLS CES | Keyless is GET on a single series. With a registration key it is **POST with a JSON body**, and that is the only way to request several series or a year range in one call. |
+| HCAD roll | **A zip of pipe-delimited text**, not json. `accept: 'binary'` plus an `unpack` descriptor. |
+| TxDOT AADT | GET json, **paginated** via `resultOffset` / `exceededTransferLimit`. |
+
+`buildRequest(sourceId, { params, secrets })` returns the full descriptor;
+`runPipeline` follows pagination to exhaustion (bounded, because a provider
+whose cursor never terminates would otherwise spin until the bill arrives).
+
+### Archive unpacking
+
+Unzipping needs a real archive reader, and Node has none built in. Rather than
+taking a dependency inside the pipeline, `unpackArchive` is injected like
+`fetchImpl`:
+
+```js
+import unzipper from 'unzipper';   // or adm-zip, yauzl, …
+
+const unpackArchive = async ({ buffer, member }) => {
+  const dir = await unzipper.Open.buffer(Buffer.from(buffer));
+  const file = dir.files.find((f) => member.test(f.path));
+  return (await file.buffer()).toString('utf8');
+};
+```
+
+A source with an `unpack` descriptor and no `unpackArchive` fails with a message
+saying exactly that, rather than handing a zip to a JSON parser.
+
+### Wiring it up
+
+```js
+import { runPipeline, defaultPlan, transportFor } from './run';
+
+const plan = defaultPlan({ vintage: 2025, taxYear: 2025 });
+const secrets = {
+  CENSUS_API_KEY: process.env.CENSUS_API_KEY,
+  BLS_API_KEY: process.env.BLS_API_KEY,
+};
+
+const client = transportFor(plan, {
+  fetchImpl: fetch,
+  userAgent: 'cre-deal-analyzer/1.0 (data-ops@yourfirm.com)',
+  secrets,
+  minIntervalMs: 250,
+  timeoutMs: 30_000,
+  onEvent: (e) => logger.info(e),      // already redacted
+});
+
+const { artifact, report, attributions } = await runPipeline({
+  client, plan, secrets, unpackArchive,
+  seed: seedMarkets,
+  cbsaToMarket: { 26420: 'houston-tx', /* … */ },
+  countyToMarket: { hcad: 'houston-tx' },
+});
+```
+
+`attributions` carries the credit lines the licences require — HCAD data must be
+attributed wherever it is shown.
+
+### First live run
+
+Nothing here has touched a live API; it was built without outbound network
+access, and every behaviour above is verified against fakes. Go in this order:
+
+1. **Census, one CBSA, no key.** Smallest possible request, public, no auth.
+   Confirms the URL shape, the allowlist and json parsing.
+2. **Census, all CBSAs, with a key.** Confirms auth injection and that the key
+   never appears in a log.
+3. **BLS keyless GET, one series.** Then the POST form once a key exists.
+4. **TxDOT.** Confirms pagination terminates and page merging is right.
+5. **HCAD last.** Largest payload, needs the unpack adapter, and is the one most
+   likely to have moved since these URLs were written.
+
+Watch the event stream on the first run of each: a `not-modified` on the second
+call proves conditional requests work, and the byte counts tell you whether the
+rate limit is set sensibly.
+
 ## Running it
 
 Fetching is injected, so the same code path runs against fixtures and against
@@ -123,6 +222,7 @@ including their annoyances: string-typed numbers, ACS suppression sentinels
 one legal entity spelled three ways across two counties.
 
 **The HTTP layer has not been exercised against the live APIs.** It was built in
-an environment with no outbound network, so `createClient` is fixture-tested
-only. First live run should be against a single source with a small geography
-before the full plan.
+an environment with no outbound network, so the transport is verified against
+fakes only: the allowlist, redaction, timeouts, retries, the breaker, conditional
+requests and every accept mode have tests, but no request has left the machine.
+Follow the ordered first-run sequence above.

@@ -168,7 +168,7 @@ not part of the browser bundle.
 The interface lives in `src/screens` (Pipeline, Deal Model, Cash Flow, Sensitivity,
 Market Intelligence, IC Memo) over shared primitives in `src/ui`.
 
-Run the suite with `CI=true npm test` (319 tests).
+Run the suite with `CI=true npm test` (360 tests).
 
 ## 🖥 Interface
 
@@ -256,9 +256,16 @@ county assessors, TxDOT/FDOT). Supply pipeline, market cap rates and rent growth
 are licensed-only; they stay seeded and stay flagged, and the default plan still
 attempts the licensed source so the gap is reported on every run.
 
-**The HTTP layer has not been run against the live APIs** — it was built without
-outbound network access, so it is fixture-tested only. See the pipeline README
-before the first live run.
+The outbound layer enforces an egress allowlist derived from the plan, redacts
+secrets from every log line and error, times out, retries with backoff, breaks
+the circuit per host, and issues conditional requests so an unchanged annual roll
+costs one 304. The four sources genuinely differ — Census is GET+json, BLS is
+POST-with-key, a tax roll is a zip of pipe-delimited text, TxDOT paginates — and
+each carries its own request descriptor.
+
+**No request has left the machine.** The transport was built without outbound
+network access and is verified against fakes only. The pipeline README has an
+ordered first-run sequence.
 
 ## 🚧 Known Limitations
 

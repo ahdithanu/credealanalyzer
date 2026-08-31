@@ -112,6 +112,22 @@ export function yoyGrowth(observations) {
   return ((latest.value - prior.value) / prior.value) * 100;
 };
 
+/**
+ * Parse delimited text into records. Assessor rolls arrive as pipe-delimited
+ * files inside a zip, not as JSON, and the delimiter differs per county.
+ */
+export function parseDelimited(text, { delimiter = '|', trim = true } = {}) {
+  const lines = String(text ?? '').split(/\r?\n/).filter((l) => l.length > 0);
+  if (lines.length < 2) return [];
+  const header = lines[0].split(delimiter).map((h) => (trim ? h.trim() : h));
+  return lines.slice(1).map((line) => {
+    const cells = line.split(delimiter);
+    const rec = {};
+    header.forEach((h, i) => { rec[h] = trim ? (cells[i] ?? '').trim() : cells[i]; });
+    return rec;
+  });
+}
+
 // ── County assessor ─────────────────────────────────────────────────────────
 
 /**
@@ -176,40 +192,157 @@ export function parseTrafficCounts(payload) {
  * Every source, with its licence. `licensed` sources must never be
  * redistributed in a client-facing artifact — the memo generator reads this.
  */
+/**
+ * Every source, with its licence and how to actually call it.
+ *
+ * `request()` returns a full descriptor rather than a bare URL, because the
+ * four sources genuinely differ: Census takes an optional key as a query
+ * parameter, BLS wants a POST body once you have a registration key, a tax roll
+ * is a binary zip, and ArcGIS paginates. Flattening all of that to "GET, then
+ * .json()" is how three of the four break on first contact.
+ *
+ * Secrets are passed in per call and never stored on the descriptor.
+ */
 export const SOURCES = {
   'census.acs5': {
     id: 'census.acs5', name: 'Census ACS 5-year',
     licence: 'public-domain', cadence: 'annual', parser: parseCensusACS,
     provides: ['population', 'medianHHI', 'popGrowth5y'],
-    url: ({ vintage = 2023, variables = Object.keys(ACS_VARIABLES), geo = 'metropolitan statistical area/micropolitan statistical area:*' }) =>
-      `https://api.census.gov/data/${vintage}/acs/acs5?get=NAME,${variables.join(',')}&for=${encodeURIComponent(geo)}`,
+    host: 'api.census.gov',
+    // A key is optional below 500 calls/day, and required above it.
+    secret: { env: 'CENSUS_API_KEY', required: false },
+    request({ params = {}, secrets = {} }) {
+      const {
+        vintage = 2023,
+        variables = Object.keys(ACS_VARIABLES),
+        geo = 'metropolitan statistical area/micropolitan statistical area:*',
+      } = params;
+      const u = new URL(`https://api.census.gov/data/${vintage}/acs/acs5`);
+      u.searchParams.set('get', ['NAME', ...variables].join(','));
+      u.searchParams.set('for', geo);
+      if (secrets.CENSUS_API_KEY) u.searchParams.set('key', secrets.CENSUS_API_KEY);
+      return { url: u.toString(), method: 'GET', accept: 'json' };
+    },
   },
+
   'bls.ces': {
     id: 'bls.ces', name: 'BLS Current Employment Statistics',
     licence: 'public-domain', cadence: 'monthly', parser: parseBLS,
     provides: ['employmentGrowth'],
-    url: ({ seriesId }) => `https://api.bls.gov/publicAPI/v2/timeseries/data/${seriesId}`,
+    host: 'api.bls.gov',
+    secret: { env: 'BLS_API_KEY', required: false },
+    request({ params = {}, secrets = {} }) {
+      const { seriesId, seriesIds, startYear, endYear } = params;
+      const ids = seriesIds ?? (seriesId ? [seriesId] : []);
+      if (!ids.length) throw new Error('bls.ces: needs seriesId or seriesIds');
+      const base = 'https://api.bls.gov/publicAPI/v2/timeseries/data/';
+
+      // v1 (keyless) is GET on a single series. v2 with a registration key is
+      // POST with a JSON body, and is the only way to request several series or
+      // a year range in one call.
+      if (!secrets.BLS_API_KEY) {
+        if (ids.length > 1) throw new Error('bls.ces: multiple series requires BLS_API_KEY (v2 POST)');
+        return { url: `${base}${ids[0]}`, method: 'GET', accept: 'json' };
+      }
+      return {
+        url: base,
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          seriesid: ids,
+          ...(startYear ? { startyear: String(startYear) } : {}),
+          ...(endYear ? { endyear: String(endYear) } : {}),
+          registrationkey: secrets.BLS_API_KEY,
+        }),
+        accept: 'json',
+      };
+    },
   },
+
   'assessor.hcad': {
     id: 'assessor.hcad', name: 'Harris County Appraisal District',
     licence: 'attribution', cadence: 'annual', parser: parseAssessor,
     provides: ['effectiveTaxRate', 'ownership', 'appraisedValue'],
-    url: ({ taxYear }) => `https://download.hcad.org/data/CAMA/${taxYear}/Real_acct_owner.zip`,
+    host: 'download.hcad.org',
+    attribution: 'Harris County Appraisal District',
+    request({ params = {} }) {
+      const { taxYear = new Date().getFullYear() } = params;
+      // A zip of pipe-delimited text. Calling .json() on it is not a small
+      // mistake — it is the whole reason `accept` exists.
+      return {
+        url: `https://download.hcad.org/data/CAMA/${taxYear}/Real_acct_owner.zip`,
+        method: 'GET',
+        accept: 'binary',
+        unpack: { format: 'zip', member: /real_acct\.txt$/i, delimiter: '|' },
+      };
+    },
   },
+
   'txdot.aadt': {
     id: 'txdot.aadt', name: 'TxDOT annual average daily traffic',
     licence: 'public-domain', cadence: 'annual', parser: parseTrafficCounts,
     provides: ['trafficCount'],
-    url: ({ year }) => `https://services.arcgis.com/TxDOT/aadt/FeatureServer/0/query?where=YEAR%3D${year}&outFields=*&f=json`,
+    host: 'services.arcgis.com',
+    request({ params = {} }) {
+      const { year = new Date().getFullYear() - 1, offset = 0, pageSize = 1000 } = params;
+      const u = new URL('https://services.arcgis.com/TxDOT/aadt/FeatureServer/0/query');
+      u.searchParams.set('where', `YEAR=${year}`);
+      u.searchParams.set('outFields', '*');
+      u.searchParams.set('f', 'json');
+      u.searchParams.set('resultOffset', String(offset));
+      u.searchParams.set('resultRecordCount', String(pageSize));
+      return { url: u.toString(), method: 'GET', accept: 'json' };
+    },
+    /** ArcGIS signals more pages with exceededTransferLimit. */
+    nextPage({ params = {}, body }) {
+      if (!body?.exceededTransferLimit) return null;
+      const pageSize = params.pageSize ?? 1000;
+      return { ...params, offset: (params.offset ?? 0) + pageSize };
+    },
+    mergePages(pages) {
+      return { features: pages.flatMap((p) => p.features ?? []) };
+    },
   },
+
   'costar.market': {
     id: 'costar.market', name: 'CoStar market analytics',
     licence: 'licensed', cadence: 'quarterly', parser: null,
     provides: ['supplyPipeline', 'marketCapRate', 'rentGrowth'],
-    url: null,
+    host: null,
+    request: null,
     note: 'Licensed. Requires a subscription and a redistribution review before any figure reaches a client-facing artifact.',
   },
 };
+
+/**
+ * Build the outbound request for a plan step.
+ * Throws when a source requires a secret that has not been supplied, rather
+ * than sending an unauthenticated request that fails opaquely upstream.
+ */
+export function buildRequest(sourceId, { params = {}, secrets = {} } = {}) {
+  const source = SOURCES[sourceId];
+  if (!source) throw new Error(`unknown source: ${sourceId}`);
+  if (!source.request) throw new Error(`${sourceId} is not fetchable (${source.note ?? 'no request builder'})`);
+  if (source.secret?.required && !secrets[source.secret.env]) {
+    throw new Error(`${sourceId} requires ${source.secret.env}`);
+  }
+  return { sourceId, ...source.request({ params, secrets }) };
+}
+
+/** The exact hosts a plan needs, for the transport allowlist. */
+export function allowedHostsFor(plan = []) {
+  const hosts = new Set();
+  for (const step of plan) {
+    const host = SOURCES[step.sourceId]?.host;
+    if (host) hosts.add(host);
+  }
+  return [...hosts];
+}
+
+/** Attribution lines required by the sources actually used. */
+export function attributionsFor(sourceIds = []) {
+  return [...new Set(sourceIds.map((id) => SOURCES[id]?.attribution).filter(Boolean))];
+}
 
 /** Which registered sources can supply a given feature. */
 export function sourcesFor(feature) {
@@ -225,19 +358,17 @@ export function licensedOnlyFeatures(features) {
 }
 
 /**
- * A fetch client with rate limiting and retry. `fetchImpl` is injected so the
- * pipeline runs against fixtures in tests and against the network in
- * production, with no branch inside the pipeline itself.
+ * @deprecated Superseded by createTransport in ./transport, which adds the host
+ * allowlist, secret redaction, timeouts, conditional requests and the circuit
+ * breaker. Retained because the existing fixture tests drive it directly.
  */
 export function createClient({ fetchImpl, minIntervalMs = 0, maxRetries = 3, sleep = defaultSleep } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('createClient needs a fetchImpl');
   let last = 0;
-
   return async function get(url, { signal } = {}) {
     const wait = last + minIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
     last = Date.now();
-
     let attempt = 0;
     for (;;) {
       try {
@@ -250,7 +381,7 @@ export function createClient({ fetchImpl, minIntervalMs = 0, maxRetries = 3, sle
       } catch (err) {
         attempt++;
         if (!err.retryable || attempt > maxRetries) throw err;
-        await sleep(2 ** attempt * 100);      // exponential backoff
+        await sleep(2 ** attempt * 100);
       }
     }
   };

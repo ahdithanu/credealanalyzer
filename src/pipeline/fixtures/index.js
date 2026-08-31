@@ -52,6 +52,29 @@ export const dcadRoll = [
   { ACCOUNT_NUM: '00000700123500000', OWNER_NAME1: 'PLANO NORTH CAMPUS OWNER LLC', OWNER_ADDRESS: '3232 MCKINNEY AVE', SITE_ADDRESS: '6900 LEGACY DR', TOT_VAL: '28400000', TAX_YEAR: '2025', TOTAL_RATE: '2.15', LATITUDE: '33.0760', LONGITUDE: '-96.8210' },
 ];
 
+/**
+ * The HCAD roll as it actually arrives: pipe-delimited text inside a zip.
+ * Built from `hcadRoll` so the two cannot drift apart.
+ */
+export const hcadDelimitedText = (() => {
+  const cols = Object.keys(hcadRoll[0]);
+  return [cols.join('|'), ...hcadRoll.map((r) => cols.map((c) => r[c]).join('|'))].join('\n');
+})();
+
+/**
+ * Stands in for a real archive: the bytes a zip download would produce.
+ * Encoded by hand rather than with TextEncoder, which jsdom does not provide.
+ */
+export const hcadZipBytes = (() => {
+  const bytes = new Uint8Array(hcadDelimitedText.length);
+  for (let i = 0; i < hcadDelimitedText.length; i++) bytes[i] = hcadDelimitedText.charCodeAt(i) & 0xff;
+  return bytes.buffer;
+})();
+
+/** A fake unpacker. Production injects one backed by a real zip reader. */
+export const fakeUnpackArchive = async ({ buffer }) =>
+  String.fromCharCode(...new Uint8Array(buffer));
+
 export const txdotAADT = {
   features: [
     { attributes: { STATION_ID: 'TX-0451', AADT_RPT_QTY: 42000, YEAR: 2025, LAT: 29.7840, LON: -95.4600 } },
@@ -72,9 +95,18 @@ export const CBSA_TO_MARKET = {
 export function fixtureFetch(routes) {
   return async (url) => {
     const key = Object.keys(routes).find((k) => url.includes(k));
-    if (!key) return { ok: false, status: 404, json: async () => ({}) };
+    if (!key) return { ok: false, status: 404, headers: { get: () => null }, text: async () => '', json: async () => ({}) };
     const r = routes[key];
     if (typeof r === 'function') return r(url);
-    return { ok: true, status: 200, json: async () => r };
+    if (r && r.binary) {
+      return {
+        ok: true, status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => r.binary,
+        text: async () => { throw new Error('binary payload read as text'); },
+      };
+    }
+    const body = JSON.stringify(r);
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => body, json: async () => r };
   };
 }

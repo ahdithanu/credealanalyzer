@@ -1,5 +1,5 @@
-import { runPipeline, applyMarketData, defaultPlan, createClient } from '../run';
-import { censusACS, blsCES, hcadRoll, txdotAADT, CBSA_TO_MARKET, fixtureFetch } from '../fixtures';
+import { runPipeline, applyMarketData, defaultPlan, transportFor } from '../run';
+import { censusACS, blsCES, hcadZipBytes, txdotAADT, CBSA_TO_MARKET, fixtureFetch, fakeUnpackArchive } from '../fixtures';
 import { markets as seedMarkets } from '../../lib/markets';
 
 const AT = { validAt: '2025-06-01', knownAt: '2026-06-01' };
@@ -8,14 +8,19 @@ const RECORDED = new Date('2026-01-15T00:00:00.000Z');
 const routes = {
   'acs/acs5': censusACS,
   'bls.gov': blsCES,
-  'hcad.org': hcadRoll,
+  'hcad.org': { binary: hcadZipBytes },
   'arcgis.com': txdotAADT,
 };
 
-const client = () => createClient({ fetchImpl: fixtureFetch(routes), sleep: () => Promise.resolve() });
+const client = (routeSet = routes) => transportFor(defaultPlan(), {
+  fetchImpl: fixtureFetch(routeSet),
+  userAgent: 'cre-deal-analyzer-tests (ops@example.com)',
+  sleep: () => Promise.resolve(),
+});
 
 const opts = {
   plan: defaultPlan(),
+  unpackArchive: fakeUnpackArchive,
   seed: seedMarkets,
   at: AT,
   cbsaToMarket: CBSA_TO_MARKET,
@@ -26,8 +31,8 @@ const opts = {
 };
 
 describe('runPipeline', () => {
-  it('refuses to run without an injected client', async () => {
-    await expect(runPipeline({ plan: [] })).rejects.toThrow(/client/);
+  it('refuses to run without an injected transport', async () => {
+    await expect(runPipeline({ plan: [] })).rejects.toThrow(/transport/);
   });
 
   it('runs the default plan end to end and emits a versioned artifact', async () => {
@@ -47,10 +52,7 @@ describe('runPipeline', () => {
   });
 
   it('degrades rather than aborting when one source fails', async () => {
-    const partial = createClient({
-      fetchImpl: fixtureFetch({ 'acs/acs5': censusACS }),   // everything else 404s
-      sleep: () => Promise.resolve(),
-    });
+    const partial = client({ 'acs/acs5': censusACS });   // everything else 404s
     const { artifact, report } = await runPipeline({ ...opts, client: partial });
     expect(report.failures.length).toBeGreaterThan(1);
     const houston = artifact.markets.find((m) => m.key === 'houston-tx');

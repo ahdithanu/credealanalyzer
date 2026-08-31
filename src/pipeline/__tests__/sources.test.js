@@ -1,6 +1,7 @@
 import {
   parseCensusACS, parseBLS, yoyGrowth, parseAssessor, parseTrafficCounts,
   SOURCES, sourcesFor, licensedOnlyFeatures, createClient, ParseError, ACS_VARIABLES,
+  buildRequest, allowedHostsFor, attributionsFor, parseDelimited,
 } from '../sources';
 import { censusACS, blsCES, blsFailure, hcadRoll, dcadRoll, txdotAADT, fixtureFetch } from '../fixtures';
 
@@ -130,10 +131,24 @@ describe('source registry', () => {
     expect(licensed.sort()).toEqual(['marketCapRate', 'supplyPipeline']);
   });
 
-  it('builds a request URL from parameters', () => {
-    const url = SOURCES['census.acs5'].url({ vintage: 2023 });
-    expect(url).toContain('/2023/acs/acs5');
-    expect(url).toContain('B01003_001E');
+  it('builds a full request descriptor from parameters', () => {
+    const req = buildRequest('census.acs5', { params: { vintage: 2023 } });
+    expect(req.url).toContain('/2023/acs/acs5');
+    expect(req.url).toContain('B01003_001E');
+    expect(req.method).toBe('GET');
+    expect(req.accept).toBe('json');
+  });
+
+  it('declares the host each source reaches, for the egress allowlist', () => {
+    expect(allowedHostsFor([{ sourceId: 'census.acs5' }, { sourceId: 'bls.ces' }]).sort())
+      .toEqual(['api.bls.gov', 'api.census.gov']);
+    // A licensed source has no host and contributes nothing to the allowlist.
+    expect(allowedHostsFor([{ sourceId: 'costar.market' }])).toEqual([]);
+  });
+
+  it('refuses to build a request for a source that is not fetchable', () => {
+    expect(() => buildRequest('costar.market')).toThrow(/not fetchable/);
+    expect(() => buildRequest('nope')).toThrow(/unknown source/);
   });
 });
 
@@ -190,5 +205,83 @@ describe('createClient', () => {
     await get('a');
     await get('b');
     expect(waits.some((w) => w > 0)).toBe(true);
+  });
+});
+
+describe('buildRequest — auth and shape per source', () => {
+  it('omits the Census key when none is configured', () => {
+    const req = buildRequest('census.acs5', { params: { vintage: 2023 } });
+    expect(req.url).not.toContain('key=');
+  });
+
+  it('adds the Census key as a query parameter when supplied', () => {
+    const req = buildRequest('census.acs5', { params: { vintage: 2023 }, secrets: { CENSUS_API_KEY: 'k123456' } });
+    expect(new URL(req.url).searchParams.get('key')).toBe('k123456');
+  });
+
+  it('uses the keyless GET form of BLS when no key is configured', () => {
+    const req = buildRequest('bls.ces', { params: { seriesId: 'SMU48264200000000001' } });
+    expect(req.method).toBe('GET');
+    expect(req.url).toContain('SMU48264200000000001');
+    expect(req.body).toBeUndefined();
+  });
+
+  it('uses the POST form with a registration key, which is the only multi-series path', () => {
+    const req = buildRequest('bls.ces', {
+      params: { seriesIds: ['A', 'B'], startYear: 2024, endYear: 2026 },
+      secrets: { BLS_API_KEY: 'bls-key-1234' },
+    });
+    expect(req.method).toBe('POST');
+    expect(req.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(req.body);
+    expect(body.seriesid).toEqual(['A', 'B']);
+    expect(body.startyear).toBe('2024');
+    expect(body.registrationkey).toBe('bls-key-1234');
+  });
+
+  it('refuses a multi-series BLS request without a key rather than failing upstream', () => {
+    expect(() => buildRequest('bls.ces', { params: { seriesIds: ['A', 'B'] } }))
+      .toThrow(/requires BLS_API_KEY/);
+  });
+
+  it('marks the assessor roll as a binary archive with an unpack descriptor', () => {
+    // A tax roll is a zip of pipe-delimited text; reading it as json fails
+    // in a way that looks like a parser bug rather than a transport one.
+    const req = buildRequest('assessor.hcad', { params: { taxYear: 2025 } });
+    expect(req.accept).toBe('binary');
+    expect(req.unpack.format).toBe('zip');
+    expect(req.unpack.delimiter).toBe('|');
+  });
+
+  it('builds a paginated ArcGIS query and advances the cursor', () => {
+    const req = buildRequest('txdot.aadt', { params: { year: 2025, offset: 0, pageSize: 500 } });
+    expect(new URL(req.url).searchParams.get('resultOffset')).toBe('0');
+    const next = SOURCES['txdot.aadt'].nextPage({ params: { year: 2025, offset: 0, pageSize: 500 }, body: { exceededTransferLimit: true } });
+    expect(next.offset).toBe(500);
+    expect(SOURCES['txdot.aadt'].nextPage({ params: {}, body: { features: [] } })).toBeNull();
+  });
+
+  it('names the attribution a source requires', () => {
+    expect(attributionsFor(['assessor.hcad'])).toEqual(['Harris County Appraisal District']);
+    expect(attributionsFor(['census.acs5'])).toEqual([]);
+  });
+});
+
+describe('parseDelimited', () => {
+  it('parses pipe-delimited roll text into records', () => {
+    const recs = parseDelimited('acct|owner_name\n123| SUNBELT LLC \n456|KATY LP');
+    expect(recs).toEqual([
+      { acct: '123', owner_name: 'SUNBELT LLC' },
+      { acct: '456', owner_name: 'KATY LP' },
+    ]);
+  });
+
+  it('returns nothing for an empty or header-only file', () => {
+    expect(parseDelimited('')).toEqual([]);
+    expect(parseDelimited('acct|owner')).toEqual([]);
+  });
+
+  it('tolerates CRLF line endings, which county exports use', () => {
+    expect(parseDelimited('a|b\r\n1|2\r\n')).toEqual([{ a: '1', b: '2' }]);
   });
 });
