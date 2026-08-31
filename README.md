@@ -161,10 +161,14 @@ Domain logic lives in `src/lib` and is unit-tested independently of the UI:
 | `format.js` | Display formatting; renders unknowns as `n/a`, never `0` |
 | `exportCsv.js` | CSV export with honest column names |
 
+The data pipeline lives in `src/pipeline` — see its own
+[README](src/pipeline/README.md). Nothing in the application imports it, so it is
+not part of the browser bundle.
+
 The interface lives in `src/screens` (Pipeline, Deal Model, Cash Flow, Sensitivity,
 Market Intelligence, IC Memo) over shared primitives in `src/ui`.
 
-Run the suite with `CI=true npm test` (183 tests).
+Run the suite with `CI=true npm test` (319 tests).
 
 ## 🖥 Interface
 
@@ -230,6 +234,32 @@ The memo is the artifact that leaves the building, so two rules govern it:
 `screeningVerdict()` reports which of the firm's stated thresholds a deal meets. It is
 deliberately not an investment recommendation, and says so on the page.
 
+## 🔗 Data pipeline
+
+`src/pipeline` ingests real market data into the shape the app consumes,
+replacing seed values one feature at a time. A **graph** holds entities and
+relationships — parcels, owning entities, jurisdictions, geography — and a
+**bitemporal fact store** holds observations. That split is deliberate: putting
+time series in a graph is how graph projects die.
+
+The graph earns its place on the queries nothing else answers: beneficial
+ownership through layers of single-purpose entities, related-party detection for
+comparable exclusion, and the overlapping geographic hierarchies that Texas tax
+rates come from.
+
+Facts carry two clocks — when a thing was true, and when we learned it — so
+`"what did the model see when the committee approved this deal?"` is answerable
+after a retroactive assessor correction lands.
+
+Six of nine market features are reachable from public sources (Census ACS, BLS,
+county assessors, TxDOT/FDOT). Supply pipeline, market cap rates and rent growth
+are licensed-only; they stay seeded and stay flagged, and the default plan still
+attempts the licensed source so the gap is reported on every run.
+
+**The HTTP layer has not been run against the live APIs** — it was built without
+outbound network access, so it is fixture-tested only. See the pipeline README
+before the first live run.
+
 ## 🚧 Known Limitations
 
 - Single-user and browser-local. No authentication, tenancy, roles, or audit trail.
@@ -242,7 +272,8 @@ deliberately not an investment recommendation, and says so on the page.
   the model only.
 - No rent roll, lease-level modelling, or tenant rollover.
 - No waterfall or promote structure for JV equity.
-- Market data is seed data (see above).
+- Market data is still seed data in the running app: the pipeline exists and is
+  tested, but has not yet been run against the live APIs.
 
 ## 🔧 Technologies Used
 
