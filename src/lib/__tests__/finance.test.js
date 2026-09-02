@@ -12,7 +12,7 @@ import {
 import { suggestGrossRevenue, suggestConstructionCost } from '../propertyTypes';
 import { getPropertyTaxRate, resolveTaxRate, findMarket, distanceMiles } from '../markets';
 import { SAMPLE_DEALS } from '../sampleDeals';
-import { validate } from '../validation';
+import { validate, breakEvenBreach } from '../validation';
 
 /** A profitable ground-up car wash, used as the reference deal. */
 const groundUpDeal = {
@@ -81,6 +81,49 @@ describe('irr', () => {
   it('annualizes a monthly rate by compounding', () => {
     expect(annualize(0.01)).toBeCloseTo(Math.pow(1.01, 12) - 1, 12);
     expect(annualize(null)).toBeNull();
+  });
+
+  it('never returns a rate that does not zero the NPV', () => {
+    // The named failure: on a long schedule, npv(-0.9999) divides a late flow
+    // by ~1e-308 and, with flows of both signs, evaluates to Infinity minus
+    // Infinity — NaN. NaN fails every comparison, so `fLo * fHi > 0` was false,
+    // both the bracket-expansion loop and the no-root guard were skipped, and
+    // bisection walked `lo` up to the untouched upper bound and returned it.
+    // The shape below is the one that did it: a capital call, income, then a
+    // terminal negative because the loan exceeds net sale value.
+    const flows = [-1684050, ...Array(76).fill(21000), -273340];
+    const r = irr(flows);
+    if (r !== null) {
+      const scale = flows.reduce((m, c) => Math.max(m, Math.abs(c)), 0);
+      expect(Math.abs(npv(r, flows))).toBeLessThan(scale * 1e-5);
+    }
+  });
+
+  it('reports no IRR rather than a bracket bound when the NPV never crosses zero', () => {
+    // Same series. The NPV is negative at every rate, so no IRR exists and the
+    // documented contract is null. It returned a monthly 1.0 — annualising to
+    // +409,500% — beside a multiple below 1.0x.
+    const flows = [-1684050, ...Array(76).fill(21000), -273340];
+    expect(npv(0, flows)).toBeLessThan(0);
+    expect(npv(5, flows)).toBeLessThan(0);
+    expect(irr(flows)).toBeNull();
+  });
+
+  it('reports no levered IRR on a deal whose sale cannot repay the loan', () => {
+    // The defect reached the first tile on the Deal Model screen, and the memo,
+    // the CSV and the tornado behind it, on 52 of 396 sample parameter
+    // combinations. No sampled deal may report an IRR above +300%.
+    const outrageous = [];
+    for (const deal of SAMPLE_DEALS) {
+      for (const exitCapRate of [4, 8, 12, 16, 20]) {
+        for (const holdPeriod of [3, 5, 7, 10]) {
+          const m = runModel({ ...deal, exitCapRate, holdPeriod });
+          if (m.incomplete || m.returns.leveredIRR === null) continue;
+          if (m.returns.leveredIRR > 3) outrageous.push([deal.name, exitCapRate, holdPeriod, m.returns.leveredIRR]);
+        }
+      }
+    }
+    expect(outrageous).toEqual([]);
   });
 });
 
@@ -1019,5 +1062,57 @@ describe('validation of break-even occupancy and rent growth', () => {
   it('honours a firm-specific rent growth ceiling', () => {
     const flags = validate(runModel(groundUpDeal), groundUpDeal, { maxRentGrowth: 0.02 });
     expect(flags.find((f) => f.id === 'rentGrowth')).toBeDefined();
+  });
+});
+
+describe('break-even verdict has one definition', () => {
+  it('never flags a deal the shared verdict calls clean, or the reverse', () => {
+    // The Deal Model tile used to reimplement the CEILING test alone, so it
+    // printed "clears" with no negative tone on deals where validate() raised
+    // an error — a break-even 12 points above the occupancy the deal itself
+    // underwrites still sits under an 80% ceiling. In Grid posture the flag
+    // list is hidden and the tile is the only break-even statement on screen.
+    // Both now read breakEvenBreach(), and this sweep is what keeps them there.
+    const disagreements = [];
+    for (const deal of SAMPLE_DEALS) {
+      for (const vacancyRate of [5, 10, 15, 20, 25, 30, 35]) {
+        for (const holdPeriod of [1, 3, 5, 7]) {
+          const candidate = { ...deal, vacancyRate, holdPeriod };
+          const model = runModel(candidate);
+          if (model.incomplete) continue;
+          const verdict = breakEvenBreach(model.operating);
+          const flagged = validate(model, candidate)
+            .some((f) => f.id === 'breakEvenOccupancy');
+          if (verdict.breached !== flagged) {
+            disagreements.push([deal.name, vacancyRate, holdPeriod, verdict.breached, flagged]);
+          }
+        }
+      }
+    }
+    expect(disagreements).toEqual([]);
+  });
+
+  it('fires on a break-even above underwritten occupancy that is still under the ceiling', () => {
+    // The exact configuration the ceiling-only test missed.
+    const deal = {
+      name: 'No cushion', propertyType: 'multifamily', constructionType: 'acquisition',
+      location: 'Dallas, TX', purchasePrice: 12_000_000, constructionCost: 2_000_000,
+      buildingSize: 200_000, grossRevenue: 2_600_000, vacancyRate: 33,
+      operatingExpenseRatio: 35, downPayment: 30, interestRate: 6.2, loanTerm: 30,
+      exitCapRate: 6.5, holdPeriod: 5,
+    };
+    const v = breakEvenBreach(runModel(deal).operating);
+    expect(v.overCeiling).toBe(false);       // under the 80% ceiling
+    expect(v.noCushion).toBe(true);          // and above the occupancy underwritten
+    expect(v.breached).toBe(true);
+    expect(validate(runModel(deal), deal).some((f) => f.id === 'breakEvenOccupancy')).toBe(true);
+  });
+
+  it('reports no cushion rather than a cushion of zero when occupancy is unknown', () => {
+    const v = breakEvenBreach({ breakEvenOccupancy: 0.7, stabilizedOccupancy: null });
+    expect(v.cushion).toBeNull();
+    const none = breakEvenBreach({ breakEvenOccupancy: null, stabilizedOccupancy: 0.95 });
+    expect(none.breached).toBe(false);
+    expect(none.cushion).toBeNull();
   });
 });

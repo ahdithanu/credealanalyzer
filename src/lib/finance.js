@@ -84,27 +84,56 @@ export function irr(cashFlows, { tol = 1e-10, maxIter = 300 } = {}) {
     return acc;
   };
 
-  let lo = -0.9999;
+  // Candidate lower bounds, deepest first. A rate close to -100% divides a late
+  // flow by a vanishing number, and on a schedule of more than a few dozen
+  // periods that overflows: flows of both signs then give +Infinity - Infinity,
+  // which is NaN. NaN fails EVERY comparison, so a fixed lower bound of -0.9999
+  // slipped past both `fLo * fHi > 0` guards below and bisection converged on a
+  // bound that is not a root at all. On a 78-month deal that returned half its
+  // equity it reported a monthly IRR of exactly 1.0 — a +409,500% annual return
+  // beside a 0.50x multiple — on 52 of 396 sample parameter combinations. Only a
+  // finite evaluation may serve as a bracket end.
+  let lo = null;
+  let fLo = null;
+  for (const candidate of [-0.9999, -0.999, -0.99, -0.9, -0.5]) {
+    const f = npv(candidate);
+    if (Number.isFinite(f)) { lo = candidate; fLo = f; break; }
+  }
+  if (lo === null) return null;
+
   let hi = 1.0;
-  let fLo = npv(lo);
   let fHi = npv(hi);
+  if (!Number.isFinite(fHi)) return null;
 
   // Expand the upper bound before giving up.
   let expand = 0;
   while (fLo * fHi > 0 && expand < 60) {
     hi *= 2;
     fHi = npv(hi);
+    if (!Number.isFinite(fHi)) return null;
     expand++;
   }
-  if (fLo * fHi > 0) return null;
+  if (!(fLo * fHi <= 0)) return null;
 
+  let root = null;
   for (let i = 0; i < maxIter; i++) {
     const mid = (lo + hi) / 2;
     const fMid = npv(mid);
-    if (Math.abs(fMid) < tol || (hi - lo) / 2 < 1e-12) return mid;
+    if (Math.abs(fMid) < tol || (hi - lo) / 2 < 1e-12) { root = mid; break; }
     if (fLo * fMid <= 0) { hi = mid; fHi = fMid; } else { lo = mid; fLo = fMid; }
   }
-  return (lo + hi) / 2;
+  if (root === null) root = (lo + hi) / 2;
+
+  // The bracket says a root exists; this says the returned rate IS one. A
+  // truncated loop, a bracket that straddles a pole rather than a zero, or an
+  // arithmetic overflow anywhere in between all end here with an NPV nowhere
+  // near zero, and a rate that does not zero the NPV is not an IRR. Measured
+  // against the size of the flows, because "close to zero" on a $90m schedule
+  // is not the same number of dollars as on a $900k one.
+  const scale = cashFlows.reduce((s, c) => Math.max(s, Math.abs(c)), 0);
+  const residual = npv(root);
+  if (!Number.isFinite(residual) || Math.abs(residual) > Math.max(tol, scale * 1e-6)) return null;
+  return root;
 }
 
 /** Compound a per-period rate to an annual rate. */
@@ -419,6 +448,16 @@ export function runModel(deal = {}, overrides = {}) {
   }
 
   const stabilizedOcc = Math.max(0.01, 1 - vacancyRate / 100);
+  // DELIBERATE SIMPLIFICATION, and it does NOT match operating.goingInNOI below.
+  // The renovation-period schedule credits in-place income net of opex only: no
+  // property tax, no capital reserve, no occupancy-scaled recoveries. The
+  // going-in cap rate nets all three, which is the institutional definition, so
+  // the two differ by up to 312 bps on the same basis (Alamo Ridge: 8.20% here
+  // against 5.08% reported). Reconciling them means charging tax and reserves
+  // through the renovation months, which lowers the modelled return on every
+  // repositioning deal — an underwriting-policy change, not a rendering one.
+  // Flagged rather than made silently; until then no surface may present this
+  // figure and the going-in cap rate as the same measure.
   const inPlaceMonthlyNoi = constCfg.hasInPlaceIncome
     ? (a.inPlaceRevenue / 12) * (1 - operatingExpenseRatio / 100)
     : 0;
@@ -677,12 +716,25 @@ export function runModel(deal = {}, overrides = {}) {
   // the capital structure and levies property tax on lender fees.
   const acquisitionBasis = land > 0 ? land : null;
   const inPlaceRevenue = constCfg.hasInPlaceIncome ? Math.max(0, a.inPlaceRevenue) : 0;
+  // WHY the rate is missing, decided once here rather than re-derived by each
+  // surface. Three different facts about a deal collapse to the same null, and
+  // a surface guessing between them printed "a ground-up deal has no going-in
+  // yield" on a tenant-improvement deal and on an acquisition with $3.4m of
+  // in-place income whose purchase price was simply blank.
+  let goingInCapUnavailable = null;
+  if (!constCfg.hasInPlaceIncome) goingInCapUnavailable = 'ground-up';
+  else if (!(inPlaceRevenue > 0)) goingInCapUnavailable = 'no-in-place-income';
+  else if (acquisitionBasis === null) goingInCapUnavailable = 'no-acquisition-basis';
+  else if (!(grossRevenue > 0)) goingInCapUnavailable = 'no-revenue-base';
+
   let goingInNOI = null;
-  if (inPlaceRevenue > 0 && acquisitionBasis !== null && grossRevenue > 0) {
+  if (goingInCapUnavailable === null) {
     // In-place revenue against gross potential rent is the occupancy already
-    // achieved, and every term below uses it exactly as the operating schedule
-    // uses occupancy — a going-in NOI computed on a different definition of NOI
-    // is not comparable to anything else this model reports.
+    // achieved, and every term below uses it exactly as the STABILISED operating
+    // schedule uses occupancy, so this is comparable to stabilised NOI and to
+    // yield on cost. It is deliberately NOT comparable to months[].noi during
+    // the renovation period, which is grossed of tax and reserves — see the
+    // note on inPlaceMonthlyNoi above.
     const inPlaceOcc = Math.min(1, inPlaceRevenue / grossRevenue);
     const opexAtFullOccupancy = grossRevenue * (operatingExpenseRatio / 100);
     // Striking opex on in-place revenue instead would make a half-empty
@@ -697,9 +749,9 @@ export function runModel(deal = {}, overrides = {}) {
     // negative in-place NOI comes to report a positive going-in cap rate.
     const inPlaceRecoveries = (inPlaceOpex + inPlaceTax) * expenseRecoveryRate * inPlaceOcc;
     // Tax and reserves are netted here, on the same definition of NOI the
-    // operating schedule uses. A going-in cap gross of a 2.81% Houston tax bill
-    // overstates the yield by most of 200 bps, which is exactly the kind of
-    // error reporting this number separately is meant to prevent.
+    // STABILISED operating schedule uses. A going-in cap gross of a 2.81%
+    // Houston tax bill overstates the yield by most of 200 bps, which is exactly
+    // the kind of error reporting this number separately is meant to prevent.
     goingInNOI = inPlaceRevenue + inPlaceRecoveries - inPlaceOpex - inPlaceTax - capexReserveAnnual;
   }
   const goingInCapRate = goingInNOI === null ? null : goingInNOI / acquisitionBasis;
@@ -763,7 +815,7 @@ export function runModel(deal = {}, overrides = {}) {
     operating: {
       stabilizedNOI, stabilizedDebtService, stabilizedOccupancy,
       grossPotentialRevenue, stabilizedOutgoings, breakEvenOccupancy,
-      yieldOnCost, goingInCapRate, goingInNOI, acquisitionBasis,
+      yieldOnCost, goingInCapRate, goingInNOI, acquisitionBasis, goingInCapUnavailable,
       developmentSpreadBps, stabilizedDSCR, minDSCR, minStabilizedDSCR, debtYield,
       stabilizationMonth: C + stabStart, interestOnlyMonths,
     },
@@ -815,6 +867,9 @@ function degenerateResult({ baseProjectCost, propertyTaxRate, equityCommitment, 
       stabilizedNOI: null, stabilizedDebtService: null, stabilizedOccupancy: null,
       grossPotentialRevenue: null, stabilizedOutgoings: null, breakEvenOccupancy: null,
       yieldOnCost: null, goingInCapRate: null, goingInNOI: null, acquisitionBasis: null,
+      // An unmodelled deal has not established that any of the three specific
+      // reasons applies, so the reason is unknown too rather than asserted.
+      goingInCapUnavailable: null,
       developmentSpreadBps: null, stabilizedDSCR: null, minDSCR: null, minStabilizedDSCR: null,
       debtYield: null, stabilizationMonth: 0, interestOnlyMonths: 0,
     },

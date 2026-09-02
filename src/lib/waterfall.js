@@ -274,6 +274,15 @@ export function runWaterfall(equityFlows, config = {}) {
     }
 
     let investorDistribution = 0;
+    // The three closures below read and write the balances the period loop
+    // carries — `investorProfit`, `accruedPref`, `unreturnedCapital`. Every one
+    // of them is called synchronously inside the iteration that declares it and
+    // none is stored, returned or deferred, so each sees exactly the balances of
+    // its own period; there is no later invocation to capture a stale or an
+    // advanced one. The rule cannot see that, and hoisting them out to satisfy
+    // it would thread four mutable accumulators through an untested distribution
+    // engine to silence a false positive.
+    // eslint-disable-next-line no-loop-func
     const payInvestors = (amount, isProfit) => {
       investorDistribution += amount;
       if (isProfit) investorProfit += amount;
@@ -290,6 +299,7 @@ export function runWaterfall(equityFlows, config = {}) {
     const residualByTier = cfg.tiers.map(() => 0);
     let gpPromote = 0;
 
+    // eslint-disable-next-line no-loop-func
     const payPref = () => {
       const amount = Math.min(remaining, accruedPref);
       if (amount <= 0) return;
@@ -298,6 +308,7 @@ export function runWaterfall(equityFlows, config = {}) {
       prefPaid += amount;
       payInvestors(amount, true);
     };
+    // eslint-disable-next-line no-loop-func
     const payCapital = () => {
       const amount = Math.min(remaining, unreturnedCapital);
       if (amount <= 0) return;

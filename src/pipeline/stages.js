@@ -81,6 +81,74 @@ export function stage(landed, context = {}) {
 // ── Canonical ───────────────────────────────────────────────────────────────
 
 /**
+ * One effective tax rate per jurisdiction per tax year, from the per-parcel
+ * rates on the roll.
+ *
+ * The modal rate — the one most parcels in the county are actually charged —
+ * which is what project.js already documents itself as reading. Ties break on
+ * the HIGHER rate: property tax is a cost, so the conservative reading is the
+ * one an underwriting should carry when the roll does not settle the question.
+ * Deliberately not an average: the mean of 2.42 and 2.15 is a rate no parcel
+ * pays, and it would be presented as a sourced figure.
+ */
+function jurisdictionSummary(rates) {
+  const byKey = new Map();
+  for (const r of rates) {
+    const key = `${r.jurisdictionId}|${r.taxYear}`;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(r);
+  }
+  const out = [];
+  for (const group of byKey.values()) {
+    const counts = new Map();
+    for (const r of group) counts.set(r.taxRate, (counts.get(r.taxRate) ?? 0) + 1);
+    let best = null;
+    for (const [rate, n] of counts) {
+      if (best === null || n > best.n || (n === best.n && rate > best.rate)) best = { rate, n };
+    }
+    const first = group[0];
+    out.push({
+      jurisdictionId: first.jurisdictionId,
+      taxYear: first.taxYear,
+      sourceId: first.sourceId,
+      validFrom: first.validFrom,
+      validTo: first.validTo,
+      taxRate: best.rate,
+      parcels: group.length,
+      distinctRates: counts.size,
+    });
+  }
+  return out;
+}
+
+/**
+ * One representative arterial count per metro per year, from the stations read.
+ *
+ * markets.js defines `trafficCount` as a REPRESENTATIVE arterial AADT, so this
+ * reports a count a station actually measured rather than a mean of several,
+ * which would be a figure no road carries presented as a sourced observation.
+ * The lower of the two middle stations: the median is the representative one,
+ * and where the stations straddle it the lower count is the conservative
+ * underwriting — traffic drives revenue on the property types that read it.
+ */
+function representativeTraffic(stations) {
+  const byKey = new Map();
+  for (const s of stations) {
+    if (s.aadt === null || s.aadt === undefined) continue;
+    const key = `${s.id}|${s.year}`;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(s);
+  }
+  const out = [];
+  for (const group of byKey.values()) {
+    const sorted = [...group].sort((a, b) => a.aadt - b.aadt || String(a.stationId).localeCompare(String(b.stationId)));
+    const pick = sorted[Math.floor((sorted.length - 1) / 2)];
+    out.push({ ...pick, stations: group.length });
+  }
+  return out;
+}
+
+/**
  * Fold staged batches into a graph and a fact store.
  *
  * @param {Array} batches            output of stage()
@@ -133,6 +201,7 @@ export function canonicalize(batches, { cbsaToMarket = {}, countyToMarket = {}, 
     }
 
     else if (batch.sourceId.startsWith('assessor.')) {
+      const jurisdictionRates = [];
       for (const r of batch.records) {
         graph.addNode({
           id: r.parcelId, type: 'Parcel',
@@ -150,11 +219,18 @@ export function canonicalize(batches, { cbsaToMarket = {}, countyToMarket = {}, 
           const jurisdictionId = `jurisdiction:${r.county}`;
           graph.addNode({ id: jurisdictionId, type: 'Jurisdiction', props: { county: r.county } });
           graph.addEdge({ from: r.parcelId, to: jurisdictionId, type: 'taxed_by' });
-          facts.assert({
-            subject: jurisdictionId, predicate: 'effectiveTaxRate', value: r.taxRate,
-            validFrom: r.validFrom, validTo: r.validTo, recordedAt: recorded,
-            source: `${batch.sourceId}:${r.taxYear}`,
-          });
+          // Collected, not asserted per parcel. Every parcel in a county wrote
+          // its OWN rate to the same jurisdiction key, in the same batch, over
+          // the same tax-year window — so the rows tied on both clocks and on
+          // the valid window by construction, and the store's answer was decided
+          // by row order in the assessor download (Dallas: 2.42% or 2.15%, 27
+          // bps apart, surfaced verbatim on the Market Intelligence screen).
+          // corrections() then reported the pair as a retroactive correction
+          // between two unrelated parcels, which is the report an underwriter is
+          // meant to trust after a deal is approved. One fact per jurisdiction
+          // per tax year is what project.js already documents itself as reading.
+          jurisdictionRates.push({ jurisdictionId, county: r.county, taxRate: r.taxRate,
+            validFrom: r.validFrom, validTo: r.validTo, taxYear: r.taxYear, sourceId: batch.sourceId });
         }
 
         if (r.appraisedValue !== null) {
@@ -171,19 +247,52 @@ export function canonicalize(batches, { cbsaToMarket = {}, countyToMarket = {}, 
           });
         }
       }
+
+      for (const j of jurisdictionSummary(jurisdictionRates)) {
+        facts.assert({
+          subject: j.jurisdictionId, predicate: 'effectiveTaxRate', value: j.taxRate,
+          validFrom: j.validFrom, validTo: j.validTo, recordedAt: recorded,
+          source: `${j.sourceId}:${j.taxYear}`,
+        });
+        // A roll whose parcels disagree is a real fact about the county, and
+        // the modal rate hides it. Reported rather than dropped.
+        if (j.parcels > 1 && j.distinctRates > 1) {
+          report.skipped.push(
+            `${j.jurisdictionId} ${j.taxYear}: ${j.distinctRates} distinct parcel tax rates across ` +
+            `${j.parcels} parcels, reported at the modal ${j.taxRate}`,
+          );
+        }
+      }
     }
 
     else if (batch.sourceId === 'txdot.aadt') {
+      // Same collision as the jurisdiction tax rate, and the same fix. Every
+      // station in a metro wrote its own count to one metro key over one year,
+      // in one batch, so the rows tied on both clocks and the window and the
+      // store answered with whichever station came last in the feed — and
+      // corrections() reported the pair (42,000 against 48,000) as a
+      // retroactive correction. markets.js defines this feature as a single
+      // REPRESENTATIVE arterial count, so one is chosen and the rest disclosed.
+      const stations = [];
       for (const r of batch.records) {
         const marketKey = batch.marketKey;
         if (!marketKey) { report.skipped.push(`traffic station ${r.stationId} has no market mapping`); continue; }
         const id = `metro:${marketKey}`;
         if (!graph.getNode(id)) graph.addNode({ id, type: 'Metro', props: { marketKey } });
+        stations.push({ id, year: r.year, aadt: r.aadt, stationId: r.stationId });
+      }
+      for (const t of representativeTraffic(stations)) {
         facts.assert({
-          subject: id, predicate: 'trafficCount', value: r.aadt,
-          validFrom: `${r.year}-01-01`, validTo: `${r.year + 1}-01-01`,
-          recordedAt: recorded, source: `${batch.sourceId}:${r.stationId}`,
+          subject: t.id, predicate: 'trafficCount', value: t.aadt,
+          validFrom: `${t.year}-01-01`, validTo: `${t.year + 1}-01-01`,
+          recordedAt: recorded, source: `${batch.sourceId}:${t.stationId}`,
         });
+        if (t.stations > 1) {
+          report.skipped.push(
+            `${t.id} ${t.year}: ${t.stations} traffic stations, reported at the representative ` +
+            `${t.aadt} from ${t.stationId}`,
+          );
+        }
       }
     }
   }

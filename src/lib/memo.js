@@ -16,6 +16,7 @@
  */
 
 import { runModel } from './finance';
+import { waterfallFromModel } from './waterfall';
 import { validate, DEFAULT_COVENANTS } from './validation';
 import { runScenarios, sensitivityGrid, breakeven } from './sensitivity';
 import { findMarket } from './markets';
@@ -124,7 +125,158 @@ function governedRow(field, deal) {
   ];
 }
 
+/** Why a going-in cap rate does not exist, in the engine's own three cases. */
+const GOING_IN_UNAVAILABLE = {
+  'ground-up': 'No income in place at acquisition; a ground-up deal has no going-in yield',
+  'no-in-place-income': 'No in-place revenue is underwritten at acquisition, so there is no going-in NOI to price',
+  'no-acquisition-basis': 'Income is in place, but no acquisition basis is underwritten to price it against',
+  'no-revenue-base': 'No stabilised rent roll to measure the in-place occupancy against',
+};
+
+/**
+ * The equity share row, reading off the model rather than the deal whenever the
+ * loan was sized to the credit box.
+ */
+function sizedEquityRow(deal, model) {
+  const row = governedRow('downPayment', deal);
+  if (!model.financing.sizing || !(model.budget.baseProjectCost > 0)) return row;
+  const effective = (model.financing.equityCommitment / model.budget.baseProjectCost) * 100;
+  return [row[0], `${FIELD_PRESENTATION.downPayment.fmt(effective)} (sized)`, row[2]];
+}
+
 const kv = (label, value, source) => ({ label, value, source });
+
+/**
+ * The lender's three sizing tests, in words a reader outside the deal team can
+ * act on. `sizeDebt()` keys them 'ltc' / 'dscr' / 'debtYield'; a memo that
+ * printed the key would be asking its reader to know the codebase.
+ */
+const CONSTRAINT_LABEL = {
+  ltc: 'loan to cost',
+  dscr: 'debt service coverage',
+  debtYield: 'debt yield',
+};
+
+/**
+ * The debt sizing paragraph.
+ *
+ * A loan sized to a covenant and a loan sized to an equity percentage are
+ * materially different claims about the same dollar figure — the first is the
+ * lender's answer, the second is the sponsor's input — and the balance on the
+ * capital stack table reads identically either way. Naming the binding test is
+ * the whole point: an LTC-bound deal is solved with more equity, a
+ * coverage-bound deal is not solved with equity at all.
+ */
+function debtSizingNote(sizing) {
+  if (!sizing) {
+    return {
+      type: 'note',
+      title: 'Debt sizing',
+      text: 'The loan is the residual of the underwritten equity share, not a lender-sized amount. It has not been tested against loan-to-cost, coverage or debt yield limits at sizing; the screen on the summary page tests the resulting balance after the fact.',
+    };
+  }
+
+  if (!sizing.bindingConstraint) {
+    return {
+      type: 'note',
+      title: 'Debt sizing',
+      text: 'Constrained sizing was requested, but no lender test could be evaluated on this deal — there is no basis, no coverage floor and no debt yield floor to size against — so the loan falls back to the underwritten equity share. The balance below is not a lender-sized amount.',
+    };
+  }
+
+  const other = ['ltc', 'dscr', 'debtYield']
+    .filter((k) => k !== sizing.bindingConstraint)
+    .map((k) => {
+      const limit = sizing.constraints?.[k];
+      // An untested constraint is reported as untested. Printing it as $0 would
+      // make it look like the tightest limit of the three.
+      return `${CONSTRAINT_LABEL[k]} ${limit === null || limit === undefined ? 'not evaluated' : money0(limit)}`;
+    })
+    .join(', ');
+
+  const settled = sizing.converged
+    ? ''
+    : ` The sizing loop did not settle within ${sizing.passes} passes — the loan capitalises interest, which moves basis, which moves the loan — so the balance shown is the last iterate rather than a converged solution.`;
+
+  return {
+    type: 'note',
+    title: 'Debt sizing',
+    text: `The loan is sized to the binding lender constraint, not to the equity share on the appendix page. Of the three tests, ${CONSTRAINT_LABEL[sizing.bindingConstraint]} binds at ${money0(sizing.loanAmount)} against ${other}. The equity share is the residual of that loan, not an input.${settled}`,
+  };
+}
+
+/**
+ * Returns after the promote, when a structure has been configured.
+ *
+ * `resolveWaterfall()` throws on a tier stack whose arithmetic has no answer.
+ * That refusal has to reach the page rather than be swallowed: a memo that
+ * silently dropped the waterfall would present pre-promote returns under a
+ * document that says a promote structure exists.
+ */
+function waterfallBlocks(model, config) {
+  // The capital stack on page 1 is the model's, and waterfallFromModel derives
+  // the co-invest from that same stack. A supplied structure carrying its own
+  // gpCoInvestShare would split one equity commitment two ways inside a single
+  // document, so the model's share wins here.
+  const structure = { ...config };
+  delete structure.gpCoInvestShare;
+
+  let wf;
+  try {
+    wf = waterfallFromModel(model, structure);
+  } catch (e) {
+    // `applied: false`. Callers branched on block COUNT, and the failure note is
+    // itself a block — so a rejected structure printed "the waterfall below
+    // splits the same cash flows" above the note saying it could not be run, and
+    // a disclosure page claiming LP and GP figures the document does not carry.
+    return {
+      applied: false,
+      blocks: [{
+        type: 'note',
+        title: 'Distribution waterfall',
+        text: `A promote structure was supplied but could not be run: ${String(e.message).replace(/^waterfall:\s*/, '')}. Every return in this memorandum is therefore a project-level figure before promote.`,
+      }],
+    };
+  }
+
+  const cfg = wf.config;
+  const tierText = cfg.tiers
+    .map((t) => (t.irrHurdle === null
+      ? `${pct(t.gpShare, 0)} above the top hurdle`
+      : `${pct(t.gpShare, 0)} to a ${pct(t.irrHurdle, 1)} IRR`))
+    .join(', then ');
+
+  const shortfall = wf.returns.capitalShortfall + wf.returns.prefShortfall;
+
+  return { applied: true, blocks: [
+    {
+      type: 'table',
+      title: 'Distribution waterfall',
+      source: 'waterfall.waterfallFromModel',
+      headers: ['Measure', 'Value', 'Basis'],
+      align: ['l', 'r', 'l'],
+      rows: [
+        ['LP IRR', pct(wf.returns.lpIRR), 'LP cash flows after pref, return of capital and promote'],
+        ['GP IRR', pct(wf.returns.gpIRR), 'GP co-invest and promote, net of clawback'],
+        ['LP equity multiple', mult(wf.returns.lpEquityMultiple), 'LP distributions ÷ LP contributions'],
+        ['GP promote', money0(wf.totals.gpPromoteNet), 'Promote earned, net of any clawback'],
+        ['Promote share of profit', pct(wf.returns.gpPromoteShareOfProfit, 1), 'Net promote ÷ total equity profit'],
+        ['Preferred return paid', money0(wf.totals.prefPaid), `${pct(cfg.prefRate, 1)} ${cfg.prefCompounding ? 'compounding' : 'simple'} on unreturned capital`],
+        ['Unpaid preferred return', money0(wf.returns.prefShortfall), 'Accrued and still owed to the investor class at sale'],
+        ['Unreturned capital', money0(wf.returns.capitalShortfall), 'Contributions never returned to the investor class'],
+      ],
+    },
+    {
+      type: 'note',
+      title: 'Promote structure',
+      text: `Pref ${pct(cfg.prefRate, 1)} ${cfg.prefCompounding ? 'compounding' : 'simple'}, quoted as ${cfg.prefRateBasis === 'nominal' ? 'a nominal annual rate divided by twelve' : 'an effective annual rate'}, accruing on unreturned capital; ${cfg.returnOfCapitalFirst ? 'capital is returned before pref is paid' : 'pref is paid before capital is returned'}; ${cfg.catchUp.enabled ? `GP catch-up at ${pct(cfg.catchUp.gpShare, 0)} to a ${pct(cfg.catchUp.targetPromoteShare, 0)} promote` : 'no GP catch-up'}; residual promote ${tierText}. GP co-invest of ${pct(cfg.gpCoInvestShare, 0)} ranks pari passu with the LP, so promote is the only preferential GP economics. ${
+        wf.totals.gpClawback > 0
+          ? `Promote of ${money0(wf.totals.gpClawback)} was clawed back at sale because the investor class ended short.`
+          : 'No clawback was triggered.'
+      }${shortfall > 0 ? ` The investor class ends ${money0(shortfall)} short of capital and accrued pref, so the promote tiers above it were never reached.` : ''}`,
+    },
+  ] };
+}
 
 /**
  * Build the memo.
@@ -135,6 +287,10 @@ export function buildMemo(deal, {
   firm = 'Investment Committee',
   date = new Date(),
   covenants = {},
+  // A promote structure is not part of the deal inputs the model runs on, so
+  // it is carried separately. Absent, the memo says so on the disclosure page
+  // rather than leaving the reader to assume the returns are post-promote.
+  waterfall = deal.waterfall ?? null,
 } = {}) {
   const model = runModel(deal);
   const flags = validate(model, deal, covenants);
@@ -215,6 +371,21 @@ export function buildMemo(deal, {
   });
 
   // 2 — Returns ------------------------------------------------------------
+  // The waterfall is run only when a structure exists, and its absence is a
+  // disclosure rather than a blank space: returns with no waterfall behind them
+  // are pre-promote, and nothing on the page says so otherwise.
+  const wf = waterfall ? waterfallBlocks(model, waterfall) : { applied: false, blocks: [] };
+  const wfBlocks = wf.blocks;
+  const wfApplied = wf.applied;
+  // Which of the three tests failed is decided by the engine, not re-derived
+  // here: the same null used to print "a ground-up deal has no going-in yield"
+  // on a tenant-improvement deal, and on an acquisition carrying $3.4m of
+  // in-place income whose purchase price was simply blank.
+  const goingInBasis = operating.goingInCapRate !== null
+    ? `In-place NOI net of property tax, reserves and occupancy-scaled recoveries ÷ acquisition basis of ${money0(operating.acquisitionBasis)}, excluding construction draws. The renovation-period cash flows credit in-place income net of operating expense alone and so run richer than this yield.`
+    : GOING_IN_UNAVAILABLE[operating.goingInCapUnavailable]
+      ?? 'The going-in yield could not be measured on this deal';
+
   pages.push({
     n: 2,
     title: 'Returns & Capitalisation',
@@ -236,6 +407,13 @@ export function buildMemo(deal, {
         ],
       },
       {
+        type: 'note',
+        text: wfApplied
+          ? 'The measures above are project-level equity returns, before any promote. The waterfall below splits the same cash flows between the limited partners and the sponsor.'
+          : 'No promote structure has been applied to this deal, so the measures above are project-level equity returns, before any promote. LP and GP outcomes will be lower and higher than these respectively.',
+      },
+      ...wfBlocks,
+      {
         type: 'table',
         title: 'Operating & credit',
         source: 'model.operating',
@@ -244,15 +422,33 @@ export function buildMemo(deal, {
         rows: [
           ['Stabilized NOI', money0(operating.stabilizedNOI), `Stabilizes month ${operating.stabilizationMonth}`],
           ['Yield on cost', pct(operating.yieldOnCost, 2), 'Stabilized NOI ÷ total development cost'],
+          // A ratio on model.operating, so pct() scales it once. The flat
+          // metric bag carries a percent-scaled twin of this figure; reading
+          // that one here would print 685%.
+          ['Going-in cap rate', pct(operating.goingInCapRate, 2), goingInBasis],
           ['Exit cap rate', pctRaw(deal.exitCapRate), 'Underwritten'],
           ['Development spread', operating.developmentSpreadBps === null ? NA : bps(operating.developmentSpreadBps), 'Yield on cost less exit cap'],
           ['DSCR, stabilized', mult(operating.minStabilizedDSCR), 'Minimum rolling year from stabilization'],
           ['DSCR, incl. lease-up', mult(operating.minDSCR), 'Minimum rolling year over the full hold'],
           ['Debt yield', pct(operating.debtYield, 2), 'Stabilized NOI ÷ loan balance'],
           ['Loan to cost', pct(financing.ltc, 1), 'Permanent balance ÷ total project cost'],
+          // Also a ratio: 0.83 is 83% of the rent roll, not 0.83% of it.
+          ['Break-even occupancy', pct(operating.breakEvenOccupancy, 1), 'Operating cost, tax, reserves and debt service ÷ gross potential revenue, both struck at full occupancy'],
+          // model.operating.stabilizedOccupancy is the AVERAGE occupancy over
+          // the twelve-month stabilisation window, which finance.js records can
+          // still be leasing up on a short hold — not the vacancy assumption.
+          // Labelled as the underwritten input it read +993 bps where the
+          // figure printed was -4,390 bps: a 5,383 bps gap and the wrong sign.
+          ['Average stabilised-year occupancy', pct(operating.stabilizedOccupancy, 1),
+            'Mean occupancy across the twelve-month stabilisation window'],
+          ['Occupancy cushion', operating.breakEvenOccupancy === null || operating.stabilizedOccupancy === null
+            ? NA
+            : bps((operating.stabilizedOccupancy - operating.breakEvenOccupancy) * 10000, true),
+            'Average stabilised-year occupancy less break-even'],
           ['Interest-only', `${operating.interestOnlyMonths} mo`, 'Through stabilization'],
         ],
       },
+      debtSizingNote(financing.sizing),
       {
         type: 'table',
         title: 'Exit',
@@ -392,7 +588,11 @@ export function buildMemo(deal, {
     governedRow('operatingExpenseRatio', deal),
     ['Expense recovery', pct(model.assumptions.expenseRecoveryRate, 0), 'By property type'],
     ['Property tax rate', pctRaw(model.assumptions.propertyTaxRate), 'Resolved from market'],
-    governedRow('downPayment', deal),
+    // On the constrained-sizing path runSizedToConstraints computes its own
+    // equity share and never writes it back to the deal, so the stored input is
+    // the discarded one. A column headed "Underwritten" must carry the figure
+    // the model was underwritten at.
+    sizedEquityRow(deal, model),
     governedRow('interestRate', deal),
     governedRow('loanTerm', deal),
     governedRow('exitCapRate', deal),
@@ -434,7 +634,13 @@ export function buildMemo(deal, {
           'Every figure in this memorandum is computed from a monthly discrete-period model at the time of generation. No figure is transcribed by hand.',
           'Returns are internal rates of return solved from dated monthly cash flows. Sale proceeds are net of cost of sale and the outstanding loan balance. The exit is priced on forward twelve-month net operating income.',
           'The operating expense ratio excludes property tax, which is computed separately from the market rate. Expense reimbursements are modelled from the property type rather than from lease-level terms.',
-          'The model has no rent roll and no tenant-level rollover. It carries no joint-venture waterfall or promote structure; equity returns are shown before any promote.',
+          // This sentence used to assert flatly that the model carried no
+          // waterfall. It now does, so the standing claim would be false on
+          // every memo built with a structure — and still needs saying on the
+          // ones built without one, where the returns really are pre-promote.
+          wfApplied
+            ? 'The model has no rent roll and no tenant-level rollover. A joint-venture waterfall is applied on the returns page: the LP and GP figures there are after pref, return of capital and promote, and every other equity return in this memorandum is a project-level figure before promote.'
+            : 'The model has no rent roll and no tenant-level rollover. No joint-venture waterfall or promote structure has been applied to this deal, so every equity return in this memorandum is a project-level figure shown before any promote.',
           'MARKET DATA: property tax rates aside, the market factors on the Market Context page are directional seed values. They are not sourced, not current, and must not be relied upon for an investment decision until replaced with a sourced feed.',
           'The screening result is a mechanical test against stated thresholds. It is not an investment recommendation, a valuation, or an appraisal.',
         ],

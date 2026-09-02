@@ -576,29 +576,25 @@ function migrate(parsed) {
  * with nothing on screen to say so.
  */
 function factStoreFrom(json) {
-  const store = new FactStore();
-  store.facts = json.facts.map((f, i) => {
-    if (!f || typeof f !== 'object') throw new Error(`fact ${i} is not an object`);
-    for (const field of ['subject', 'predicate', 'validFrom', 'recordedAt', 'source']) {
-      if (!f[field]) throw new Error(`fact ${i} is missing ${field}`);
-    }
-    const validTo = f.validTo ?? null;
-    if (validTo !== null && validTo <= f.validFrom) {
-      throw new Error(`fact ${i} has validTo on or before validFrom`);
-    }
-    return {
-      subject: f.subject,
-      predicate: f.predicate,
-      value: 'value' in f ? f.value : null,
-      validFrom: f.validFrom,
-      validTo,
-      recordedAt: f.recordedAt,
-      source: f.source,
-      // A payload that never carried a confidence has an unknown one. Defaulting
-      // it to 1 would present a guess as certainty; null renders as 'n/a'.
-      confidence: typeof f.confidence === 'number' ? f.confidence : null,
-    };
-  });
+  // Delegated to FactStore.fromJSON rather than reimplemented. The second
+  // loader had drifted in two ways that mattered, and this is the ONLY path the
+  // application actually loads through: it compared `validTo <= f.validFrom` as
+  // TEXT, so a window running to '2025-1-1' from '2025-06-01' loaded clean; and
+  // it assigned `store.facts` wholesale, admitting rows whose timestamps name no
+  // instant — counted in `store.size` and in this envelope's own counts, yet
+  // silently skipped by the resolver, so the store reported facts that answered
+  // nothing. fromJSON places every clock as an instant before admitting a row.
+  const store = FactStore.fromJSON(json);
+  // persist keeps its own contract: a snapshot sits behind a checksum, so a row
+  // it cannot place condemns the payload rather than being set aside. Dropping
+  // one would change a bitemporal answer with nothing on screen to say so.
+  if (store.quarantined.length) {
+    const [first] = store.quarantined;
+    throw new Error(
+      `fact ${first.index} ${first.reason}` +
+      (store.quarantined.length > 1 ? ` (and ${store.quarantined.length - 1} more)` : ''),
+    );
+  }
   return store;
 }
 

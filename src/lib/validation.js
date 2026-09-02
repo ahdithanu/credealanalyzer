@@ -27,6 +27,45 @@ const rule = (id, severity, field, title, detail) => ({ id, severity, field, tit
 // which leaves the covenant short by parts in a hundred million; a screen
 // reporting "1.25x" beside "breaches 1.25x covenant" is unusable.
 const AT_LIMIT = 1e-6;
+
+/**
+ * The break-even occupancy verdict, in ONE place.
+ *
+ * Two independent failures. Nesting the second inside the first is what
+ * silenced this rule on the deals that needed it most: a break-even can sit
+ * above the occupancy actually underwritten while still reading below the
+ * firm's ceiling, and the ceiling test alone then never fires.
+ *
+ * Exported because the Deal Model tile has to reach the same verdict as the
+ * flag list beside it. Reimplementing the ceiling test alone on the screen made
+ * the tile print "clears", untoned, on deals where this function returns an
+ * ERROR — and in Grid posture the flag list is hidden and the tile is the only
+ * break-even statement on screen.
+ *
+ * @param {Object} operating   model.operating
+ * @param {Object} covenants   resolved covenants (see DEFAULT_COVENANTS)
+ */
+export function breakEvenBreach(operating, covenants = {}) {
+  const c = { ...DEFAULT_COVENANTS, ...covenants };
+  const raw = operating?.breakEvenOccupancy;
+  const breakEven = Number.isFinite(raw) ? raw : null;
+  const occ = operating?.stabilizedOccupancy;
+  const underwrittenOcc = Number.isFinite(occ) ? occ : null;
+  const overCeiling = breakEven !== null && breakEven > c.maxBreakEvenOccupancy;
+  const noCushion = breakEven !== null && underwrittenOcc !== null && breakEven >= underwrittenOcc;
+  return {
+    breakEven,
+    underwrittenOcc,
+    overCeiling,
+    noCushion,
+    breached: overCeiling || noCushion,
+    ceiling: c.maxBreakEvenOccupancy,
+    // Null, not zero: with no underwritten occupancy there is no cushion to
+    // measure, which is a different claim from a cushion of nothing.
+    cushion: breakEven === null || underwrittenOcc === null ? null : underwrittenOcc - breakEven,
+  };
+}
+
 const below = (value, limit) => value < limit - Math.abs(limit) * AT_LIMIT;
 const above = (value, limit) => value > limit + Math.abs(limit) * AT_LIMIT;
 
@@ -88,15 +127,8 @@ export function validate(model, deal = {}, covenants = {}) {
 
   // Break-even occupancy is the only figure here that answers "how empty can
   // this get before it stops paying its own bills", which no return metric does.
-  const breakEven = operating.breakEvenOccupancy;
-  const underwrittenOcc = operating.stabilizedOccupancy;
-  // Two independent failures. Nesting the second inside the first is what
-  // silenced this rule on the deals that needed it most: a break-even can sit
-  // above the occupancy actually underwritten while still reading below the
-  // firm's ceiling, and the ceiling test alone then never fires.
-  const overCeiling = breakEven != null && breakEven > c.maxBreakEvenOccupancy;
-  const noCushion = breakEven != null && underwrittenOcc != null && breakEven >= underwrittenOcc;
-  if (overCeiling || noCushion) {
+  const { breakEven, underwrittenOcc, noCushion, breached, cushion } = breakEvenBreach(operating, c);
+  if (breached) {
     // Break-even holds operating cost at its full-occupancy level, so it is an
     // upper bound and can sit above the underwritten occupancy on a deal whose
     // own stabilised coverage still clears 1.0x. The breach is only definite
@@ -104,7 +136,6 @@ export function validate(model, deal = {}, covenants = {}) {
     // is a disclosure that the coverage depends on the expense budget shrinking
     // with the vacancy assumption, which is a warning, not a finding of fact.
     const uncovered = noCushion && operating.stabilizedDSCR !== null && operating.stabilizedDSCR < 1;
-    const cushion = underwrittenOcc == null ? null : underwrittenOcc - breakEven;
     const title = noCushion
       ? `Break-even occupancy ${pct(breakEven)} is at or above the ${pct(underwrittenOcc)} underwritten`
       : `Break-even occupancy ${pct(breakEven)} exceeds the ${pct(c.maxBreakEvenOccupancy)} limit`;

@@ -41,7 +41,9 @@ export function MetricStrip({ items }) {
   return (
     <div className="strip">
       {items.map((m) => (
-        <div className="m" key={m.k}>
+        // Titled with the whole tile, so a note the strip has to truncate on a
+        // narrow window is still readable rather than merely cut off.
+        <div className="m" key={m.k} title={`${m.k}: ${m.v}${m.n ? ` — ${m.n}` : ''}`}>
           <div className="k">{m.k}</div>
           <div className={`v num ${m.tone || ''}`}>{m.v}</div>
           {m.n && <div className="n">{m.n}</div>}

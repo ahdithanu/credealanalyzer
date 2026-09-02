@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { List, Calculator, Table, TrendingUp, Map, FileText, Plus, Download, AlertTriangle } from 'lucide-react';
+import { List, Calculator, Table, Split, TrendingUp, Map, FileText, Plus, Download, AlertTriangle } from 'lucide-react';
 
 import './ui/theme.css';
 import { calculateMetrics } from './lib/finance';
@@ -12,6 +12,7 @@ import { exportDealsCSV } from './lib/exportCsv';
 import Pipeline from './screens/Pipeline';
 import DealModel from './screens/DealModel';
 import CashFlow from './screens/CashFlow';
+import Waterfall from './screens/Waterfall';
 import Sensitivity from './screens/Sensitivity';
 import MarketIntelligence from './screens/MarketIntelligence';
 import ICMemo from './screens/ICMemo';
@@ -20,6 +21,7 @@ const VIEWS = [
   { key: 'pipeline', label: 'Pipeline',     Icon: List },
   { key: 'model',    label: 'Deal Model',   Icon: Calculator },
   { key: 'cashflow', label: 'Cash Flow',    Icon: Table },
+  { key: 'waterfall', label: 'Waterfall',   Icon: Split },
   { key: 'sensitivity', label: 'Sensitivity', Icon: TrendingUp },
   { key: 'market',   label: 'Market Intel', Icon: Map },
   { key: 'memo',     label: 'IC Memo',      Icon: FileText },
@@ -188,6 +190,8 @@ export default function App() {
             <DealModel deal={selected} onChange={updateDeal} posture={posture} onPosture={setPosture} />
           ) : view === 'cashflow' ? (
             <CashFlow deal={selected} />
+          ) : view === 'waterfall' ? (
+            <Waterfall deal={selected} />
           ) : view === 'sensitivity' ? (
             <Sensitivity deal={selected} />
           ) : view === 'market' ? (

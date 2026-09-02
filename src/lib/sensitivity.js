@@ -19,16 +19,34 @@ export const VARIABLES = {
   holdPeriod:       { label: 'Hold period',       unit: 'yrs', step: 1,    apply: (d, v) => ({ ...d, holdPeriod: v }),       read: (d) => d.holdPeriod },
 };
 
-/** Metrics a sensitivity can be measured in. */
+/**
+ * Metrics a sensitivity can be measured in.
+ *
+ * `polarity` is +1 when a higher value is a better deal and -1 when it is a
+ * worse one. Every metric here was higher-is-better until break-even occupancy
+ * arrived, so the tornado exhibit hard-coded that direction into its colours
+ * and painted the outcome that halves the covenant cushion green. Direction is
+ * a property of the metric, so it is declared with the metric.
+ */
 export const METRICS = {
-  leveredIRR:      { label: 'Levered IRR',    format: 'pct', get: (m) => m.returns.leveredIRR },
-  unleveredIRR:    { label: 'Unlevered IRR',  format: 'pct', get: (m) => m.returns.unleveredIRR },
-  equityMultiple:  { label: 'Equity multiple',format: 'x',   get: (m) => m.returns.equityMultiple },
-  yieldOnCost:     { label: 'Yield on cost',  format: 'pct', get: (m) => m.operating.yieldOnCost },
-  developmentSpreadBps: { label: 'Dev spread', format: 'bps', get: (m) => m.operating.developmentSpreadBps },
-  minDSCR:         { label: 'Min DSCR (incl. lease-up)', format: 'x', get: (m) => m.operating.minDSCR },
-  minStabilizedDSCR: { label: 'Min DSCR (stabilized)',   format: 'x', get: (m) => m.operating.minStabilizedDSCR },
-  profit:          { label: 'Profit',         format: '$',   get: (m) => m.returns.profit },
+  leveredIRR:      { label: 'Levered IRR',    format: 'pct', polarity: 1, get: (m) => m.returns.leveredIRR },
+  unleveredIRR:    { label: 'Unlevered IRR',  format: 'pct', polarity: 1, get: (m) => m.returns.unleveredIRR },
+  equityMultiple:  { label: 'Equity multiple',format: 'x',   polarity: 1, get: (m) => m.returns.equityMultiple },
+  yieldOnCost:     { label: 'Yield on cost',  format: 'pct', polarity: 1, get: (m) => m.operating.yieldOnCost },
+  // Both of these are RATIOS on model.operating — 0.83 occupancy, 0.0685 cap
+  // rate — and 'pct' is the tag that scales a ratio by 100 on the way to the
+  // screen. calculateMetrics() carries a percent-scaled twin of the cap rate
+  // (6.85) for the flat metric bag; reading that one here would print 685%,
+  // and tagging these anything else would print break-even as "0.83%".
+  goingInCapRate:  { label: 'Going-in cap rate', format: 'pct', polarity: 1, get: (m) => m.operating.goingInCapRate },
+  // Not a return measure: it is the occupancy at which the asset stops paying
+  // its own bills, so a rising value is a worse deal. Flexing it against rate
+  // or opex is how the cushion over underwritten occupancy gets tested.
+  breakEvenOccupancy: { label: 'Break-even occupancy', format: 'pct', polarity: -1, get: (m) => m.operating.breakEvenOccupancy },
+  developmentSpreadBps: { label: 'Dev spread', format: 'bps', polarity: 1, get: (m) => m.operating.developmentSpreadBps },
+  minDSCR:         { label: 'Min DSCR (incl. lease-up)', format: 'x', polarity: 1, get: (m) => m.operating.minDSCR },
+  minStabilizedDSCR: { label: 'Min DSCR (stabilized)',   format: 'x', polarity: 1, get: (m) => m.operating.minStabilizedDSCR },
+  profit:          { label: 'Profit',         format: '$',   polarity: 1, get: (m) => m.returns.profit },
 };
 
 function evaluate(deal, metric) {

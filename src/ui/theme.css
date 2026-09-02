@@ -193,6 +193,14 @@ table.grid tr.total td {
 }
 table.grid td.name { font-weight: 500; }
 table.grid .sub { display: block; font-size: 10.5px; color: var(--text-4); margin-top: 1px; }
+/* `table.grid .sub` out-specifies a bare `.pos`/`.neg`/`.warnc`, so a toned
+   sub-label rendered in the same muted grey as ordinary sub-text and every
+   status on the waterfall tier table — "not cleared", "$706,860 unreturned",
+   "lookback at sale" — was computed and then thrown away. Restated at matching
+   specificity rather than by loading the markup with an !important. */
+table.grid .sub.pos   { color: var(--pos); }
+table.grid .sub.neg   { color: var(--neg); }
+table.grid .sub.warnc { color: var(--warn); }
 
 /* ── inputs ───────────────────────────────────────────────────────────── */
 
@@ -213,8 +221,16 @@ select.inp { cursor: pointer; }
 /* ── metric strip ─────────────────────────────────────────────────────── */
 
 .strip { display: flex; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
-.strip .m { flex: 1; padding: 9px 13px; min-width: 0; }
+/* Every line in a tile is nowrap, and the strip clips — so on a narrow window a
+   long note ran under the next tile's border and was cut mid-glyph with nothing
+   to say it had been. Truncation is now marked (the tile carries the full text
+   as a tooltip), and the tile clips its own overflow so it can never bleed into
+   its neighbour. */
+.strip .m { flex: 1; padding: 9px 13px; min-width: 0; overflow: hidden; }
 .strip .m + .m { border-left: 1px solid var(--line); }
+.strip .m .k,
+.strip .m .v,
+.strip .m .n { overflow: hidden; text-overflow: ellipsis; }
 .strip .m .k { font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-4); white-space: nowrap; }
 .strip .m .v { font-size: 17px; font-weight: 500; letter-spacing: -0.02em; margin-top: 3px; white-space: nowrap; }
 .strip .m .n { font-size: 10px; color: var(--text-4); margin-top: 2px; white-space: nowrap; }
@@ -248,6 +264,85 @@ select.inp { cursor: pointer; }
   display: inline-flex; align-items: center; gap: 5px;
 }
 .prov::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--warn); }
+
+.inp:disabled {
+  color: var(--text-4);
+  background: var(--bg-raised);
+  cursor: not-allowed;
+}
+
+/* ── waterfall ────────────────────────────────────────────────────────────
+   One hue family and a neutral, never a categorical palette: the three keys
+   below are shared by the split bar and the legend beside it, so a colour can
+   never mean one thing in the bar and another in the list. */
+
+.k-lp      { background: var(--accent-dim); }
+.k-gpco    { background: var(--text-4); }
+.k-promote { background: var(--accent-bright); }
+
+.splitbar {
+  display: flex; height: 8px; overflow: hidden;
+  border-radius: 4px; background: var(--sunken);
+}
+.splitbar > span { display: block; height: 100%; min-width: 0; }
+
+.swatch { display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 2px; }
+
+/* The tier stack is edited as cards rather than table rows because a tier is
+   two coupled numbers — a hurdle and the split above it — and splitting them
+   across a row invites reading a hurdle against the wrong promote. */
+.tier-stack { display: flex; flex-wrap: wrap; gap: 8px; }
+.tier-card {
+  display: flex; flex-direction: column; gap: 7px;
+  min-width: 140px; padding: 8px 10px;
+  background: var(--sunken);
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.tier-card.term { border-color: var(--accent-deep); }
+.tier-card .tier-hd { display: flex; align-items: center; gap: 6px; }
+.tier-card .tier-n {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--text-4);
+}
+.tier-card .tier-open {
+  display: flex; align-items: center; height: 28px;
+  font-size: 11.5px; font-style: italic;
+}
+.tier-x {
+  margin-left: auto; flex: none;
+  width: 16px; height: 16px; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 3px; background: none; color: var(--text-4);
+  font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.tier-x:hover { background: var(--neg-wash); color: var(--neg); }
+
+/* A deal that never returns its investors' capital is a screen of zeros, and a
+   screen of zeros reads as broken. The callout is how a deliberate empty state
+   says which one it is. */
+.callout {
+  display: flex; gap: 9px; padding: 10px 12px;
+  font-size: 11.5px; color: var(--text-2);
+  background: var(--sunken);
+  border: 1px solid var(--line); border-left-width: 2px; border-radius: var(--r-sm);
+}
+.callout .ct { font-weight: 600; color: var(--text); }
+.callout .cd { color: var(--text-3); margin-top: 3px; }
+.callout.warn { background: var(--warn-wash); border-left-color: var(--warn); color: var(--warn); }
+.callout.neg  { background: var(--neg-wash);  border-left-color: var(--neg);  color: var(--neg); }
+.callout.acc  { background: var(--accent-wash); border-left-color: var(--accent); color: var(--accent-bright); }
+.callout.warn .cd, .callout.neg .cd, .callout.acc .cd { color: var(--text-2); }
+.callout.warn .ct { color: var(--warn); }
+.callout.neg .ct  { color: var(--neg); }
+.callout.acc .ct  { color: var(--accent-bright); }
+
+/* A reconciliation line under a table, so a reader does not have to add the
+   columns by hand to find out whether they sum. */
+.foot {
+  padding: 9px 14px;
+  border-top: 1px solid var(--line-faint);
+  font-size: 10.5px; color: var(--text-4);
+}
 
 /* ── IC memo ──────────────────────────────────────────────────────────────
    The memo renders on paper, not on the dark app surface. It is a document

@@ -22,6 +22,19 @@ function run() {
   });
 }
 
+/** The same ingest with the Dallas roll in the opposite order on the wire. */
+function runReversedDcad() {
+  const batches = [
+    stage(land(hcadRoll, { sourceId: 'assessor.hcad', url: 'x' }), { county: 'hcad' }),
+    stage(land([...dcadRoll].reverse(), { sourceId: 'assessor.hcad', url: 'x' }), { county: 'dcad' }),
+  ];
+  return canonicalize(batches, {
+    cbsaToMarket: CBSA_TO_MARKET,
+    countyToMarket: COUNTY_TO_MARKET,
+    recordedAt: '2026-01-15T00:00:00.000Z',
+  });
+}
+
 describe('landing', () => {
   it('content-addresses a payload', () => {
     const a = land(censusACS, { sourceId: 'census.acs5' });
@@ -106,6 +119,54 @@ describe('canonicalize', () => {
     expect(f.value).toBe(2.81);
     expect(f.validFrom).toBe('2025-01-01');
     expect(f.validTo).toBe('2026-01-01');
+  });
+
+  it('records ONE jurisdiction tax rate per tax year, not one per parcel', () => {
+    // Every parcel in a county used to write its own rate to the same
+    // jurisdiction key, in the same batch, over the same tax-year window. Those
+    // rows tie on both clocks AND on the valid window by construction, so the
+    // store's answer was decided by row order in the assessor download, and
+    // corrections() reported the pair as a retroactive correction between two
+    // unrelated parcels.
+    for (const jurisdiction of ['jurisdiction:hcad', 'jurisdiction:dcad']) {
+      const rows = facts.facts.filter(
+        (f) => f.subject === jurisdiction && f.predicate === 'effectiveTaxRate',
+      );
+      expect(rows).toHaveLength(1);
+    }
+  });
+
+  it('reports no correction from a single ingest of unrelated observations', () => {
+    // corrections() is documented as the report that can move an underwriting
+    // after a deal was approved, so a fabricated entry there is worse than a
+    // missing one. The Dallas roll carries two parcels at 2.42 and 2.15; the
+    // AADT feed carries two stations at 42,000 and 48,000. Neither pair is a
+    // correction of anything — they are simultaneous observations of different
+    // things that happened to share a key.
+    const fabricated = facts.corrections('2000-01-01')
+      .filter((c) => c.predicate === 'effectiveTaxRate' || c.predicate === 'trafficCount');
+    expect(fabricated).toEqual([]);
+  });
+
+  it('records ONE representative traffic count per metro per year', () => {
+    const rows = facts.facts.filter(
+      (f) => f.subject === 'metro:houston-tx' && f.predicate === 'trafficCount',
+    );
+    expect(rows).toHaveLength(1);
+    // A count a station actually measured, never a mean of two.
+    expect([42000, 48000]).toContain(rows[0].value);
+  });
+
+  it('answers the same jurisdiction rate whichever order the roll arrives in', () => {
+    const forwards = run().facts.value('jurisdiction:dcad', 'effectiveTaxRate', AT);
+    const backwards = runReversedDcad().facts.value('jurisdiction:dcad', 'effectiveTaxRate', AT);
+    expect(forwards).toBe(backwards);
+    // And it is a rate a parcel is actually charged, never an average of two.
+    expect([2.42, 2.15]).toContain(forwards);
+  });
+
+  it('discloses a roll whose parcels disagree rather than silently picking one', () => {
+    expect(report.skipped.join(' ')).toMatch(/jurisdiction:dcad.*distinct parcel tax rates/);
   });
 
   it('resolves the same owner spelled three ways across two counties', () => {

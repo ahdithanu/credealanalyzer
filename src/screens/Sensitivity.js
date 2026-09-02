@@ -115,8 +115,11 @@ export default function Sensitivity({ deal }) {
           </table>
         </Panel>
 
-        <Panel title="Tornado" right={<span className="dim" style={{ fontSize: '11px' }}>impact on {METRICS[metric].label.toLowerCase()}</span>}>
-          <Tornado tor={tor} fmt={fmt} />
+        <Panel title="Tornado" right={<span className="dim" style={{ fontSize: '11px' }}>
+          impact on {METRICS[metric].label.toLowerCase()}
+          {METRICS[metric].polarity < 0 && <span className="dim2"> · higher is worse</span>}
+        </span>}>
+          <Tornado tor={tor} fmt={fmt} polarity={METRICS[metric].polarity ?? 1} />
         </Panel>
       </div>
     </div>
@@ -150,8 +153,16 @@ function shade(v, lo, hi) {
   return `rgba(145, 132, 217, ${(0.05 + t * 0.30).toFixed(3)})`;
 }
 
-function Tornado({ tor, fmt }) {
+function Tornado({ tor, fmt, polarity = 1 }) {
   const max = Math.max(...tor.bars.map((b) => b.swing), 1e-9);
+  // Green is the better outcome, not the larger one. Every metric here was
+  // higher-is-better until break-even occupancy, for which a rise erodes the
+  // covenant cushion — so a fixed "above base is green" painted the revenue cut
+  // that nearly halved that cushion as the favourable side of the bar.
+  // Left is the below-base side, right the above-base side; which of those is
+  // the good news depends on the metric.
+  const belowBase = polarity < 0 ? 'var(--pos)' : 'var(--neg)';
+  const aboveBase = polarity < 0 ? 'var(--neg)' : 'var(--pos)';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
       {tor.bars.map((b) => {
@@ -164,8 +175,8 @@ function Tornado({ tor, fmt }) {
             <span className="dim" style={{ width: '108px', flex: 'none' }}>{b.label}</span>
             <div style={{ flex: 1, position: 'relative', height: '14px' }}>
               <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: '1px', background: 'var(--line-strong)' }} />
-              <div style={{ position: 'absolute', right: '50%', width: `${Math.max(0, leftPct)}%`, top: '3px', height: '8px', background: 'var(--neg)', opacity: 0.65 }} />
-              <div style={{ position: 'absolute', left: '50%', width: `${Math.max(0, rightPct)}%`, top: '3px', height: '8px', background: 'var(--pos)', opacity: 0.65 }} />
+              <div style={{ position: 'absolute', right: '50%', width: `${Math.max(0, leftPct)}%`, top: '3px', height: '8px', background: belowBase, opacity: 0.65 }} />
+              <div style={{ position: 'absolute', left: '50%', width: `${Math.max(0, rightPct)}%`, top: '3px', height: '8px', background: aboveBase, opacity: 0.65 }} />
             </div>
             <span className="num dim2" style={{ width: '96px', textAlign: 'right', flex: 'none' }}>
               {fmt(b.low)} → {fmt(b.high)}
