@@ -3,12 +3,15 @@ import { NA } from '../format';
 import { runModel } from '../finance';
 import { SAMPLE_DEALS } from '../sampleDeals';
 
-const healthy = SAMPLE_DEALS[0];          // Houston, clears every threshold
+const healthy = SAMPLE_DEALS[0];          // Houston
 const thin = SAMPLE_DEALS[1];             // Austin, negative development spread
 
 describe('screeningVerdict', () => {
   it('reports a clean pass against the firm thresholds', () => {
-    const v = screeningVerdict(runModel(healthy));
+    // Two points more equity than the shipped sample carries. At 30% down the
+    // deal funds 70.9% of total project cost once the interest reserve is
+    // counted as the borrowed money it is, and fails loan-to-cost.
+    const v = screeningVerdict(runModel({ ...healthy, downPayment: 32 }));
     expect(v.failedCount).toBe(0);
     expect(v.verdict).toMatch(/meets all/i);
     expect(v.tests).toHaveLength(4);

@@ -5,10 +5,14 @@ import {
   npv,
   runModel,
   calculateMetrics,
+  sizeDebt,
   DEFAULT_ASSUMPTIONS,
+  DEFAULT_DEBT_SIZING,
 } from '../finance';
 import { suggestGrossRevenue, suggestConstructionCost } from '../propertyTypes';
 import { getPropertyTaxRate, resolveTaxRate, findMarket, distanceMiles } from '../markets';
+import { SAMPLE_DEALS } from '../sampleDeals';
+import { validate } from '../validation';
 
 /** A profitable ground-up car wash, used as the reference deal. */
 const groundUpDeal = {
@@ -394,5 +398,626 @@ describe('annual roll-up', () => {
   it('reconciles annual NOI to the sum of its months', () => {
     const monthly = r.months.slice(12, 24).reduce((s, m) => s + m.noi, 0);
     expect(r.annual[1].noi).toBeCloseTo(monthly, 6);
+  });
+});
+
+// ─── break-even occupancy ────────────────────────────────────────────────────
+
+/** Sum a field across the twelve months of the stabilized year. */
+function stabilizedWindow(r) {
+  const start = r.operating.stabilizationMonth;
+  const window = r.months.slice(start, start + 12);
+  const sum = (k) => window.reduce((s, m) => s + (m[k] || 0), 0);
+  return { window, sum };
+}
+
+describe('break-even occupancy', () => {
+  it('is the occupancy at which revenue exactly covers cash outgoings', () => {
+    const r = runModel(groundUpDeal);   // car wash: gross lease, no reimbursements
+    const { sum } = stabilizedWindow(r);
+    // The schedule budgets opex against effective income, so the same cost is
+    // grossed back to 100% to sit on the same occupancy basis as the potential
+    // revenue it is measured against.
+    const opexAtFullOccupancy = sum('opex') / r.operating.stabilizedOccupancy;
+    const outgoings = opexAtFullOccupancy + sum('tax') + sum('reserve') + sum('debtService');
+    expect(r.operating.stabilizedOutgoings).toBeCloseTo(outgoings, 6);
+    expect(r.operating.breakEvenOccupancy).toBeCloseTo(outgoings / sum('gpr'), 9);
+  });
+
+  it('does not move with the vacancy assumption', () => {
+    // The failure this guards, and the reason cost is grossed to full
+    // occupancy: the schedule's opex budget shrinks as vacancy rises, so
+    // pricing it against revenue at 100% made break-even FALL as the
+    // underwriting got worse. The same building, rents and debt then read
+    // safer the emptier it was assumed to be, and the covenant flag went
+    // silent on exactly the deals that needed it. What a vacancy assumption
+    // is allowed to move is the cushion, not the break-even itself.
+    const tight = runModel({ ...groundUpDeal, vacancyRate: 3 });
+    const loose = runModel({ ...groundUpDeal, vacancyRate: 30 });
+    expect(loose.operating.stabilizedDSCR).toBeLessThan(tight.operating.stabilizedDSCR);
+    expect(loose.operating.breakEvenOccupancy)
+      .toBeCloseTo(tight.operating.breakEvenOccupancy, 12);
+    const cushion = (r) => r.operating.stabilizedOccupancy - r.operating.breakEvenOccupancy;
+    expect(cushion(loose)).toBeLessThan(cushion(tight));
+  });
+
+  it('counts debt service, not just operating cost', () => {
+    // The failure this guards: a break-even that omits debt service reports the
+    // occupancy at which the asset breaks even UNLEVERED, which no lender asks
+    // about and which understates the covenant risk on a geared deal.
+    const levered = runModel(groundUpDeal);
+    const allCash = runModel({ ...groundUpDeal, downPayment: 100 });
+    const { sum } = stabilizedWindow(allCash);
+    const opexAtFullOccupancy = sum('opex') / allCash.operating.stabilizedOccupancy;
+    expect(allCash.operating.stabilizedDebtService).toBe(0);
+    expect(allCash.operating.breakEvenOccupancy).toBeCloseTo(
+      (opexAtFullOccupancy + sum('tax') + sum('reserve')) / sum('gpr'), 9,
+    );
+    expect(levered.operating.breakEvenOccupancy)
+      .toBeGreaterThan(allCash.operating.breakEvenOccupancy);
+  });
+
+  it('counts property tax, which is not inside the operating expense ratio', () => {
+    const houston = runModel(groundUpDeal);                              // 2.81%
+    const boise = runModel({ ...groundUpDeal, location: 'Boise, ID' });  // 1.50%
+    expect(houston.operating.breakEvenOccupancy)
+      .toBeGreaterThan(boise.operating.breakEvenOccupancy);
+  });
+
+  it('counts capital reserves', () => {
+    const withReserve = runModel(groundUpDeal);
+    const { sum } = stabilizedWindow(withReserve);
+    expect(sum('reserve')).toBeGreaterThan(0);
+    const outgoingsWithout = sum('opex') + sum('tax') + sum('debtService');
+    expect(withReserve.operating.breakEvenOccupancy)
+      .toBeGreaterThan(outgoingsWithout / sum('gpr'));
+  });
+
+  it('rises with leverage and with the cost of debt', () => {
+    const base = runModel(groundUpDeal).operating.breakEvenOccupancy;
+    expect(runModel({ ...groundUpDeal, downPayment: 15 }).operating.breakEvenOccupancy)
+      .toBeGreaterThan(base);
+    expect(runModel({ ...groundUpDeal, interestRate: 9.5 }).operating.breakEvenOccupancy)
+      .toBeGreaterThan(base);
+  });
+
+  it('treats expense reimbursements as revenue that arrives with occupancy', () => {
+    // Under NNN the tenant repays operating cost and tax, so those dollars are
+    // potential revenue. The two other placements both misreport this 642,000
+    // SF asset, which covers 1.36x: charging the expenses to the landlord and
+    // crediting only base rent puts break-even above full occupancy, and
+    // netting the recoveries out of the outgoings instead credits them at 100%
+    // whatever the occupancy, understating break-even by eleven points.
+    const industrial = {
+      propertyType: 'industrial', constructionType: 'groundUp', location: 'Houston, TX',
+      purchasePrice: 8_000_000, constructionCost: 61_000_000, buildingSize: 642_000,
+      grossRevenue: 7_223_000, vacancyRate: 5, operatingExpenseRatio: 25,
+      downPayment: 35, interestRate: 6.6, loanTerm: 25, exitCapRate: 6.9, holdPeriod: 7,
+    };
+    const nnn = runModel(industrial);
+    const gross = runModel({ ...industrial, expenseRecoveryRate: 0 });
+    expect(nnn.operating.stabilizedDSCR).toBeGreaterThan(1.25);
+    expect(nnn.operating.breakEvenOccupancy).toBeLessThan(1);
+    // Omitting recoveries: above full occupancy on an asset covering 1.36x.
+    expect(gross.operating.breakEvenOccupancy).toBeGreaterThan(1);
+    expect(nnn.operating.breakEvenOccupancy).toBeLessThan(gross.operating.breakEvenOccupancy);
+    // Netting them out of the numerator instead. Outgoings and potential rent
+    // are identical between the two runs, so the recovery potential is the
+    // difference in the denominators.
+    const recoveryPotential =
+      nnn.operating.grossPotentialRevenue - gross.operating.grossPotentialRevenue;
+    const netted =
+      (nnn.operating.stabilizedOutgoings - recoveryPotential) / gross.operating.grossPotentialRevenue;
+    expect(recoveryPotential).toBeGreaterThan(0);
+    expect(nnn.operating.breakEvenOccupancy).toBeGreaterThan(netted + 0.10);
+  });
+
+  it('leaves a cushion on every sample deal that covers its debt', () => {
+    // Not a theorem: break-even is struck on a full-occupancy expense budget
+    // while DSCR is struck on the underwritten one, so a thin deal carrying
+    // heavy assumed vacancy can clear 1.0x and still show no cushion — which is
+    // the disclosure, and is flagged. What must not happen is the shipped
+    // portfolio reporting two contradictory answers about the same deal.
+    for (const deal of SAMPLE_DEALS) {
+      const r = runModel(deal);
+      if (!(r.operating.stabilizedDSCR >= 1)) continue;
+      expect(r.operating.breakEvenOccupancy).toBeLessThan(r.operating.stabilizedOccupancy);
+    }
+  });
+
+  it('is null rather than zero when there is no revenue to break even against', () => {
+    const r = runModel({ ...groundUpDeal, grossRevenue: 0 });
+    expect(r.operating.grossPotentialRevenue).toBe(0);
+    expect(r.operating.breakEvenOccupancy).toBeNull();
+  });
+
+  it('is null for a net-leased asset with no rent, where recoveries alone are not a denominator', () => {
+    // Property tax is charged on basis whether or not anything is let, so
+    // reimbursement potential keeps the denominator positive on a building with
+    // nothing to lease. It reported a break-even above 300% rather than 'n/a'.
+    const nnnNoRent = {
+      propertyType: 'retail', constructionType: 'groundUp', location: 'Houston, TX',
+      purchasePrice: 2_000_000, constructionCost: 6_000_000, buildingSize: 40_000,
+      grossRevenue: 0, vacancyRate: 5, operatingExpenseRatio: 20,
+      downPayment: 30, interestRate: 6.5, loanTerm: 25, exitCapRate: 7, holdPeriod: 5,
+    };
+    const r = runModel(nnnNoRent);
+    expect(r.assumptions.expenseRecoveryRate).toBeGreaterThan(0);
+    expect(r.operating.grossPotentialRevenue).toBeGreaterThan(0);   // recoveries alone
+    expect(r.operating.breakEvenOccupancy).toBeNull();
+  });
+});
+
+// ─── going-in cap rate ───────────────────────────────────────────────────────
+
+/** An acquisition with income already in place. Gross-lease, so no recoveries. */
+const acquisitionDeal = {
+  propertyType: 'multifamily',
+  constructionType: 'acquisition',
+  location: 'Houston, TX',
+  purchasePrice: 20_000_000,
+  constructionCost: 2_000_000,
+  buildingSize: 150_000,
+  units: 180,
+  grossRevenue: 3_200_000,
+  vacancyRate: 6,
+  operatingExpenseRatio: 35,
+  downPayment: 30,
+  interestRate: 6.4,
+  loanTerm: 30,
+  exitCapRate: 6.0,
+  holdPeriod: 5,
+  assumptions: { inPlaceRevenue: 2_800_000 },
+};
+
+describe('going-in cap rate', () => {
+  const r = runModel(acquisitionDeal);
+
+  it('prices day-one income against day-one basis', () => {
+    const basis = 20_000_000;                       // purchase price
+    const inPlaceOcc = 2_800_000 / 3_200_000;       // in-place rent over potential rent
+    // Opex is struck on the revenue base and flexed by the variable share, not
+    // struck on in-place revenue: charging 35% of what a part-leased building
+    // collects makes a half-empty building look half as expensive to run, which
+    // is the error the operating schedule is explicitly built to avoid.
+    const opex = 3_200_000 * 0.35 * (0.70 + 0.30 * inPlaceOcc);
+    const tax = basis * 0.0281;                     // Houston effective rate
+    const reserve = 300 * 180;                      // multifamily reserve per unit
+    const noi = 2_800_000 - opex - tax - reserve;   // gross lease: no reimbursements
+    expect(r.operating.acquisitionBasis).toBe(basis);
+    expect(r.operating.goingInNOI).toBeCloseTo(noi, 6);
+    expect(r.operating.goingInCapRate).toBeCloseTo(noi / basis, 12);
+  });
+
+  it('nets property tax out of in-place NOI', () => {
+    // A going-in cap gross of a 2.81% tax bill overstates the yield by most of
+    // 200 bps. Reporting that next to yield on cost is the error this metric
+    // exists to prevent, not one it is allowed to repeat.
+    const grossOfTax = (2_800_000 * (1 - 0.35)) / 20_000_000;
+    expect(r.operating.goingInCapRate).toBeLessThan(grossOfTax - 0.015);
+  });
+
+  it('does not move with the capital structure', () => {
+    // A going-in cap rate is a property-level, unlevered yield. Folding loan
+    // fees into the basis makes it move with the financing, and then levies
+    // property tax on the lender's fees as well.
+    const financed = runModel({ ...acquisitionDeal, financingCosts: 500_000 });
+    expect(financed.operating.acquisitionBasis).toBe(20_000_000);
+    expect(financed.operating.goingInCapRate).toBeCloseTo(r.operating.goingInCapRate, 12);
+    const geared = runModel({ ...acquisitionDeal, downPayment: 60, interestRate: 9 });
+    expect(geared.operating.goingInCapRate).toBeCloseTo(r.operating.goingInCapRate, 12);
+  });
+
+  it('bills expense reimbursements only on space that is actually let', () => {
+    // Recoveries credited at full occupancy on a part-leased building can
+    // exceed the entire in-place rent roll, which is how a property whose tax
+    // bill alone outruns its rent came to report a positive going-in cap rate.
+    const halfLeased = {
+      propertyType: 'office', constructionType: 'acquisition', location: 'Houston, TX',
+      purchasePrice: 20_000_000, constructionCost: 2_000_000, buildingSize: 150_000,
+      grossRevenue: 4_200_000, vacancyRate: 8, operatingExpenseRatio: 30,
+      downPayment: 30, interestRate: 6.4, loanTerm: 30, exitCapRate: 7, holdPeriod: 5,
+      assumptions: { inPlaceRevenue: 500_000 },    // ~12% leased
+    };
+    const m = runModel(halfLeased);
+    const occ = 500_000 / 4_200_000;
+    const opex = 4_200_000 * 0.30 * (0.70 + 0.30 * occ);
+    const tax = 20_000_000 * 0.0281;
+    const reserve = 0.25 * 150_000;
+    const recoveries = (opex + tax) * m.assumptions.expenseRecoveryRate * occ;
+    expect(m.operating.goingInNOI).toBeCloseTo(500_000 + recoveries - opex - tax - reserve, 6);
+    // Rent of 500,000 against a 562,000 tax bill cannot be a positive yield.
+    expect(tax).toBeGreaterThan(500_000);
+    expect(m.operating.goingInNOI).toBeLessThan(0);
+    expect(m.operating.goingInCapRate).toBeLessThan(0);
+  });
+
+  it('is null when there is no potential rent to measure occupancy against', () => {
+    const noPotential = { ...acquisitionDeal, grossRevenue: 0 };
+    expect(runModel(noPotential).operating.goingInCapRate).toBeNull();
+  });
+
+  it('is null rather than a vast rate when nothing was paid for the asset', () => {
+    const noPrice = { ...acquisitionDeal, purchasePrice: 0, financingCosts: 250_000 };
+    expect(runModel(noPrice).operating.acquisitionBasis).toBeNull();
+    expect(runModel(noPrice).operating.goingInCapRate).toBeNull();
+  });
+
+  it('excludes capital spent after day one, which yield on cost includes', () => {
+    // The two metrics must move independently: renovation capital enlarges the
+    // development basis without changing what was paid for the income in place.
+    const heavier = runModel({ ...acquisitionDeal, constructionCost: 6_000_000 });
+    expect(heavier.operating.goingInCapRate).toBeCloseTo(r.operating.goingInCapRate, 12);
+    expect(heavier.operating.yieldOnCost).toBeLessThan(r.operating.yieldOnCost);
+  });
+
+  it('is not yield on cost, and does not replace it', () => {
+    expect(r.operating.yieldOnCost).not.toBeNull();
+    expect(r.operating.goingInCapRate)
+      .not.toBeCloseTo(r.operating.stabilizedNOI / r.budget.totalProjectCost, 4);
+  });
+
+  it('is null for ground-up, where there is no in-place income to price', () => {
+    // A ground-up deal has no going-in cap rate. Borrowing the stabilised
+    // figure would report a cap rate on a building that does not exist yet.
+    const ground = runModel({ ...acquisitionDeal, constructionType: 'groundUp' });
+    expect(ground.operating.goingInCapRate).toBeNull();
+    expect(ground.operating.goingInNOI).toBeNull();
+    expect(ground.operating.yieldOnCost).not.toBeNull();
+  });
+
+  it('credits expense reimbursements on an NNN acquisition', () => {
+    // Base rent alone understates in-place income for a net-leased asset: the
+    // tenant is already repaying operating cost and tax on day one.
+    const nnn = { ...acquisitionDeal, propertyType: 'retail', units: 0, expenseRecoveryRate: 0.90 };
+    const gross = { ...nnn, expenseRecoveryRate: 0 };
+    expect(runModel(nnn).operating.goingInCapRate)
+      .toBeGreaterThan(runModel(gross).operating.goingInCapRate);
+  });
+
+  it('is null for an acquisition underwritten with no in-place income', () => {
+    const vacant = { ...acquisitionDeal, assumptions: { inPlaceRevenue: 0 } };
+    expect(runModel(vacant).operating.goingInCapRate).toBeNull();
+  });
+
+  it('is surfaced by calculateMetrics without disturbing yield on cost', () => {
+    const m = calculateMetrics(acquisitionDeal);
+    expect(m.goingInCapRate).toBeCloseTo(r.operating.goingInCapRate * 100, 9);
+    expect(m.yieldOnCost).toBeCloseTo(r.operating.yieldOnCost * 100, 9);
+    expect(calculateMetrics(groundUpDeal).goingInCapRate).toBeNull();
+  });
+});
+
+// ─── DSCR-constrained debt sizing ────────────────────────────────────────────
+
+describe('sizeDebt', () => {
+  const terms = { annualRate: 0.065, termYears: 25 };
+
+  it('funds the smallest of the three tests and names the one that bound', () => {
+    const r = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: 900_000, ...terms });
+    const evaluated = Object.values(r.constraints).filter((v) => v !== null);
+    expect(r.loanAmount).toBe(Math.min(...evaluated));
+    expect(r.constraints[r.bindingConstraint]).toBe(r.loanAmount);
+  });
+
+  it('reports LTC as binding when coverage is abundant', () => {
+    const r = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: 1_800_000, ...terms });
+    expect(r.bindingConstraint).toBe('ltc');
+    expect(r.loanAmount).toBeCloseTo(10_000_000 * DEFAULT_DEBT_SIZING.maxLTC, 6);
+  });
+
+  it('reports coverage as binding when income is thin, and sizes to exactly the covenant', () => {
+    // The distinction is the point of the function: an LTC-constrained deal is
+    // fixed with more equity, a coverage-constrained deal is not fixed with
+    // equity at all. Reporting only the amount hides which conversation to have.
+    const noi = 600_000;
+    const r = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: noi, ...terms });
+    expect(r.bindingConstraint).toBe('dscr');
+    const debtService = amortizingPayment(r.loanAmount, terms.annualRate, terms.termYears) * 12;
+    expect(noi / debtService).toBeCloseTo(DEFAULT_DEBT_SIZING.minDSCR, 9);
+  });
+
+  it('reports debt yield as binding when a long cheap amortisation flatters DSCR', () => {
+    // 40 years at 4% carries far more debt per dollar of NOI than the debt
+    // yield test allows; without the third test the loan is oversized.
+    const noi = 700_000;
+    const r = sizeDebt({ projectCost: 20_000_000, stabilizedNOI: noi, annualRate: 0.04, termYears: 40 });
+    expect(r.bindingConstraint).toBe('debtYield');
+    expect(noi / r.loanAmount).toBeCloseTo(DEFAULT_DEBT_SIZING.minDebtYield, 12);
+  });
+
+  it('honours firm limits passed in over the defaults', () => {
+    const r = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: 1_800_000, ...terms, maxLTC: 0.55 });
+    expect(r.loanAmount).toBeCloseTo(5_500_000, 6);
+    expect(r.bindingConstraint).toBe('ltc');
+  });
+
+  it('supports no debt at all when there is no coverage to lend against', () => {
+    const r = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: -50_000, ...terms });
+    expect(r.loanAmount).toBe(0);
+    expect(r.bindingConstraint).toBe('dscr');
+  });
+
+  it('reads a leverage ceiling of zero as a policy of no debt, not as an absent test', () => {
+    // A firm that lends nothing has a measured limit of zero. Treating it as
+    // unevaluable drops the LTC test entirely and funds whatever coverage
+    // allows — an 89% LTC loan on a policy that says none.
+    const r = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: 900_000, ...terms, maxLTC: 0 });
+    expect(r.constraints.ltc).toBe(0);
+    expect(r.loanAmount).toBe(0);
+    expect(r.bindingConstraint).toBe('ltc');
+    // ...and no discontinuity at the boundary: an epsilon of leverage must fund
+    // an epsilon of loan, not five million dollars.
+    const sliver = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: 900_000, ...terms, maxLTC: 1e-4 });
+    expect(sliver.loanAmount).toBeCloseTo(1_000, 6);
+  });
+
+  it('sizes coverage to the worst covenant year, not the first one', () => {
+    // Expense growth outrunning rent growth makes year one the best year the
+    // deal ever has. A loan sized on it breaches its own covenant in year two.
+    const coverage = [
+      { noi: 1_000_000, debtServicePerDollar: 0.08 },
+      { noi: 900_000, debtServicePerDollar: 0.08 },   // the year the covenant bites
+      { noi: 950_000, debtServicePerDollar: 0.08 },
+    ];
+    const r = sizeDebt({ projectCost: 100_000_000, coverage, stabilizedNOI: 1_000_000, ...terms });
+    expect(r.bindingConstraint).toBe('dscr');
+    expect(r.loanAmount).toBeCloseTo(900_000 / (DEFAULT_DEBT_SIZING.minDSCR * 0.08), 6);
+    for (const year of coverage) {
+      expect(year.noi / (r.loanAmount * year.debtServicePerDollar))
+        .toBeGreaterThanOrEqual(DEFAULT_DEBT_SIZING.minDSCR - 1e-9);
+    }
+  });
+
+  it('prices coverage off the debt service each year actually charges', () => {
+    // An interest-only year and an amortising year are different tests on the
+    // same loan. Pricing every year off the amortising payment undersizes a
+    // loan that is still interest-only where the covenant is measured.
+    const interestOnlyYear = { noi: 900_000, debtServicePerDollar: 0.065 };
+    const amortisingYear = { noi: 900_000, debtServicePerDollar: 0.081 };
+    const io = sizeDebt({ projectCost: 100_000_000, coverage: [interestOnlyYear], stabilizedNOI: 900_000, ...terms });
+    const amort = sizeDebt({ projectCost: 100_000_000, coverage: [amortisingYear], stabilizedNOI: 900_000, ...terms });
+    expect(io.loanAmount).toBeGreaterThan(amort.loanAmount);
+    expect(io.loanAmount).toBeCloseTo(900_000 / (DEFAULT_DEBT_SIZING.minDSCR * 0.065), 6);
+  });
+
+  it('returns null, not zero, for a constraint it cannot evaluate', () => {
+    // Zero and unknown are different claims: a zero here would bind and size
+    // the loan to nothing, an Infinity would silently drop the test.
+    const noNoi = sizeDebt({ projectCost: 10_000_000, ...terms });
+    expect(noNoi.constraints.dscr).toBeNull();
+    expect(noNoi.constraints.debtYield).toBeNull();
+    expect(noNoi.bindingConstraint).toBe('ltc');
+
+    const noTerm = sizeDebt({ projectCost: 10_000_000, stabilizedNOI: 600_000, annualRate: 0.065, termYears: 0 });
+    expect(noTerm.constraints.dscr).toBeNull();
+
+    const nothing = sizeDebt({});
+    expect(nothing.loanAmount).toBeNull();
+    expect(nothing.bindingConstraint).toBeNull();
+  });
+});
+
+describe('debt sized to constraints, wired into the model', () => {
+  const geared = { ...groundUpDeal, downPayment: 8 };
+
+  it('leaves the equity-percentage path untouched unless asked', () => {
+    expect(runModel(geared)).toEqual(runModel({ ...geared, sizeDebtToConstraints: false }));
+    expect(runModel(geared).financing.sizing).toBeNull();
+    expect(runModel(geared).financing.loanCommitment)
+      .toBeCloseTo(runModel(geared).budget.baseProjectCost * 0.92, 6);
+  });
+
+  it('resizes an over-levered deal down to the binding constraint', () => {
+    const sized = runModel({ ...geared, sizeDebtToConstraints: true });
+    expect(sized.financing.sizing.bindingConstraint).not.toBeNull();
+    expect(sized.financing.loanCommitment).toBeLessThan(runModel(geared).financing.loanCommitment);
+    expect(sized.financing.equityCommitment).toBeGreaterThan(0);
+  });
+
+  it('funds the sized amount as the permanent balance the covenants are tested on', () => {
+    // Sizing the commitment instead would fund the target PLUS the interest
+    // capitalised during construction, breaching every limit it was sized to.
+    const sized = runModel({ ...geared, sizeDebtToConstraints: true });
+    expect(sized.financing.sizing.converged).toBe(true);
+    expect(sized.financing.permanentLoanBalance)
+      .toBeCloseTo(sized.financing.sizing.loanAmount, 0);
+    expect(sized.budget.capitalizedInterest).toBeGreaterThan(0);
+  });
+
+  it('produces a deal that clears the same credit box it was sized to', () => {
+    const sized = runModel({ ...geared, sizeDebtToConstraints: true });
+    const ids = validate(sized, geared).map((f) => f.id);
+    expect(ids).not.toContain('ltc');
+    expect(ids).not.toContain('dscr');
+    expect(ids).not.toContain('debtYield');
+    expect(validate(runModel(geared), geared).map((f) => f.id)).toContain('ltc');
+  });
+
+  it('tells the analyst whether the deal is LTC- or coverage-constrained', () => {
+    const strongIncome = runModel({ ...groundUpDeal, sizeDebtToConstraints: true });
+    expect(strongIncome.financing.sizing.bindingConstraint).toBe('ltc');
+    expect(strongIncome.operating.stabilizedDSCR).toBeGreaterThan(DEFAULT_DEBT_SIZING.minDSCR);
+
+    // Halve the revenue and coverage, not cost, becomes the limit.
+    const thinIncome = runModel({ ...groundUpDeal, grossRevenue: 300_000, sizeDebtToConstraints: true });
+    expect(thinIncome.financing.sizing.bindingConstraint).not.toBe('ltc');
+    expect(thinIncome.financing.loanCommitment)
+      .toBeLessThan(strongIncome.financing.loanCommitment);
+  });
+
+  it('honours per-deal sizing limits', () => {
+    const tight = runModel({ ...geared, sizeDebtToConstraints: true, debtSizing: { maxLTC: 0.45 } });
+    expect(tight.financing.sizing.bindingConstraint).toBe('ltc');
+    // Sized to the limit and reported on the same basis it was sized against,
+    // so the deal lands on the box rather than near it.
+    expect(tight.financing.ltc).toBeCloseTo(0.45, 6);
+    expect(validate(tight, tight).map((f) => f.id)).not.toContain('ltc');
+  });
+
+  it('clears the covenant in every stabilized year, not only the first', () => {
+    // Expense growth above rent growth makes NOI fall year on year, so the
+    // minimum stabilized coverage — the figure the covenant is tested against —
+    // is not year one. A loan sized on year one is in breach the day it funds.
+    const declining = {
+      ...groundUpDeal, grossRevenue: 300_000, downPayment: 8,
+      assumptions: { rentGrowth: 0.01 },   // below the module's own growth ceiling
+    };
+    const sized = runModel({ ...declining, sizeDebtToConstraints: true });
+    expect(sized.financing.sizing.bindingConstraint).toBe('dscr');
+    expect(sized.operating.minStabilizedDSCR).toBeLessThan(sized.operating.stabilizedDSCR);
+    // The fixed point settles within a dollar of the constraint, which is a
+    // part in a million of coverage — the tolerance validate() already allows.
+    expect(sized.operating.minStabilizedDSCR).toBeCloseTo(DEFAULT_DEBT_SIZING.minDSCR, 5);
+    expect(validate(sized, declining).map((f) => f.id)).not.toContain('dscr');
+  });
+
+  it('sizes against the debt service the model charges during an interest-only window', () => {
+    // With interest-only running past stabilization the covenant is measured on
+    // interest alone. Sizing off the amortising payment undersizes the loan and
+    // reports a 1.25x DSCR next to a schedule showing 1.53x.
+    const io = {
+      ...groundUpDeal, grossRevenue: 300_000, downPayment: 8,   // thin enough that coverage binds
+      assumptions: { interestOnlyMonths: 36 },
+    };
+    const sized = runModel({ ...io, sizeDebtToConstraints: true });
+    expect(sized.financing.sizing.bindingConstraint).toBe('dscr');
+    expect(sized.operating.stabilizedDebtService).toBeLessThan(sized.financing.annualDebtService);
+    expect(sized.operating.minStabilizedDSCR).toBeCloseTo(DEFAULT_DEBT_SIZING.minDSCR, 5);
+    // Sized off the amortising payment the model never charges in that window,
+    // the loan comes in about a fifth smaller than coverage supports.
+    const amortisingPaymentBasis = sized.operating.stabilizedNOI
+      / (DEFAULT_DEBT_SIZING.minDSCR * amortizingPayment(1, 0.068, 25) * 12);
+    expect(sized.financing.sizing.loanAmount).toBeGreaterThan(amortisingPaymentBasis * 1.05);
+  });
+
+  it('reports leverage on the basis it was sized against', () => {
+    // The interest reserve is borrowed money spent on the project. Measuring
+    // the commitment net of it against a cost base that also excludes it
+    // reports 70.0% on a deal funded at 70.9%, and the binding constraint the
+    // sizer names then reconciles to nothing the model returns.
+    const sized = runModel({ ...geared, sizeDebtToConstraints: true, debtSizing: { maxLTC: 0.60 } });
+    expect(sized.financing.ltc)
+      .toBeCloseTo(sized.financing.permanentLoanBalance / sized.budget.totalProjectCost, 12);
+    expect(sized.budget.capitalizedInterest).toBeGreaterThan(0);
+    expect(sized.financing.ltc).toBeCloseTo(0.60, 6);
+  });
+
+  it('funds a project with no construction period at closing', () => {
+    // The draw loop runs `for (i = 0; i < C; i++)`, so a zero-month project
+    // never entered it: nothing was funded, no equity was drawn, the permanent
+    // balance was zero and the schedule showed an asset acquired for free —
+    // with an IRR of null beside it. A stabilised acquisition is the obvious
+    // next construction type and lands exactly here.
+    const standing = {
+      propertyType: 'retail', constructionType: 'acquisition', location: 'Tampa, FL',
+      purchasePrice: 6_400_000, constructionCost: 0, buildingSize: 18_000,
+      grossRevenue: 558_000, vacancyRate: 6, operatingExpenseRatio: 20,
+      downPayment: 30, interestRate: 6.4, loanTerm: 25, exitCapRate: 7, holdPeriod: 5,
+      constructionMonths: 0,
+    };
+    const r = runModel(standing);
+    expect(r.timeline.constructionMonths).toBe(0);
+    expect(r.financing.permanentLoanBalance).toBeCloseTo(r.financing.loanCommitment, 6);
+    expect(r.financing.permanentLoanBalance).toBeGreaterThan(0);
+    // The equity goes in at closing, and it is the only negative equity flow.
+    expect(r.months[0].equityDraw).toBeCloseTo(r.financing.equityCommitment, 6);
+    expect(r.months.filter((m) => m.equityDraw > 0)).toHaveLength(1);
+    // Peak equity is the closing cheque plus whatever the asset fails to cover
+    // while it lets up, so it is at least the commitment and never less.
+    expect(r.returns.peakEquity).toBeGreaterThanOrEqual(r.financing.equityCommitment - 0.5);
+    expect(r.months[0].equityFlow)
+      .toBeCloseTo(r.months[0].cashFlow - r.financing.equityCommitment, 6);
+    expect(r.returns.leveredIRR).not.toBeNull();
+    // Nothing is borrowed for interest when there is no construction to carry.
+    expect(r.budget.capitalizedInterest).toBe(0);
+    expect(r.financing.ltc).toBeCloseTo(0.70, 9);
+  });
+
+  it('reports an unmodelled deal as unknown rather than as zero', () => {
+    // `incomplete: true` is easy to miss; the numbers beside it are not. A
+    // stabilized NOI of 0 and a peak equity of 0 read as measured answers —
+    // no income, nothing at risk — on a deal that was never modelled at all.
+    const r = runModel({ purchasePrice: 1_000_000, holdPeriod: 0 });
+    expect(r.incomplete).toBe(true);
+    for (const key of ['stabilizedNOI', 'stabilizedDebtService', 'grossPotentialRevenue', 'stabilizedOutgoings']) {
+      expect(r.operating[key]).toBeNull();
+    }
+    for (const key of ['peakEquity', 'profit', 'totalEquityInvested', 'totalDistributions']) {
+      expect(r.returns[key]).toBeNull();
+    }
+    const m = calculateMetrics({ purchasePrice: 1_000_000, holdPeriod: 0 });
+    expect(m.cashFlow).toBeNull();
+    expect(m.cashOnCash).toBeNull();
+  });
+
+  it('still returns an incomplete model rather than sizing an unmodellable deal', () => {
+    const r = runModel({ sizeDebtToConstraints: true });
+    expect(r.incomplete).toBe(true);
+  });
+});
+
+// ─── validation of the new metrics ───────────────────────────────────────────
+
+describe('validation of break-even occupancy and rent growth', () => {
+  it('flags a break-even occupancy above the committee limit', () => {
+    const geared = { ...groundUpDeal, downPayment: 12, interestRate: 8.5, operatingExpenseRatio: 45 };
+    const model = runModel(geared);
+    const flag = validate(model, geared).find((f) => f.id === 'breakEvenOccupancy');
+    expect(model.operating.breakEvenOccupancy).toBeGreaterThan(0.80);
+    expect(flag).toBeDefined();
+    expect(flag.severity).toBe('warning');
+    expect(flag.field).toBe('vacancyRate');
+    // And this is why the flag earns its place: coverage clears the covenant
+    // comfortably while the asset is six points of occupancy from bleeding.
+    expect(model.operating.stabilizedDSCR).toBeGreaterThan(1.25);
+    expect(validate(model, geared).find((f) => f.id === 'dscr')).toBeUndefined();
+  });
+
+  it('escalates to an error when outgoings are not covered at the occupancy underwritten', () => {
+    const broken = { ...groundUpDeal, downPayment: 5, interestRate: 12, operatingExpenseRatio: 55 };
+    const model = runModel(broken);
+    expect(model.operating.breakEvenOccupancy)
+      .toBeGreaterThanOrEqual(model.operating.stabilizedOccupancy);
+    expect(validate(model, broken).find((f) => f.id === 'breakEvenOccupancy').severity).toBe('error');
+  });
+
+  it('flags a break-even above the occupancy underwritten even when it sits under the ceiling', () => {
+    // The failure this guards: the escalation used to be nested inside the
+    // ceiling test, so an underwriting whose own occupancy was already below
+    // break-even raised nothing at all as long as break-even stayed under 80%.
+    // That silenced the rule on precisely the deals it exists for.
+    const empty = { ...groundUpDeal, vacancyRate: 60 };
+    const model = runModel(empty);
+    expect(model.operating.breakEvenOccupancy).toBeLessThan(0.80);
+    expect(model.operating.stabilizedOccupancy).toBeLessThan(model.operating.breakEvenOccupancy);
+    expect(model.operating.stabilizedDSCR).toBeLessThan(1);
+    const flag = validate(model, empty).find((f) => f.id === 'breakEvenOccupancy');
+    expect(flag).toBeDefined();
+    expect(flag.severity).toBe('error');
+  });
+
+  it('does not flag a deal with room between break-even and underwritten occupancy', () => {
+    const comfortable = { ...groundUpDeal, downPayment: 45 };
+    const model = runModel(comfortable);
+    expect(model.operating.breakEvenOccupancy).toBeLessThan(0.80);
+    expect(validate(model, comfortable).find((f) => f.id === 'breakEvenOccupancy')).toBeUndefined();
+  });
+
+  it('flags rent growth above the ceiling and leaves the ceiling itself alone', () => {
+    const aggressive = { ...groundUpDeal, assumptions: { rentGrowth: 0.045 } };
+    const flag = validate(runModel(aggressive), aggressive).find((f) => f.id === 'rentGrowth');
+    expect(flag).toBeDefined();
+    expect(flag.field).toBe('rentGrowth');
+    expect(flag.severity).toBe('warning');
+
+    // Exactly at the ceiling is compliant; the firm default sits on it.
+    const atCeiling = { ...groundUpDeal, assumptions: { rentGrowth: 0.03 } };
+    expect(validate(runModel(atCeiling), atCeiling).find((f) => f.id === 'rentGrowth')).toBeUndefined();
+  });
+
+  it('honours a firm-specific rent growth ceiling', () => {
+    const flags = validate(runModel(groundUpDeal), groundUpDeal, { maxRentGrowth: 0.02 });
+    expect(flags.find((f) => f.id === 'rentGrowth')).toBeDefined();
   });
 });

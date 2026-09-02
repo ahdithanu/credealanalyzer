@@ -110,3 +110,43 @@ describe('FactStore — snapshot and serialisation', () => {
     expect(back.value('metro:houston', 'population', { validAt: '2024-01-01', knownAt: '2025-01-01' })).toBe(7_340_000);
   });
 });
+
+describe('FactStore.get — ties on the transaction clock', () => {
+  // canonicalize() stamps one recordedAt across a whole ingest batch, so an
+  // open-ended fact and a bounded one from the same source tie by construction.
+  // Resolved by array order the answer depended on the order facts happened to
+  // sit in — which then made fact ORDER load-bearing for the persistence layer,
+  // for a reason nothing on screen could explain.
+  const BATCH = '2026-01-15T00:00:00.000Z';
+  const AT = { validAt: '2026-03-01', knownAt: '2026-06-01' };
+
+  const bounded = {
+    subject: 'parcel:a', predicate: 'taxRate', value: 2.68,
+    validFrom: '2026-01-01', validTo: '2027-01-01', recordedAt: BATCH, source: 'hcad:2026',
+  };
+  const openEnded = {
+    subject: 'parcel:a', predicate: 'taxRate', value: 2.81,
+    validFrom: '2026-01-01', recordedAt: BATCH, source: 'hcad:standing',
+  };
+
+  it('prefers the narrower valid window, whichever order the facts arrived in', () => {
+    const boundedFirst = new FactStore();
+    boundedFirst.assertMany([bounded, openEnded]);
+    const openFirst = new FactStore();
+    openFirst.assertMany([openEnded, bounded]);
+
+    expect(boundedFirst.value('parcel:a', 'taxRate', AT)).toBe(2.68);
+    expect(openFirst.value('parcel:a', 'taxRate', AT)).toBe(2.68);
+  });
+
+  it('still lets later knowledge beat a narrower window', () => {
+    // The tie-break only breaks TIES. A correction recorded afterwards wins
+    // however wide its window, or the audit trail would run backwards.
+    const s = new FactStore();
+    s.assertMany([bounded, {
+      ...openEnded, value: 2.55, recordedAt: '2026-04-01T00:00:00.000Z',
+    }]);
+    expect(s.value('parcel:a', 'taxRate', AT)).toBe(2.55);
+  });
+});
+

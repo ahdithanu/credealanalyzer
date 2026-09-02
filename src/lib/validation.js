@@ -7,15 +7,28 @@
  * enterprise customer's credit box is theirs, not ours.
  */
 
+import { DEFAULT_DEBT_SIZING } from './finance';
+
 export const DEFAULT_COVENANTS = {
-  minDSCR: 1.25,
+  // minDSCR, maxLTC and minDebtYield come from the sizing limits so that the
+  // two cannot drift: a loan sized to the credit box must not then be flagged
+  // against a different credit box.
+  ...DEFAULT_DEBT_SIZING,
   minDevSpreadBps: 100,
-  maxLTC: 0.70,
-  minDebtYield: 0.08,
   minYieldOnCostOverExit: 0,   // yield on cost must at least reach the exit cap
+  maxBreakEvenOccupancy: 0.80,
+  maxRentGrowth: 0.03,
 };
 
 const rule = (id, severity, field, title, detail) => ({ id, severity, field, title, detail });
+
+// A metric sized exactly to a limit must not read as breaching it. The debt
+// sizer lands its fixed point within a fraction of a dollar of the constraint,
+// which leaves the covenant short by parts in a hundred million; a screen
+// reporting "1.25x" beside "breaches 1.25x covenant" is unusable.
+const AT_LIMIT = 1e-6;
+const below = (value, limit) => value < limit - Math.abs(limit) * AT_LIMIT;
+const above = (value, limit) => value > limit + Math.abs(limit) * AT_LIMIT;
 
 /**
  * @param {Object} model  Result of runModel()
@@ -31,7 +44,7 @@ export function validate(model, deal = {}, covenants = {}) {
       'Enter a project cost and a hold period to produce a cash flow.')];
   }
 
-  const { operating, financing, returns, exit, budget } = model;
+  const { operating, financing, returns, exit, budget, assumptions } = model;
   const bps = (x) => `${x >= 0 ? '+' : ''}${Math.round(x)} bps`;
   const pct = (x) => `${(x * 100).toFixed(2)}%`;
 
@@ -39,7 +52,7 @@ export function validate(model, deal = {}, covenants = {}) {
   // separate question, answered by the interest reserve, and is reported as
   // its own flag rather than being conflated with a covenant breach.
   const covenantDSCR = operating.minStabilizedDSCR ?? operating.minDSCR;
-  if (covenantDSCR !== null && covenantDSCR < c.minDSCR) {
+  if (covenantDSCR !== null && below(covenantDSCR, c.minDSCR)) {
     flags.push(rule('dscr', 'error', 'interestRate',
       `Stabilized DSCR ${covenantDSCR.toFixed(2)}x breaches ${c.minDSCR.toFixed(2)}x covenant`,
       'Debt service exceeds what the property covers in at least one stabilized year. Reduce leverage, extend the interest-only period, or re-underwrite revenue.'));
@@ -61,16 +74,57 @@ export function validate(model, deal = {}, covenants = {}) {
         : 'Thin margin for cost overrun or cap rate expansion between now and stabilization.'));
   }
 
-  if (financing.ltc > c.maxLTC) {
+  if (above(financing.ltc, c.maxLTC)) {
     flags.push(rule('ltc', 'warning', 'downPayment',
       `Loan-to-cost ${pct(financing.ltc)} exceeds the ${pct(c.maxLTC)} limit`,
       'Leverage is above the firm credit box. Most construction lenders will resize the loan.'));
   }
 
-  if (operating.debtYield !== null && operating.debtYield < c.minDebtYield) {
+  if (operating.debtYield !== null && below(operating.debtYield, c.minDebtYield)) {
     flags.push(rule('debtYield', 'warning', 'downPayment',
       `Debt yield ${pct(operating.debtYield)} is below the ${pct(c.minDebtYield)} minimum`,
       'Lenders size to debt yield independently of DSCR. Expect a smaller loan than modelled.'));
+  }
+
+  // Break-even occupancy is the only figure here that answers "how empty can
+  // this get before it stops paying its own bills", which no return metric does.
+  const breakEven = operating.breakEvenOccupancy;
+  const underwrittenOcc = operating.stabilizedOccupancy;
+  // Two independent failures. Nesting the second inside the first is what
+  // silenced this rule on the deals that needed it most: a break-even can sit
+  // above the occupancy actually underwritten while still reading below the
+  // firm's ceiling, and the ceiling test alone then never fires.
+  const overCeiling = breakEven != null && breakEven > c.maxBreakEvenOccupancy;
+  const noCushion = breakEven != null && underwrittenOcc != null && breakEven >= underwrittenOcc;
+  if (overCeiling || noCushion) {
+    // Break-even holds operating cost at its full-occupancy level, so it is an
+    // upper bound and can sit above the underwritten occupancy on a deal whose
+    // own stabilised coverage still clears 1.0x. The breach is only definite
+    // once the schedule itself fails to cover debt service; short of that this
+    // is a disclosure that the coverage depends on the expense budget shrinking
+    // with the vacancy assumption, which is a warning, not a finding of fact.
+    const uncovered = noCushion && operating.stabilizedDSCR !== null && operating.stabilizedDSCR < 1;
+    const cushion = underwrittenOcc == null ? null : underwrittenOcc - breakEven;
+    const title = noCushion
+      ? `Break-even occupancy ${pct(breakEven)} is at or above the ${pct(underwrittenOcc)} underwritten`
+      : `Break-even occupancy ${pct(breakEven)} exceeds the ${pct(c.maxBreakEvenOccupancy)} limit`;
+    flags.push(rule('breakEvenOccupancy', uncovered ? 'error' : 'warning', 'vacancyRate', title,
+      uncovered
+        ? `Operating cost, tax, reserves and debt service are not covered at the ${pct(underwrittenOcc)} occupancy underwritten. The deal needs occupancy it does not assume.`
+        : noCushion
+          ? 'On a full-occupancy expense budget the asset does not clear its outgoings at the occupancy assumed. The margin here is the assumption that operating cost falls away with the tenants.'
+          : `${cushion === null ? 'Little' : pct(cushion)} of occupancy separates this asset from negative cash flow. Reduce leverage or re-underwrite the expense load.`));
+  }
+
+  // Rent growth is the assumption that quietly does the work in a thin deal:
+  // past this point the return is market appreciation, not the business plan.
+  const { rentGrowth } = assumptions || {};
+  // Strictly above, with a tolerance: an assumption sitting exactly on the
+  // ceiling is compliant, and float noise in a derived override must not flag.
+  if (Number.isFinite(rentGrowth) && rentGrowth > c.maxRentGrowth + 1e-9) {
+    flags.push(rule('rentGrowth', 'warning', 'rentGrowth',
+      `Rent growth ${pct(rentGrowth)}/yr exceeds the ${pct(c.maxRentGrowth)} ceiling`,
+      'The underwriting is leaning on market appreciation rather than on the business plan. Re-run at the ceiling and check the return still clears.'));
   }
 
   const entryCap = deal.entryCapRate;

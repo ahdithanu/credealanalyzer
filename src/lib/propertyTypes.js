@@ -13,6 +13,11 @@ export const propertyTypes = {
     // interpret `avgRevenue` when suggesting a placeholder.
     revenueBasis: 'site',      // annual revenue per site
     avgRevenue: 580000,
+    // `avgRevenue`, `avgOpEx` and `avgCapRate` are INPUT-FORM PLACEHOLDERS, not
+    // house assumptions. The firm's assumption set in firmDefaults.js is the
+    // governance layer and is what finance.js and screen.js resolve against;
+    // these numbers disagree with it by up to 17 points and a caller reaching
+    // for the wrong one is that far off on expenses.
     avgOpEx: 35,
     avgCapRate: 7.5,
     constructionCostPSF: { groundUp: 250, ti: 75, acquisition: 60 },

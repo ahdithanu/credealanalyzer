@@ -195,7 +195,14 @@ export class Graph {
   }
 
   toJSON() {
-    return { nodes: [...this.nodes.values()], edges: this.edges };
+    // Copies, not the live objects. Handing out `this.edges` and the node
+    // records themselves means a caller that edits the serialised result edits
+    // the graph — a snapshot writer that normalised props before storing them
+    // would silently rewrite the graph it was asked to serialise.
+    return {
+      nodes: [...this.nodes.values()].map((n) => ({ ...n, props: { ...n.props } })),
+      edges: this.edges.map((e) => ({ ...e })),
+    };
   }
 
   static fromJSON(json) {

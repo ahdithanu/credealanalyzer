@@ -63,7 +63,10 @@ export function screeningVerdict(model, covenants = {}) {
       label: 'Loan to cost',
       actual: financing.ltc,
       threshold: c.maxLTC,
-      pass: financing.ltc <= c.maxLTC,
+      // An unmeasurable ratio fails the test rather than passing it by
+      // default: `null <= limit` is true, which would print a green tick for a
+      // leverage figure the model could not compute.
+      pass: (financing.ltc ?? Infinity) <= c.maxLTC,
       inverted: true,
       format: (v) => pct(v, 1),
     },
@@ -246,7 +249,7 @@ export function buildMemo(deal, {
           ['DSCR, stabilized', mult(operating.minStabilizedDSCR), 'Minimum rolling year from stabilization'],
           ['DSCR, incl. lease-up', mult(operating.minDSCR), 'Minimum rolling year over the full hold'],
           ['Debt yield', pct(operating.debtYield, 2), 'Stabilized NOI ÷ loan balance'],
-          ['Loan to cost', pct(financing.ltc, 1), 'Loan commitment ÷ project cost'],
+          ['Loan to cost', pct(financing.ltc, 1), 'Permanent balance ÷ total project cost'],
           ['Interest-only', `${operating.interestOnlyMonths} mo`, 'Through stabilization'],
         ],
       },

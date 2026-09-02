@@ -83,8 +83,16 @@ export class FactStore {
       if (f.validFrom > v) continue;
       if (f.validTo !== null && f.validTo <= v) continue;
       if (f.recordedAt > k) continue;                 // not yet known at that time
-      // Latest thing we knew wins; ties break on the narrower valid window.
-      if (!best || f.recordedAt > best.recordedAt) best = f;
+      // Latest thing we knew wins. A tie on recordedAt is not rare: canonicalize()
+      // stamps one timestamp across a whole ingest batch, so an open-ended fact
+      // and a bounded one from the same source tie by construction. The tie
+      // breaks on the NARROWER valid window — a fact bounded to a period is a
+      // more specific claim about this instant than an open-ended one. Leaving
+      // it to array order made the answer depend on the order facts happen to
+      // sit in, which a persistence layer then has to preserve for a reason
+      // nothing on screen can explain.
+      if (!best || f.recordedAt > best.recordedAt) { best = f; continue; }
+      if (f.recordedAt === best.recordedAt && validWindowWidth(f) < validWindowWidth(best)) best = f;
     }
     return best;
   }
@@ -141,6 +149,7 @@ export class FactStore {
 
   get size() { return this.facts.length; }
 
+
   /** Serialise for persistence. Append-only, so this is the whole truth. */
   toJSON() { return { facts: this.facts }; }
 
@@ -149,4 +158,17 @@ export class FactStore {
     s.facts = (json?.facts ?? []).slice();
     return s;
   }
+}
+
+/**
+ * Width of a fact's valid window, used only to break a recordedAt tie. An
+ * open-ended fact is infinitely wide, and so loses to any bounded one; a window
+ * whose ends will not parse is treated the same way rather than compared as
+ * text.
+ */
+function validWindowWidth(f) {
+  if (f.validTo === null || f.validTo === undefined) return Infinity;
+  const from = Date.parse(f.validFrom);
+  const to = Date.parse(f.validTo);
+  return Number.isNaN(from) || Number.isNaN(to) ? Infinity : to - from;
 }
