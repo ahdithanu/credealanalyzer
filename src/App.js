@@ -3,7 +3,7 @@ import { List, Calculator, Table, Split, TrendingUp, Map, FileText, Plus, Downlo
 
 import './ui/theme.css';
 import { calculateMetrics } from './lib/finance';
-import { loadDeals, saveDeals, isPersistenceAvailable } from './lib/storage';
+import { loadDeals, saveDeals, storageStatus } from './lib/storage';
 import { promoteState } from './lib/waterfall';
 import { SAMPLE_DEALS } from './lib/sampleDeals';
 import { firmDefault } from './lib/firmDefaults';
@@ -37,7 +37,14 @@ const ROLES = {
 const withMetrics = (deals) =>
   (deals || []).map((d) => ({ ...d, metrics: calculateMetrics(d) }));
 
-function blankDeal() {
+/**
+ * A new, empty deal.
+ *
+ * Exported so the screen suite can render every screen against the exact object
+ * the New deal button produces, rather than against a hand-written approximation
+ * that drifts from it.
+ */
+export function blankDeal() {
   const propertyType = 'multifamily';
   const pick = (f) => firmDefault(f, propertyType);
   return {
@@ -70,7 +77,11 @@ function blankDeal() {
 export default function App() {
   const [deals, setDeals] = useState([]);
   const [hydrated, setHydrated] = useState(false);
-  const [storageState, setStorageState] = useState({ available: true, error: null });
+  // Load and write failures are separate facts. Folding them into one `error`
+  // meant a quota failure on save could never be cleared once the user deleted
+  // deals to make room, and a corrupt-payload notice (about the load) was
+  // overwritten by the next save's verdict.
+  const [storageState, setStorageState] = useState({ available: true, loadError: null, writeError: null });
   const [role, setRole] = useState('ic');
   const [view, setView] = useState('pipeline');
   const [selectedId, setSelectedId] = useState(null);
@@ -78,7 +89,7 @@ export default function App() {
 
   useEffect(() => {
     const { deals: saved, error } = loadDeals();
-    setStorageState({ available: isPersistenceAvailable(), error });
+    setStorageState({ available: storageStatus() === 'available', loadError: error, writeError: null });
     const initial = withMetrics(saved === null ? SAMPLE_DEALS : saved);
     setDeals(initial);
     setSelectedId(initial[0]?.id ?? null);
@@ -88,7 +99,9 @@ export default function App() {
   useEffect(() => {
     if (!hydrated) return;
     const { ok, error } = saveDeals(deals);
-    if (!ok) setStorageState((s) => ({ ...s, error }));
+    // Cleared on a successful write. A user who met a full quota and then
+    // deleted deals to make room must stop being told their work is not saved.
+    setStorageState((s) => ({ ...s, writeError: ok ? null : error }));
   }, [deals, hydrated]);
 
   const selected = useMemo(
@@ -224,13 +237,22 @@ export default function App() {
   );
 }
 
-function statusNotices({ available, error, rejectedWaterfalls }) {
+function statusNotices({ available, loadError, writeError, rejectedWaterfalls }) {
   const out = [];
-  if (error === 'corrupt') {
+  if (loadError === 'corrupt') {
     out.push('Saved deals could not be read and have been set aside for recovery. Starting from the sample portfolio.');
-  } else if (error === 'quota') {
-    out.push('Browser storage is full. Recent changes are not being saved — export to CSV to avoid losing work.');
-  } else if (error || !available) {
+  }
+  // The write path is the authority on whether saving works — it is where the
+  // browser actually refuses — and the load-time probe only stands in before
+  // anything has been written. A full quota and an absent API need different
+  // things from the reader (delete some deals, versus leave private browsing),
+  // so they get different notices; storage.js is what tells them apart.
+  const failure = writeError
+    ?? (loadError === 'quota' ? 'quota' : null)
+    ?? (available ? null : 'unavailable');
+  if (failure === 'quota') {
+    out.push('Browser storage is full. Recent changes are not being saved — delete deals you no longer need, or export to CSV to avoid losing work.');
+  } else if (failure) {
     out.push('Browser storage is unavailable, so deals will not persist when you close this tab. Export to CSV to keep your work.');
   }
   // A promote structure the engine refuses splits nothing, and the deals

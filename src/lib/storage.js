@@ -14,22 +14,97 @@
 const STORAGE_KEY = 'cre-deal-analyzer:deals';
 const SCHEMA_VERSION = 3;
 
+const UNAVAILABLE = 'unavailable';
+const QUOTA = 'quota';
+const PROBE_KEY = '__cre_probe__';
+
+/**
+ * The store itself, if this context has one AT ALL.
+ *
+ * Deliberately does NOT write: a browser whose quota is exhausted still reads
+ * back everything the user has saved, and a probe that writes first reported
+ * the whole facility missing and handed the caller `deals: null` — which App
+ * reads as "nothing has ever been saved" and answers by seeding the sample
+ * portfolio OVER the user's deals. Reading and writing are different questions
+ * and are now asked separately.
+ */
 function storage() {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return null;
-    // Probe: Safari private mode throws on setItem rather than on access.
-    const probe = '__cre_probe__';
-    window.localStorage.setItem(probe, '1');
-    window.localStorage.removeItem(probe);
     return window.localStorage;
   } catch {
+    // Access itself throws where the API is disabled by policy.
     return null;
   }
 }
 
-/** True when deals can actually be persisted in this browser context. */
+/**
+ * Whether an exception is the browser saying "no room", rather than any other
+ * write failure.
+ *
+ * Browsers disagree on how they signal this and the MESSAGE is the one field
+ * that is pure prose — Chrome, Firefox and Safari each word it differently and
+ * localise it — so the name and the legacy numeric code are what is tested.
+ * Matching on message text is how a full disk gets reported as a generic
+ * write failure in every locale but English.
+ */
+function isQuotaError(e) {
+  if (!e) return false;
+  return e.name === 'QuotaExceededError'          // current DOM standard
+    || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'    // Firefox, legacy name
+    || e.name === 'QUOTA_EXCEEDED_ERR'            // older WebKit
+    || e.code === 22                              // DOMException.QUOTA_EXCEEDED_ERR
+    || e.code === 1014;                           // Firefox, legacy code
+}
+
+/** Whether the origin holds anything at all. See quotaOrAbsent(). */
+function hasStoredContent(store) {
+  try { return store.length > 0; } catch { return false; }
+}
+
+/**
+ * A quota exception means two opposite things depending on what is already
+ * stored, and the user needs a different action for each.
+ *
+ * A store that already holds keys and refuses one more is FULL: the fix is to
+ * delete some deals. A store that is empty and still refuses the first byte was
+ * never given any quota — Safari private browsing is the common case — and the
+ * fix is to leave private browsing or export instead. Reporting the second as
+ * "storage is full" tells a user to delete data that does not exist.
+ */
+function quotaOrAbsent(store) {
+  return hasStoredContent(store) ? QUOTA : UNAVAILABLE;
+}
+
+/**
+ * What this browser will actually let us do.
+ * @returns {'available'|'quota'|'unavailable'}
+ *   'quota' means reads work and writes do not, which is a state the previous
+ *   probe could not express at all: it round-tripped a setItem and reported a
+ *   full quota as an absent API, leaving App's "Browser storage is full" notice
+ *   unreachable and its "storage is unavailable" notice telling a user with a
+ *   full disk to check their private-browsing setting.
+ */
+export function storageStatus() {
+  const store = storage();
+  if (!store) return UNAVAILABLE;
+  try {
+    store.setItem(PROBE_KEY, '1');
+    store.removeItem(PROBE_KEY);
+    return 'available';
+  } catch (e) {
+    return isQuotaError(e) ? quotaOrAbsent(store) : UNAVAILABLE;
+  }
+}
+
+/**
+ * True when deals can actually be persisted in this browser context.
+ *
+ * A full quota is NOT this: reads still work, so the caller must not treat it
+ * as an absent facility. storageStatus() is what tells the three states apart.
+ */
 export function isPersistenceAvailable() {
-  return storage() !== null;
+  return storageStatus() === 'available';
 }
 
 /**
@@ -52,15 +127,22 @@ export function isPersistenceAvailable() {
  */
 export function loadDeals() {
   const store = storage();
-  if (!store) return { deals: null, error: 'unavailable', migrated: false };
+  if (!store) return { deals: null, error: UNAVAILABLE, migrated: false };
+
+  const status = storageStatus();
+  if (status === UNAVAILABLE) return { deals: null, error: UNAVAILABLE, migrated: false };
+  // A full quota does not stop a read, so the deals still come back; the error
+  // rides alongside them. Returning `deals: null` here is what made App reseed
+  // the sample portfolio over a full-disk user's own work.
+  const quota = status === QUOTA ? QUOTA : null;
 
   let raw;
   try {
     raw = store.getItem(STORAGE_KEY);
   } catch {
-    return { deals: null, error: 'unavailable', migrated: false };
+    return { deals: null, error: UNAVAILABLE, migrated: false };
   }
-  if (raw === null) return { deals: null, error: null, migrated: false };
+  if (raw === null) return { deals: null, error: quota, migrated: false };
 
   let parsed;
   try {
@@ -72,7 +154,7 @@ export function loadDeals() {
   }
 
   const { deals, migrated } = migrate(parsed);
-  return { deals, error: null, migrated };
+  return { deals, error: quota, migrated };
 }
 
 /**
@@ -82,7 +164,7 @@ export function loadDeals() {
  */
 export function saveDeals(deals) {
   const store = storage();
-  if (!store) return { ok: false, error: 'unavailable' };
+  if (!store) return { ok: false, error: UNAVAILABLE };
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     savedAt: new Date().toISOString(),
@@ -92,7 +174,16 @@ export function saveDeals(deals) {
     store.setItem(STORAGE_KEY, JSON.stringify(payload));
     return { ok: true, error: null };
   } catch (e) {
-    return { ok: false, error: e && e.name === 'QuotaExceededError' ? 'quota' : 'write-failed' };
+    // The write path is the one that matters: a QuotaExceededError here is the
+    // common way a user meets a full disk, and it used to be unreachable —
+    // the availability probe wrote first, failed first, and every caller was
+    // told the facility was missing before saveDeals() was ever reached.
+    //
+    // Only the standard error NAME was tested, so Firefox's legacy name and the
+    // numeric codes fell through to 'write-failed', which App renders as a
+    // generic failure with no instruction. isQuotaError() reads name and code.
+    if (!isQuotaError(e)) return { ok: false, error: 'write-failed' };
+    return { ok: false, error: quotaOrAbsent(store) };
   }
 }
 

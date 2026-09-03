@@ -2,8 +2,10 @@ import React, { useMemo } from 'react';
 import { Plus, AlertTriangle } from 'lucide-react';
 import { runModel } from '../lib/finance';
 import { promoteState, DEFAULT_WATERFALL } from '../lib/waterfall';
+import { firmDefault } from '../lib/firmDefaults';
 import { Panel, MetricStrip, Seg } from '../ui/components';
 import { money, money0, pct, mult, NA } from '../lib/format';
+import { irrQualification, IrrMark } from './irrQualification';
 
 // Same threshold waterfall.js settles its own tiers at: below this a residual
 // balance is float noise from the period arithmetic, not money anyone is owed.
@@ -145,12 +147,17 @@ export default function Waterfall({ deal, onChange }) {
   // With no schedule the model funded no capital stack, so there is no share to
   // derive from it and the arithmetic returns a confident 0.0% for a deal whose
   // configured co-invest is 20%. The deal's own share is the honest fallback —
-  // it is where finance.js reads it from in the first place.
+  // it is where finance.js reads it from in the first place, ending in
+  // FIRM_DEFAULTS.global.gpCoInvestShare rather than in a literal. The literal
+  // 0.20 that used to close this chain was the house standard copied into a
+  // component, so moving the firm default would have left this screen quoting a
+  // co-invest the engine no longer uses, on the same page as the engine's
+  // numbers. `firmDefault` is the exact expression finance.js resolves.
   const coInvestShare = result
     ? result.config.gpCoInvestShare
     : commitment > 0 && model.financing.gpCoInvest > 0
       ? model.financing.gpCoInvest / commitment
-      : (deal.gpCoInvestShare ?? 0.20);
+      : (deal.gpCoInvestShare ?? firmDefault('gpCoInvestShare', deal.propertyType));
 
   const setTier = (i, patch) =>
     setCfg((c) => ({ ...c, tiers: c.tiers.map((t, j) => (j === i ? { ...t, ...patch } : t)) }));
@@ -688,7 +695,14 @@ function SplitPanel({ result, model }) {
     { label: 'Contributed', lp: totals.lpContributions, gp: totals.gpContributions, all: totals.contributions, f: dollars },
     { label: 'Distributed', lp: totals.lpDistributions, gp: totals.gpDistributions, all: totals.distributions, f: dollars },
     { label: 'Profit', lp: returns.lpProfit, gp: returns.gpProfit, all: totals.distributions - totals.contributions, f: dollars },
-    { label: 'IRR', lp: returns.lpIRR, gp: returns.gpIRR, all: model.returns.leveredIRR, f: (v) => pct(v) },
+    // The Deal column is the model's own levered IRR, so it carries the model's
+    // own uniqueness verdict. The LP and GP columns are solved inside
+    // waterfall.js, which publishes no such diagnostic, and the panel foot below
+    // already states in words that those two series can admit several rates.
+    {
+      label: 'IRR', lp: returns.lpIRR, gp: returns.gpIRR, all: model.returns.leveredIRR,
+      f: (v) => pct(v), allQualification: irrQualification(model.returns.irrDiagnostics, 'levered'),
+    },
     { label: 'Equity multiple', lp: returns.lpEquityMultiple, gp: returns.gpEquityMultiple, all: model.returns.equityMultiple, f: mult },
   ];
 
@@ -733,7 +747,9 @@ function SplitPanel({ result, model }) {
               <td className="dim">{r.label}</td>
               <td className={`r num ${negClass(r.lp)}`}>{r.f(r.lp)}</td>
               <td className={`r num ${negClass(r.gp)}`}>{r.f(r.gp)}</td>
-              <td className={`r num dim ${negClass(r.all)}`}>{r.f(r.all)}</td>
+              <td className={`r num dim ${negClass(r.all)}`}>
+                {r.f(r.all)}<IrrMark qualification={r.allQualification} />
+              </td>
             </tr>
           ))}
         </tbody>

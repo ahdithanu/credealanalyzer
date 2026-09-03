@@ -4,6 +4,7 @@ import { validate, flagCounts, breakEvenBreach, DEFAULT_COVENANTS } from '../lib
 import { overrides, firmDefault, FIRM_DEFAULTS } from '../lib/firmDefaults';
 import { propertyTypes, constructionTypes } from '../lib/propertyTypes';
 import { Panel, MetricStrip, FlagList, Seg } from '../ui/components';
+import { irrQualification, irrMarkText, IRR_FOOTNOTE } from './irrQualification';
 import { money, money0, thousands, pct, mult, bps, num, NA } from '../lib/format';
 
 const GROUPS = [
@@ -63,6 +64,10 @@ const SIZING_TESTS = [
   { key: 'debtYield', label: 'Debt yield',    limit: (l) => pct(l.minDebtYield, 2) },
 ];
 
+// The short form of IRR_FOOTNOTE, for the metric tile's one-line note. The full
+// sentence is on the panel footnote below; the tile has no room for it.
+const IRR_MARK_EXPLAINER = 'marked figures solve the IRR equation but are not unique';
+
 export default function DealModel({ deal, onChange, posture, onPosture }) {
   const [group, setGroup] = useState('financing');
 
@@ -108,10 +113,37 @@ export default function DealModel({ deal, onChange, posture, onPosture }) {
   const dscr = operating.minStabilizedDSCR;
   const breakEven = operating.breakEvenOccupancy;
 
+  // Whether each IRR on this tile is THE return or merely A root. finance.js
+  // solves by bisection and hands back the first bracketed rate; when the flow
+  // series turns over more than once several rates satisfy the equation, and
+  // the tile used to print that rate in exactly the same type as a settled one.
+  // Nothing is rendered when the flag is null — an incomplete model established
+  // no series and therefore no doubt either.
+  const leveredQ = irrQualification(returns.irrDiagnostics, 'levered');
+  const unleveredQ = irrQualification(returns.irrDiagnostics, 'unlevered');
+  const irrNote = `unlevered ${pct(returns.unleveredIRR)}${irrMarkText(unleveredQ)}`;
+
   const metrics = [
-    { k: 'Levered IRR', v: pct(returns.leveredIRR), n: `unlevered ${pct(returns.unleveredIRR)}` },
+    {
+      k: 'Levered IRR',
+      v: `${pct(returns.leveredIRR)}${irrMarkText(leveredQ)}`,
+      // The strip titles the whole tile with `${k}: ${v} — ${n}`, so the
+      // explanation has to be text rather than a node or it stringifies to
+      // [object Object] in the tooltip.
+      n: leveredQ || unleveredQ
+        ? `${irrNote} · ${IRR_MARK_EXPLAINER}`
+        : irrNote,
+    },
     { k: 'Equity multiple', v: mult(returns.equityMultiple), n: `${money(returns.totalDistributions)} distributed` },
-    { k: 'Yield on cost', v: pct(operating.yieldOnCost, 2), n: `stabilized NOI ÷ TDC · mo ${operating.stabilizationMonth}` },
+    {
+      k: 'Yield on cost', v: pct(operating.yieldOnCost, 2),
+      // A model with no schedule reports no stabilization month, and the bare
+      // interpolation printed the string "mo null" onto the tile. Month 0 is a
+      // real month (the closing), so this cannot fall back to a number either.
+      n: operating.stabilizationMonth === null || operating.stabilizationMonth === undefined
+        ? `stabilized NOI ÷ TDC · stabilization ${NA}`
+        : `stabilized NOI ÷ TDC · mo ${operating.stabilizationMonth}`,
+    },
     {
       // Deliberately adjacent to yield on cost and never merged with it: one
       // prices income already in place against what is paid for it, the other
@@ -197,6 +229,10 @@ export default function DealModel({ deal, onChange, posture, onPosture }) {
       </div>
 
       <MetricStrip items={metrics} />
+
+      {(leveredQ || unleveredQ) && (
+        <div className="dim2" style={{ fontSize: '10.5px', marginTop: '-6px' }}>{IRR_FOOTNOTE}</div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: posture === 'grid' ? '1fr' : '1.55fr 1fr', gap: '12px', flex: 1, minHeight: 0 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>

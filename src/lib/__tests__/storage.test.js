@@ -1,4 +1,4 @@
-import { loadDeals, saveDeals, clearDeals, isPersistenceAvailable, __internals } from '../storage';
+import { loadDeals, saveDeals, clearDeals, isPersistenceAvailable, storageStatus, __internals } from '../storage';
 
 const { STORAGE_KEY, SCHEMA_VERSION } = __internals;
 
@@ -69,10 +69,104 @@ describe('storage', () => {
 
   it('reports a failure rather than throwing when writes are blocked', () => {
     const spy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      const e = new Error('full'); e.name = 'QuotaExceededError'; throw e;
+      throw new Error('disk on fire');
     });
-    expect(saveDeals([deal(1, 'A')])).toEqual({ ok: false, error: 'unavailable' });
+    // Not a quota signal, so it is not reported as one.
+    expect(saveDeals([deal(1, 'A')])).toEqual({ ok: false, error: 'write-failed' });
     spy.mockRestore();
+  });
+});
+
+/**
+ * POLICY CHANGE — a full quota is no longer indistinguishable from an absent
+ * localStorage.
+ *
+ * The old availability probe round-tripped a setItem, so a browser whose quota
+ * was exhausted failed the probe and the module answered 'unavailable' on every
+ * path. Two consequences, both asserted below:
+ *
+ *  1. saveDeals() never returned 'quota'. The previous version of the write test
+ *     asserted exactly that — a QuotaExceededError thrown from setItem came back
+ *     as `{ok: false, error: 'unavailable'}` — which made App's "Browser storage
+ *     is full" notice dead code and told a user with a full disk to check their
+ *     private-browsing setting instead of deleting deals. That test is not
+ *     deleted; it is retained above, narrowed to what it can still honestly
+ *     assert (a NON-quota write failure), and the quota cases are stated here.
+ *
+ *  2. loadDeals() returned `deals: null` on a full quota, which App reads as
+ *     "nothing has ever been saved" and answers by seeding the sample portfolio
+ *     over the user's own deals. Reads do not consume quota, so they now succeed
+ *     and the error rides alongside the deals.
+ *
+ * The two states need different things from the user — leave private browsing
+ * versus delete some deals — so they are different values.
+ */
+describe('a full quota is distinguishable from an absent localStorage', () => {
+  const quotaError = ({ name, code }) => {
+    const e = new Error('irrelevant prose the browser localises');
+    if (name !== undefined) e.name = name;
+    if (code !== undefined) e.code = code;
+    return e;
+  };
+
+  /** Throw on the real payload write, but let anything already stored stay. */
+  const blockWrites = (error) =>
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw error; });
+
+  // Every signal a browser in the wild actually uses. The MESSAGE is never one
+  // of them: it is prose, it differs per engine, and it is localised.
+  const SIGNALS = [
+    ['the DOM standard name', { name: 'QuotaExceededError' }],
+    ['the Firefox legacy name', { name: 'NS_ERROR_DOM_QUOTA_REACHED' }],
+    ['the older WebKit name', { name: 'QUOTA_EXCEEDED_ERR' }],
+    ['the DOMException code', { name: 'Error', code: 22 }],
+    ['the Firefox legacy code', { name: 'Error', code: 1014 }],
+  ];
+
+  it.each(SIGNALS)('reports a full store as quota, however the browser signals it (%s)', (_label, shape) => {
+    // Something is already stored, so the store HAS quota and has run out of it.
+    saveDeals([deal(1, 'A')]);
+    const spy = blockWrites(quotaError(shape));
+    expect(saveDeals([deal(1, 'A'), deal(2, 'B')])).toEqual({ ok: false, error: 'quota' });
+    expect(storageStatus()).toBe('quota');
+    spy.mockRestore();
+  });
+
+  it('still reads the saved deals back when the store is full', () => {
+    // The whole point of separating the two: a full disk must not look like a
+    // first visit, or App reseeds the sample portfolio over the user's work.
+    saveDeals([deal(1, 'A'), deal(2, 'B')]);
+    const spy = blockWrites(quotaError({ name: 'QuotaExceededError' }));
+    const { deals, error } = loadDeals();
+    expect(deals.map((d) => d.name)).toEqual(['A', 'B']);
+    expect(error).toBe('quota');
+    spy.mockRestore();
+  });
+
+  it('reports an empty store that refuses its first byte as unavailable, not full', () => {
+    // Safari private browsing: the API is present and throws a quota error with
+    // nothing stored at all. "Browser storage is full — delete some deals" would
+    // be advice about data that does not exist.
+    const spy = blockWrites(quotaError({ name: 'QuotaExceededError' }));
+    expect(storageStatus()).toBe('unavailable');
+    expect(saveDeals([deal(1, 'A')])).toEqual({ ok: false, error: 'unavailable' });
+    expect(isPersistenceAvailable()).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('does not read the exception message to decide', () => {
+    saveDeals([deal(1, 'A')]);
+    // A generic failure whose prose happens to mention the word.
+    const e = new Error('QuotaExceededError: the disk is full');
+    e.name = 'TypeError';
+    const spy = blockWrites(e);
+    expect(saveDeals([deal(1, 'A')]).error).toBe('write-failed');
+    spy.mockRestore();
+  });
+
+  it('separates the three states', () => {
+    expect(storageStatus()).toBe('available');
+    expect(isPersistenceAvailable()).toBe(true);
   });
 });
 

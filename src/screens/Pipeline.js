@@ -3,12 +3,26 @@ import { Sparkline } from '../ui/components';
 import { money, pct, mult, num, NA } from '../lib/format';
 import { DEAL_STAGES } from '../lib/sampleDeals';
 import { propertyTypes } from '../lib/propertyTypes';
+import { DEFAULT_COVENANTS } from '../lib/validation';
+import { irrQualification, IrrMark, IRR_FOOTNOTE } from './irrQualification';
+
+// The covenant itself, read from the one place that states it. It was written
+// here as a literal 1.25 beside the sizer's own DEFAULT_DEBT_SIZING.minDSCR, so
+// a firm that moved its coverage floor would have kept a pipeline column
+// colouring rows against the old one.
+const MIN_DSCR = DEFAULT_COVENANTS.minDSCR;
+const DSCR_WATCHLIST = MIN_DSCR + 0.05;
 
 const SAVED_VIEWS = [
   { key: 'all',     label: 'All active',      test: (d) => d.stage !== 'Closed' },
   { key: 'ic',      label: 'IC Thursday',     test: (d) => d.stage === 'IC Thursday' },
   { key: 'groundup',label: 'Texas ground-up', test: (d) => d.constructionType === 'groundUp' && /TX$/.test(d.location) },
-  { key: 'dscr',    label: 'DSCR at risk',    test: (d, m) => (m.operating.minStabilizedDSCR ?? 9) < 1.30 },
+  // A WATCHLIST threshold, deliberately above the covenant: this view exists to
+  // surface deals approaching the limit, not deals already through it. Written
+  // as covenant-plus-cushion so it cannot drift away from the covenant it
+  // watches. It is NOT itself a firm default, and there is no entry for it in
+  // FIRM_DEFAULTS.
+  { key: 'dscr',    label: 'DSCR at risk',    test: (d, m) => (m.operating.minStabilizedDSCR ?? 9) < DSCR_WATCHLIST },
   { key: 'every',   label: 'Everything',      test: () => true },
 ];
 
@@ -51,6 +65,10 @@ export default function Pipeline({ deals, onOpen, onExport }) {
       yoc: m.operating.yieldOnCost,
       spread: m.operating.developmentSpreadBps,
       dscr: m.operating.minStabilizedDSCR,
+      // One rate that solves the equation, or the rate. finance.js records the
+      // difference; nothing on this screen read it, so an indicative IRR sorted
+      // and coloured exactly like a settled one.
+      irrQ: irrQualification(m.returns.irrDiagnostics, 'levered'),
       shape: m.annual.map((y) => y.cashFlow),
     };
   }), [deals]);
@@ -147,13 +165,15 @@ export default function Pipeline({ deals, onOpen, onExport }) {
                 <td><span className={`chip ${stageTone(r.stage)}`}>{r.stage}</span></td>
                 <td className="r num">{money(r.tdc)}</td>
                 <td className="r num">{money(r.equity)}</td>
-                <td className="r num" style={{ fontWeight: 500 }}>{pct(r.irr)}</td>
+                <td className="r num" style={{ fontWeight: 500 }}>
+                  {pct(r.irr)}<IrrMark qualification={r.irrQ} />
+                </td>
                 <td className="r num">{mult(r.em)}</td>
                 <td className="r num">{pct(r.yoc, 2)}</td>
                 <td className={`r num ${r.spread < 0 ? 'neg' : ''}`}>
                   {r.spread === null ? NA : num(r.spread)}
                 </td>
-                <td className={`r num ${r.dscr !== null && r.dscr < 1.25 ? 'neg' : ''}`}>
+                <td className={`r num ${r.dscr !== null && r.dscr < MIN_DSCR ? 'neg' : ''}`}>
                   {mult(r.dscr)}
                 </td>
                 <td><Sparkline values={r.shape} /></td>
@@ -165,6 +185,10 @@ export default function Pipeline({ deals, onOpen, onExport }) {
           </tbody>
         </table>
       </div>
+
+      {sorted.some((r) => r.irrQ) && (
+        <div className="dim2" style={{ fontSize: '10.5px' }}>{IRR_FOOTNOTE}</div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11px', color: 'var(--text-4)' }}>
         <span>{sorted.length} of {deals.length} deals</span>
