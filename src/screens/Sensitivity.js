@@ -45,7 +45,9 @@ export default function Sensitivity({ deal }) {
   // model is not reachable per cell without re-running every one of them. What
   // IS reachable is the base case, and stating what is known about it — while
   // saying plainly that the cells are not individually tested — is the honest
-  // reading. Claiming the cells inherit the base case's verdict would not be.
+  // reading. Claiming the cells inherit the base case's verdict would not be,
+  // and neither would silence: a withdrawn guarantee on the centre cell is a
+  // fact about the figure a reader is comparing every other cell against.
   const baseModel = useMemo(() => runModel(deal), [deal]);
   const irrSeries = IRR_SERIES[metric] ?? null;
   const gridQ = irrSeries ? irrQualification(baseModel.returns.irrDiagnostics, irrSeries) : null;

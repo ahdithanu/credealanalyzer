@@ -4,7 +4,7 @@ import { validate, flagCounts, breakEvenBreach, DEFAULT_COVENANTS } from '../lib
 import { overrides, firmDefault, FIRM_DEFAULTS } from '../lib/firmDefaults';
 import { propertyTypes, constructionTypes } from '../lib/propertyTypes';
 import { Panel, MetricStrip, FlagList, Seg } from '../ui/components';
-import { irrQualification, irrMarkText, IRR_FOOTNOTE } from './irrQualification';
+import { irrQualification, irrMarkText, IRR_FOOTNOTE, IRR_SHORT } from './irrQualification';
 import { money, money0, thousands, pct, mult, bps, num, NA } from '../lib/format';
 
 const GROUPS = [
@@ -64,9 +64,16 @@ const SIZING_TESTS = [
   { key: 'debtYield', label: 'Debt yield',    limit: (l) => pct(l.minDebtYield, 2) },
 ];
 
-// The short form of IRR_FOOTNOTE, for the metric tile's one-line note. The full
-// sentence is on the panel footnote below; the tile has no room for it.
-const IRR_MARK_EXPLAINER = 'marked figures solve the IRR equation but are not unique';
+/**
+ * A share of a total, where either side may be unknown.
+ *
+ * `null / 5_000_000` is 0 in JavaScript, so a null numerator renders as a
+ * confident 0.0% beside an amount cell that reads n/a — a claim that the line
+ * is a vanishing fraction of the deal, made about a figure the engine never
+ * computed. Both operands have to be finite for the ratio to mean anything.
+ */
+const share = (part, whole) =>
+  Number.isFinite(part) && Number.isFinite(whole) && whole !== 0 ? part / whole : null;
 
 export default function DealModel({ deal, onChange, posture, onPosture }) {
   const [group, setGroup] = useState('financing');
@@ -105,9 +112,8 @@ export default function DealModel({ deal, onChange, posture, onPosture }) {
   // stored input is the DISCARDED one: on Katy Freeway the field read 35% while
   // the model was funded at 30.74%, a $3.7m overstatement of equity at risk
   // annotated "set by debt sizing". The annotation is only true of this value.
-  const sizedEquityShare = sized && budget.baseProjectCost > 0
-    ? (financing.equityCommitment / budget.baseProjectCost) * 100
-    : null;
+  const equityOfBase = share(financing.equityCommitment, budget.baseProjectCost);
+  const sizedEquityShare = sized && equityOfBase !== null ? equityOfBase * 100 : null;
 
   const spread = operating.developmentSpreadBps;
   const dscr = operating.minStabilizedDSCR;
@@ -130,9 +136,10 @@ export default function DealModel({ deal, onChange, posture, onPosture }) {
       // The strip titles the whole tile with `${k}: ${v} — ${n}`, so the
       // explanation has to be text rather than a node or it stringifies to
       // [object Object] in the tooltip.
-      n: leveredQ || unleveredQ
-        ? `${irrNote} · ${IRR_MARK_EXPLAINER}`
-        : irrNote,
+      // IRR_SHORT rather than the full sentence: the tile has no room for it,
+      // and the footnote under the strip carries the whole qualification. It is
+      // the module's own wording, so the mark means one thing across the app.
+      n: leveredQ || unleveredQ ? `${irrNote} · ${IRR_SHORT}` : irrNote,
     },
     { k: 'Equity multiple', v: mult(returns.equityMultiple), n: `${money(returns.totalDistributions)} distributed` },
     {
@@ -406,9 +413,7 @@ function DebtSizing({ model, deal, sized }) {
   // denominator (base cost, before the interest reserve). `1 - ltc` is a third
   // number — equity over TOTAL cost — and quoting the two under one name is how
   // this panel and the Financing band came to disagree by four points.
-  const equityShareOfBase = budget.baseProjectCost > 0
-    ? financing.equityCommitment / budget.baseProjectCost
-    : null;
+  const equityShareOfBase = share(financing.equityCommitment, budget.baseProjectCost);
 
   return (
     <div>
@@ -566,7 +571,7 @@ function SourcesUses({ model, deal }) {
             <td>{l.label}</td>
             <td className="r num">{thousands(l.amount)}</td>
             <td className="r num dim">{unitCost(l.amount, perUnit, deal.buildingSize)}</td>
-            <td className="r num dim">{pct(l.amount / denom, 1)}</td>
+            <td className="r num dim">{pct(share(l.amount, denom), 1)}</td>
           </tr>
         ))}
         <tr className="total">
@@ -601,7 +606,7 @@ function CapitalStack({ model }) {
     <div style={{ padding: '14px' }}>
       <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', marginBottom: '12px' }}>
         {parts.map((p) => (
-          <div key={p.label} style={{ width: total && p.amount !== null ? `${(p.amount / total) * 100}%` : '0%', background: p.color }} />
+          <div key={p.label} style={{ width: `${(share(p.amount, total) ?? 0) * 100}%`, background: p.color }} />
         ))}
       </div>
       {parts.map((p) => (
@@ -610,7 +615,7 @@ function CapitalStack({ model }) {
           <span className="dim">{p.label}</span>
           <span className="spacer" />
           <span className="num">{money0(p.amount)}</span>
-          <span className="num dim2" style={{ width: '44px', textAlign: 'right' }}>{pct(p.amount / total, 1)}</span>
+          <span className="num dim2" style={{ width: '44px', textAlign: 'right' }}>{pct(share(p.amount, total), 1)}</span>
         </div>
       ))}
     </div>

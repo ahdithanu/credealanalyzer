@@ -237,7 +237,15 @@ export default function App() {
   );
 }
 
-function statusNotices({ available, loadError, writeError, rejectedWaterfalls }) {
+/**
+ * The banner text for whatever state persistence is in.
+ *
+ * Exported for the suite: the quota branch below was unreachable for the whole
+ * life of this file — storage.js's availability probe wrote a key, so a full
+ * quota failed the probe and every caller was told the facility was missing —
+ * and a notice nobody can reach is not a notice.
+ */
+export function statusNotices({ available, loadError, writeError, rejectedWaterfalls }) {
   const out = [];
   if (loadError === 'corrupt') {
     out.push('Saved deals could not be read and have been set aside for recovery. Starting from the sample portfolio.');

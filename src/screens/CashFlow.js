@@ -19,14 +19,20 @@ export default function CashFlow({ deal }) {
   const [mode, setMode] = useState('annual');
   const model = deal.metrics.model;
   const C = model.timeline.constructionMonths;
+  // Month 0 is a real month — the closing — so an absent stabilization month
+  // cannot fall back to a number. Unguarded, `Math.floor(null / 12)` is 0 and
+  // the accent rule that marks stabilization was drawn on year one of a model
+  // that never stabilised, beside a chip reading "Stabilizes month " with
+  // nothing after it.
   const stabAt = model.operating.stabilizationMonth;
+  const hasStab = Number.isFinite(stabAt);
 
   const periods = useMemo(() => {
     if (mode === 'monthly') {
       return model.months.map((m, i) => ({
         label: monthLabel(i),
         construction: i < C,
-        stabilization: i === stabAt,
+        stabilization: hasStab && i === stabAt,
         values: m,
       }));
     }
@@ -37,10 +43,10 @@ export default function CashFlow({ deal }) {
       partial: y.partial,
       months: y.months,
       construction: (i + 1) * 12 <= C,
-      stabilization: i === Math.floor(stabAt / 12),
+      stabilization: hasStab && i === Math.floor(stabAt / 12),
       values: y,
     }));
-  }, [mode, model, C, stabAt]);
+  }, [mode, model, C, stabAt, hasStab]);
 
   const cellValue = (line, values) => {
     if (line.derived) return line.derived(values);
@@ -56,8 +62,10 @@ export default function CashFlow({ deal }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <span className="lbl">Cash flow · {mode} · $000s</span>
         <span className="spacer" />
-        <span className="chip">Construction {C}mo</span>
-        <span className="chip acc">Stabilizes month {stabAt}</span>
+        <span className="chip">Construction {Number.isFinite(C) ? `${C}mo` : NA}</span>
+        <span className={`chip ${hasStab ? 'acc' : ''}`}>
+          {hasStab ? `Stabilizes month ${stabAt}` : `Stabilization ${NA}`}
+        </span>
         <Seg
           options={[{ value: 'annual', label: 'Annual' }, { value: 'monthly', label: 'Monthly' }]}
           value={mode}

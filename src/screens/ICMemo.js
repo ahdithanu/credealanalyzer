@@ -57,7 +57,14 @@ export default function ICMemo({ deal }) {
         <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderBottom: '1px solid var(--line)' }}>
           <span className="lbl">IC memo</span>
           <span className="chip">{memo.meta.pageCount} pages</span>
-          <span className={`chip ${memo.screen.failedCount ? 'warn' : 'pos'}`}>{memo.screen.verdict}</span>
+          {/* A PASS only when tests actually ran and none of them failed.
+              screeningVerdict() returns NO failedCount at all on an incomplete
+              model — `{verdict: 'Incomplete', tests: []}` — and
+              `failedCount ? 'warn' : 'pos'` read that undefined as "zero
+              failures", so a memo whose every figure is n/a carried a green
+              chip. The verdict block on the page itself already gets this
+              right; this chip is what a reader sees first. */}
+          <span className={`chip ${screenPassed(memo.screen) ? 'pos' : 'warn'}`}>{memo.screen.verdict}</span>
           <span className="spacer" />
           <button className="btn" onClick={() => window.print()}><Printer size={13} /> Print</button>
           <button className="btn primary" onClick={() => window.print()}><FileDown size={13} /> Save as PDF</button>
@@ -83,6 +90,18 @@ export default function ICMemo({ deal }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Did the mechanical screen actually pass?
+ *
+ * Three states, and only one of them is a pass: tests ran and all cleared;
+ * tests ran and some failed; no test could be run at all. The third is not a
+ * pass, and the absence of a failure count is not evidence of zero failures.
+ */
+function screenPassed(screen) {
+  const ran = Array.isArray(screen?.tests) && screen.tests.length > 0;
+  return ran && screen.failedCount === 0;
 }
 
 function Prov({ k, v, warn }) {

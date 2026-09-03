@@ -89,9 +89,34 @@ export default function Pipeline({ deals, onOpen, onExport }) {
 
   // Portfolio roll-up over what is on screen, so the header always describes
   // the rows beneath it rather than a hidden superset.
-  const totalEquity = sorted.reduce((s, r) => s + (r.equity || 0), 0);
-  const weightedIRR = totalEquity > 0
-    ? sorted.reduce((s, r) => s + (r.irr ?? 0) * (r.equity || 0), 0) / totalEquity
+  //
+  // Both figures are struck over the rows that can actually be measured, and
+  // the header says how many that was whenever it is not all of them. The
+  // previous form weighted `(r.irr ?? 0)`, which put a deal whose IRR the
+  // engine could NOT solve into the average at exactly 0% — one unmodelled deal
+  // beside one good one reported a 3.4% portfolio return against the good
+  // deal's 22.1%, and the number looked like a measurement. `(r.equity || 0)`
+  // did the same to the capital line, printing "Equity deployed $0" for a
+  // portfolio whose equity was never modelled: a zero claim sitting beside a
+  // cell that admits it cannot compute the IRR.
+  //
+  // Excluding those rows silently would be its own claim, so it is stated.
+  const equityRows = sorted.filter((r) => Number.isFinite(r.equity));
+  const totalEquity = equityRows.length
+    ? equityRows.reduce((s, r) => s + r.equity, 0)
+    : null;
+  // A weighted mean needs BOTH a weight and a value; a row missing either is
+  // not a small contribution, it is no contribution.
+  const irrRows = sorted.filter((r) => Number.isFinite(r.irr) && Number.isFinite(r.equity) && r.equity > 0);
+  const irrWeight = irrRows.reduce((s, r) => s + r.equity, 0);
+  const weightedIRR = irrWeight > 0
+    ? irrRows.reduce((s, r) => s + r.irr * r.equity, 0) / irrWeight
+    : null;
+  const irrCoverage = irrRows.length < sorted.length
+    ? `${irrRows.length} of ${sorted.length}`
+    : null;
+  const equityCoverage = equityRows.length < sorted.length
+    ? `${equityRows.length} of ${sorted.length}`
     : null;
   const byStage = DEAL_STAGES.map((s) => ({ s, n: sorted.filter((r) => r.stage === s).length }));
 
@@ -102,8 +127,8 @@ export default function Pipeline({ deals, onOpen, onExport }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', height: '100%' }}>
       {/* Portfolio line — small type, no oversized KPI tiles. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap' }}>
-        <Stat k="Equity deployed" v={money(totalEquity)} />
-        <Stat k="Weighted IRR" v={pct(weightedIRR)} />
+        <Stat k="Equity deployed" v={money(totalEquity)} note={equityCoverage} />
+        <Stat k="Weighted IRR" v={pct(weightedIRR)} note={irrCoverage} />
         <Stat k="Deals" v={String(sorted.length)} />
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '14px' }}>
           <span className="lbl">By stage</span>
@@ -202,11 +227,15 @@ export default function Pipeline({ deals, onOpen, onExport }) {
   );
 }
 
-function Stat({ k, v }) {
+// `note` states the coverage of a roll-up that could not include every row on
+// screen. Without it the header reads as a portfolio figure when it is a figure
+// over part of the portfolio, and the reader has no way to tell which.
+function Stat({ k, v, note }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
       <span className="lbl">{k}</span>
       <span className="num" style={{ fontSize: '15px', fontWeight: 500 }}>{v}</span>
+      {note ? <span className="lbl" style={{ fontSize: '11px' }}>({note})</span> : null}
     </div>
   );
 }

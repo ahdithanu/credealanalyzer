@@ -9,6 +9,10 @@ import { NA } from '../lib/format';
 const RADII = [50, 100, 250, 1000];
 
 export default function MarketIntelligence({ deal }) {
+  // NOT a firm default: FIRM_DEFAULTS has no entry for a default property type,
+  // and this only decides which set of scoring weights the screen opens on when
+  // no deal is selected. It is the same starting type blankDeal() uses, and it
+  // governs nothing on any deal.
   const [propertyType, setPropertyType] = useState(deal?.propertyType ?? 'multifamily');
   const [radius, setRadius] = useState(250);
   const [selected, setSelected] = useState(null);

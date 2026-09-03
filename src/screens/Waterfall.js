@@ -168,6 +168,11 @@ export default function Waterfall({ deal, onChange }) {
   // A new hurdle has to sit strictly above the one below it, and the stack has
   // to stay open-ended at the top, so the tier is inserted beneath the terminal
   // one and seeded off the highest hurdle already in the stack.
+  //
+  // The 4-point gap, the 10-point promote step and the 90% ceiling are SEEDS for
+  // an editable control, not firm terms: nothing reads them once the analyst
+  // types over them, FIRM_DEFAULTS states no promote structure, and the terms
+  // the engine actually applies come from DEFAULT_WATERFALL and the deal.
   const addTier = () =>
     setCfg((c) => {
       const tiers = c.tiers.map((t) => ({ ...t }));
