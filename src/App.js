@@ -4,6 +4,7 @@ import { List, Calculator, Table, Split, TrendingUp, Map, FileText, Plus, Downlo
 import './ui/theme.css';
 import { calculateMetrics } from './lib/finance';
 import { loadDeals, saveDeals, isPersistenceAvailable } from './lib/storage';
+import { promoteState } from './lib/waterfall';
 import { SAMPLE_DEALS } from './lib/sampleDeals';
 import { firmDefault } from './lib/firmDefaults';
 import { propertyTypes } from './lib/propertyTypes';
@@ -60,6 +61,9 @@ function blankDeal() {
     loanTerm: pick('loanTerm'),
     exitCapRate: pick('exitCapRate'),
     holdPeriod: 5,
+    // Stated, not omitted: a new deal has no promote structure, and every
+    // surface reads that null as "these returns are before promote".
+    waterfall: null,
   };
 }
 
@@ -114,7 +118,22 @@ export default function App() {
     setView(ROLES[next].landing);
   };
 
-  const notice = persistenceNotice(storageState);
+  // Derived from the deals in hand, every render — not captured once at mount.
+  // Held in state, the list kept naming a deal the analyst had already fixed on
+  // the Waterfall screen (and one they had deleted) as unpromoted, while the
+  // screen, the memo and the CSV all showed an applied split. A banner and a
+  // page stating opposite facts about the same deal is the exact misreading
+  // this notice exists to prevent. It is also the SAME predicate those three
+  // surfaces run, so it cannot disagree with them by construction.
+  const rejectedWaterfalls = useMemo(
+    () => deals
+      .map((d) => ({ deal: d, promote: promoteState(d.metrics?.model, d.waterfall) }))
+      .filter(({ promote }) => promote.state === 'rejected')
+      .map(({ deal, promote }) => ({ id: deal.id, name: deal.name ?? null, reason: promote.reason })),
+    [deals],
+  );
+
+  const notices = statusNotices({ ...storageState, rejectedWaterfalls });
   const needsDeal = view !== 'pipeline' && !selected;
 
   return (
@@ -173,9 +192,9 @@ export default function App() {
           </button>
         </header>
 
-        {notice && (
-          <div className="notice"><AlertTriangle size={14} /><span>{notice}</span></div>
-        )}
+        {notices.map((text) => (
+          <div className="notice" key={text}><AlertTriangle size={14} /><span>{text}</span></div>
+        ))}
 
         <main className={`content${view === "memo" ? " flush" : ""}`}>
           {!deals.length ? (
@@ -191,7 +210,7 @@ export default function App() {
           ) : view === 'cashflow' ? (
             <CashFlow deal={selected} />
           ) : view === 'waterfall' ? (
-            <Waterfall deal={selected} />
+            <Waterfall deal={selected} onChange={updateDeal} />
           ) : view === 'sensitivity' ? (
             <Sensitivity deal={selected} />
           ) : view === 'market' ? (
@@ -205,15 +224,27 @@ export default function App() {
   );
 }
 
-function persistenceNotice({ available, error }) {
+function statusNotices({ available, error, rejectedWaterfalls }) {
+  const out = [];
   if (error === 'corrupt') {
-    return 'Saved deals could not be read and have been set aside for recovery. Starting from the sample portfolio.';
+    out.push('Saved deals could not be read and have been set aside for recovery. Starting from the sample portfolio.');
+  } else if (error === 'quota') {
+    out.push('Browser storage is full. Recent changes are not being saved — export to CSV to avoid losing work.');
+  } else if (error || !available) {
+    out.push('Browser storage is unavailable, so deals will not persist when you close this tab. Export to CSV to keep your work.');
   }
-  if (error === 'quota') {
-    return 'Browser storage is full. Recent changes are not being saved — export to CSV to avoid losing work.';
+  // A promote structure the engine refuses splits nothing, and the deals
+  // carrying one show pre-promote returns everywhere. Silence here would leave
+  // an analyst reading project-level numbers on a deal they believe is
+  // promoted, which is the one misreading this whole path exists to prevent.
+  const rejected = rejectedWaterfalls ?? [];
+  if (rejected.length) {
+    const named = rejected.map((r) => `${r.name ?? 'a saved deal'} (${r.reason})`).join('; ');
+    out.push(
+      `${rejected.length === 1 ? 'A saved promote structure has' : `${rejected.length} saved promote structures have`}` +
+      ` arithmetic the waterfall cannot run, so no split is applied on ${rejected.length === 1 ? 'that deal' : 'those deals'}` +
+      ` and its returns are shown before promote: ${named}. Open the Waterfall screen to correct the structure.`
+    );
   }
-  if (error || !available) {
-    return 'Browser storage is unavailable, so deals will not persist when you close this tab. Export to CSV to keep your work.';
-  }
-  return null;
+  return out;
 }

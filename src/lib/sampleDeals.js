@@ -15,6 +15,21 @@
  *    type's `expenseRecoveryRate`, so they must not be baked into revenue.
  *
  * Figures are plausible and internally consistent, not sourced comps.
+ *
+ * The repositioning deals (Tampa, Plano, Alamo Ridge, Dallas) are priced
+ * against a renovation period that carries property tax, capital reserves and
+ * fixed operating cost — the same NOI definition the operating schedule and the
+ * going-in cap rate use. Alamo Ridge was priced under the earlier convention,
+ * which credited in-place income net of operating expense alone; at $135K/door
+ * it read a 5.08% going-in cap into a 6.30% loan and breached the 1.25x
+ * coverage covenant on a deal presented as heading to committee. $121K/door is
+ * the basis at which a 2014-vintage San Antonio value-add actually clears its
+ * own credit box.
+ *
+ * Austin is thin ON PURPOSE and is meant to fail: a negative development
+ * spread and a coverage breach, in the market carrying the heaviest supply
+ * pipeline in the peer set. A sample portfolio of nine winners teaches an
+ * analyst that the screen never fires.
  */
 export const SAMPLE_DEALS = [
   {
@@ -46,7 +61,7 @@ export const SAMPLE_DEALS = [
     purchasePrice: 3_200_000, constructionCost: 2_125_000, buildingSize: 25_000,
     grossRevenue: 700_000, vacancyRate: 8, operatingExpenseRatio: 28,
     downPayment: 30, interestRate: 5.9, loanTerm: 25, exitCapRate: 7.8, holdPeriod: 5,
-    notes: 'Second-generation space at $85/sf TI. Base-year stops recover ~55% of expense growth.',
+    notes: 'Second-generation space at $85/sf TI. Vacant through the six-month fit-out, so tax and fixed opex are carried with no rent against them. Base-year stops recover ~55% of expense growth.',
   },
   {
     id: 4,
@@ -67,7 +82,7 @@ export const SAMPLE_DEALS = [
     grossRevenue: 558_000, vacancyRate: 6, operatingExpenseRatio: 20,
     downPayment: 30, interestRate: 6.1, loanTerm: 25, exitCapRate: 7.0, holdPeriod: 5,
     assumptions: { inPlaceRevenue: 400_000 },
-    notes: 'Value-add acquisition at $31/sf NNN. In-place income services debt through renovation.',
+    notes: 'Value-add acquisition at $31/sf NNN. In-place income, net of tax and reserves and with NNN recoveries on let space, services debt through renovation.',
   },
   {
     id: 6,
@@ -95,11 +110,11 @@ export const SAMPLE_DEALS = [
     name: 'Alamo Ridge Apartments',
     propertyType: 'multifamily', constructionType: 'acquisition', location: 'San Antonio, TX',
     stage: 'IC Thursday', owner: 'Okonjo', program: '248 units · 2014 vintage',
-    purchasePrice: 33_500_000, constructionCost: 3_100_000, buildingSize: 214_000, units: 248,
+    purchasePrice: 30_000_000, constructionCost: 3_100_000, buildingSize: 214_000, units: 248,
     grossRevenue: 4_910_000, vacancyRate: 7, operatingExpenseRatio: 33,
     downPayment: 32, interestRate: 6.3, loanTerm: 30, exitCapRate: 5.9, holdPeriod: 7,
     assumptions: { inPlaceRevenue: 4_100_000 },
-    notes: 'Interior renovation programme across 248 units at ~$12.5K/door.',
+    notes: 'Interior renovation programme across 248 units at ~$12.5K/door. Basis $121K/door against a 6.2% going-in cap.',
   },
   {
     id: 9,

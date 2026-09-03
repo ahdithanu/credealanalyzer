@@ -23,6 +23,21 @@
  *     paying its own bills", which no return metric answers.
  *   - Debt can be sized to the binding lender constraint instead of falling out
  *     of an equity-percentage input (opt in with `deal.sizeDebtToConstraints`).
+ *
+ * KNOWN CONVENTION, deliberate and worth a reader's attention: a GROUND-UP deal
+ * runs no operating statement during construction. It is charged no property
+ * tax on the land it holds and no capital reserve, while an acquisition or TI
+ * deal in renovation is charged both. The land carry on a ground-up — tax,
+ * insurance, the rest — is budgeted inside the soft cost load, which
+ * constructionTypes sets at 14% for ground-up against 6-8% for acquisition and
+ * TI; charging tax here as well, with no offsetting relief, would double-count
+ * it. The cost of the convention is real and is stated rather than hidden: an
+ * $8m Houston land basis carried through an 18-month build is ~$337K of tax
+ * that appears in soft cost as a percentage rather than as a line, so
+ * yield-on-cost comparisons BETWEEN a ground-up and a repositioning deal in the
+ * same portfolio are not struck on identical treatments. Modelling land carry
+ * as an explicit line on both would be the right answer and is a policy change,
+ * not a bug fix.
  */
 
 import { propertyTypes, constructionTypes } from './propertyTypes';
@@ -321,7 +336,13 @@ function coverageWindows(model) {
 function runSizedToConstraints(deal, overrides) {
   const unsized = { ...deal, sizeDebtToConstraints: false };
   let model = runModel(unsized, overrides);
-  if (model.incomplete) return model;
+  // The request survives even where it cannot be acted on. Without this a deal
+  // put in credit-box mode whose model never reached a schedule is
+  // indistinguishable from one that never asked, and the only place the request
+  // still exists is the deal record — which is not what the caller is holding.
+  if (model.incomplete) {
+    return { ...model, financing: { ...model.financing, sizingRequested: true } };
+  }
 
   const limits = { ...DEFAULT_DEBT_SIZING, ...(deal.debtSizing || {}) };
   const { baseProjectCost } = model.budget;
@@ -357,7 +378,23 @@ function runSizedToConstraints(deal, overrides) {
     if (converged) break;
   }
 
-  return { ...model, financing: { ...model.financing, sizing: { ...sizing, passes, converged } } };
+  // Whether the flag on the deal was actually HONOURED, stated rather than left
+  // to be inferred. When no lender test can be evaluated the loop breaks on its
+  // first pass and the model returned is the unsized one — an equity-derived
+  // loan, sitting under a sizeDebtToConstraints flag, with a fully populated
+  // financing.loanCommitment beside a sizing.loanAmount of null. Callers were
+  // reading that null and guessing what it meant; two of them guessed
+  // differently, and one reported an unapplied constraint as an unconverged
+  // one. `honoured: false` is the fact, and it is the engine's to state.
+  const honoured = sizing !== null && sizing.loanAmount !== null;
+  return {
+    ...model,
+    financing: {
+      ...model.financing,
+      sizingRequested: true,
+      sizing: { ...sizing, passes, converged, honoured },
+    },
+  };
 }
 
 // ─── the model ───────────────────────────────────────────────────────────────
@@ -440,27 +477,122 @@ export function runModel(deal = {}, overrides = {}) {
   const C = Math.max(0, Math.round(deal.constructionMonths ?? constCfg.timeframe ?? 0));
   const N = Math.max(0, Math.round(holdPeriod * 12));
 
-  if (N === 0 || baseProjectCost <= 0) {
+  // A non-finite input is UNKNOWN, and it has to land on the same incomplete
+  // path a zero hold period does. NaN satisfies neither `N === 0` nor
+  // `baseProjectCost <= 0` — every comparison against NaN is false — so a deal
+  // carrying one ran the whole schedule and came back `incomplete: false`
+  // beside a stabilised NOI of 0, an equity multiple of 0 and a development
+  // spread of -650 bps: confident zeros in precisely the fields this path
+  // exists to report as unknown. Because `incomplete` was false, validate()
+  // raised no flag and screeningVerdict() printed an affirmative "does not meet
+  // stated criteria" about a model that was never computed. It is reachable
+  // without hand-editing anything: sensitivity's Downside scenario scales
+  // constructionCost, and every memo runs it.
+  const finite = (x) => (Number.isFinite(x) ? x : null);
+  const modellable = [
+    N, C, baseProjectCost, equityCommitment, loanCommitment,
+    grossRevenue, vacancyRate, operatingExpenseRatio,
+    interestRate, loanTerm, exitCapRate, propertyTaxRate,
+    // Derived, but they drive the schedule just as directly: a unit count of
+    // Infinity reaches the NOI through the reserve, not through the budget.
+    capexReserveAnnual, leaseUpMonths, interestOnlyMonths, expenseRecoveryRate,
+  ].every((x) => Number.isFinite(x));
+
+  if (!modellable || N === 0 || baseProjectCost <= 0) {
     return degenerateResult({
-      baseProjectCost, propertyTaxRate, equityCommitment, loanCommitment,
-      interestRate, loanTerm, a, C, N,
+      // The capital plan is an INPUT and is known even here; only the figures
+      // that need a schedule are not. Reporting the line items as zero on a
+      // deal whose land alone is a million dollars is the same conflation of
+      // zero with unknown, pointed the other way. An input that is not a finite
+      // number is not known either, so it passes through as null rather than as
+      // the NaN that produced it.
+      lineItems: {
+        land: finite(land), hardCost: finite(hardCost), softCost: finite(softCost),
+        ffe: finite(ffe), contingency: finite(contingency),
+        contingencyRate: finite(contingencyRate), financingCosts: finite(financingCosts),
+      },
+      baseProjectCost: finite(baseProjectCost),
+      propertyTaxRate: finite(propertyTaxRate),
+      equityCommitment: finite(equityCommitment),
+      loanCommitment: finite(loanCommitment),
+      interestRate: finite(interestRate),
+      loanTerm: finite(loanTerm),
+      // Pure pass-through inputs, echoed unchanged on the normal path and
+      // therefore known here too — the same rule the budget lines above follow.
+      exitCapRate: finite(exitCapRate),
+      leaseUpMonths: finite(leaseUpMonths),
+      capexReserveAnnual: finite(capexReserveAnnual),
+      expenseRecoveryRate: finite(expenseRecoveryRate),
+      a, C: finite(C), N: finite(N),
     });
   }
 
   const stabilizedOcc = Math.max(0.01, 1 - vacancyRate / 100);
-  // DELIBERATE SIMPLIFICATION, and it does NOT match operating.goingInNOI below.
-  // The renovation-period schedule credits in-place income net of opex only: no
-  // property tax, no capital reserve, no occupancy-scaled recoveries. The
-  // going-in cap rate nets all three, which is the institutional definition, so
-  // the two differ by up to 312 bps on the same basis (Alamo Ridge: 8.20% here
-  // against 5.08% reported). Reconciling them means charging tax and reserves
-  // through the renovation months, which lowers the modelled return on every
-  // repositioning deal — an underwriting-policy change, not a rendering one.
-  // Flagged rather than made silently; until then no surface may present this
-  // figure and the going-in cap rate as the same measure.
-  const inPlaceMonthlyNoi = constCfg.hasInPlaceIncome
-    ? (a.inPlaceRevenue / 12) * (1 - operatingExpenseRatio / 100)
+
+  // In-place income during the renovation period, on the SAME definition of NOI
+  // the operating schedule and the going-in cap rate use: net of operating
+  // expense, property tax, capital reserves and occupancy-scaled recoveries.
+  //
+  // Netting opex alone credited the renovation months with income the asset
+  // does not earn. Two things followed. That income serviced construction
+  // interest it could not actually service, so less interest was capitalised,
+  // basis was understated and every return measured against it was flattered.
+  // And it put two figures 312 bps apart — 8.20% here against a 5.08% going-in
+  // cap rate on Alamo Ridge — into the same exported row, on the same basis,
+  // describing the same income. `goingInNOI` below IS this figure: they
+  // reconcile by construction now, not by a reader's arithmetic.
+  //
+  // Tax is struck on the acquisition basis rather than on total project cost.
+  // The renovation capital has not been spent yet, and total project cost is
+  // not known until the interest reserve that this figure feeds has finished
+  // accumulating — charging it here would be circular as well as wrong.
+  const hasInPlaceIncome = constCfg.hasInPlaceIncome;
+  const inPlaceRevenue = hasInPlaceIncome ? Math.max(0, a.inPlaceRevenue) : 0;
+  // In-place rent against gross potential rent is the occupancy already let.
+  const inPlaceOcc = grossRevenue > 0 ? Math.min(1, inPlaceRevenue / grossRevenue) : 0;
+  // Struck on the STABILISED revenue base and flexed by the variable share, in
+  // the same two moves and the same order `operatingMonth` below uses. Not
+  // struck on in-place revenue: a part-let building is not proportionally
+  // cheaper to run.
+  //
+  // The base is what makes the two definitions one definition. Grossing the
+  // fixed component to 100% occupancy here while the operating schedule budgets
+  // it at stabilised occupancy charges the renovation months 1/stabilizedOcc of
+  // the operating months' fixed cost — the same asset, the same rent roll and
+  // the same occupancy reading 3.7% apart, and 26 bps of it landing in the
+  // going-in cap rate this figure is exported as.
+  const inPlaceOpex = hasInPlaceIncome
+    ? grossRevenue *
+      (operatingExpenseRatio / 100) *
+      stabilizedOcc *
+      ((1 - a.variableOpexShare) + a.variableOpexShare * (inPlaceOcc / stabilizedOcc))
     : 0;
+  const inPlaceTax = hasInPlaceIncome ? land * (propertyTaxRate / 100) : 0;
+  // Vacant space has nobody to bill, so recoveries scale with what is let.
+  const inPlaceRecoveries = (inPlaceOpex + inPlaceTax) * expenseRecoveryRate * inPlaceOcc;
+  const inPlaceReserve = hasInPlaceIncome ? capexReserveAnnual : 0;
+  // A renovation asset carries its tax bill and its fixed operating cost
+  // whether or not anything is let, so this is negative on a deal bought empty.
+  // That is the charge the schedule was previously not making.
+  const inPlaceNOI =
+    inPlaceRevenue + inPlaceRecoveries - inPlaceOpex - inPlaceTax - inPlaceReserve;
+  const inPlaceMonthlyNoi = inPlaceNOI / 12;
+
+  // The renovation months report the SAME line items the operating months do,
+  // not an aggregate NOI on its own. rollUpAnnual sums each component key, so a
+  // month carrying `noi` alone produced a year-one row whose NOI was net of a
+  // $702,000 property tax bill printed as $0 in the Tax column beside it. The
+  // IC memo's annual cash flow table renders exactly those columns, and the row
+  // footed on none of the four repositioning deals.
+  const inPlaceLines = {
+    gpr: hasInPlaceIncome ? grossRevenue / 12 : 0,
+    occ: inPlaceOcc,
+    egi: inPlaceRevenue / 12,
+    recoveries: inPlaceRecoveries / 12,
+    opex: inPlaceOpex / 12,
+    tax: inPlaceTax / 12,
+    reserve: inPlaceReserve / 12,
+  };
 
   // Cost draw schedule: land at closing, hard+soft straight-line across the
   // construction period. (An S-curve is more realistic; straight-line is the
@@ -509,16 +641,32 @@ export function runModel(deal = {}, overrides = {}) {
       distribution = netOpsCash;
     }
 
+    // Cash actually paid to the lender. A month whose NOI is negative pays
+    // nothing and capitalises all of it — which the loanBalance branch above
+    // already does correctly. Unclamped, `min(noi, interest)` reported a
+    // NEGATIVE debt service on any asset bought empty: the Cash Flow screen
+    // renders the line negated and printed +$18,408 of debt service as an
+    // inflow, and rollUpAnnual netted six such months against the six real
+    // ones, so the IC memo's year-one debt service read $12.1K against the
+    // $122.6K actually charged.
+    const debtService = Math.max(0, Math.min(inPlaceMonthlyNoi, interest));
+
     months.push({
       index: i,
       phase: 'construction',
       cost,
+      ...inPlaceLines,
       noi: inPlaceMonthlyNoi,
       interest,
-      debtService: Math.min(inPlaceMonthlyNoi, interest),
+      debtService,
       equityDraw: equityThisMonth,
       loanBalance,
-      cashFlow: distribution,
+      // NOI less the debt service actually paid, the same definition the
+      // operating months use, so the statement foots down the column. Any
+      // shortfall is funded by the loan (`capitalizedInterest` above), not by
+      // equity — which is why the equity flow below is the distribution, not
+      // this figure.
+      cashFlow: inPlaceMonthlyNoi - debtService,
       equityFlow: distribution - equityThisMonth,
     });
   }
@@ -715,7 +863,6 @@ export function runModel(deal = {}, overrides = {}) {
   // is a property-level, unlevered yield — including them makes it move with
   // the capital structure and levies property tax on lender fees.
   const acquisitionBasis = land > 0 ? land : null;
-  const inPlaceRevenue = constCfg.hasInPlaceIncome ? Math.max(0, a.inPlaceRevenue) : 0;
   // WHY the rate is missing, decided once here rather than re-derived by each
   // surface. Three different facts about a deal collapse to the same null, and
   // a surface guessing between them printed "a ground-up deal has no going-in
@@ -727,34 +874,23 @@ export function runModel(deal = {}, overrides = {}) {
   else if (acquisitionBasis === null) goingInCapUnavailable = 'no-acquisition-basis';
   else if (!(grossRevenue > 0)) goingInCapUnavailable = 'no-revenue-base';
 
-  let goingInNOI = null;
-  if (goingInCapUnavailable === null) {
-    // In-place revenue against gross potential rent is the occupancy already
-    // achieved, and every term below uses it exactly as the STABILISED operating
-    // schedule uses occupancy, so this is comparable to stabilised NOI and to
-    // yield on cost. It is deliberately NOT comparable to months[].noi during
-    // the renovation period, which is grossed of tax and reserves — see the
-    // note on inPlaceMonthlyNoi above.
-    const inPlaceOcc = Math.min(1, inPlaceRevenue / grossRevenue);
-    const opexAtFullOccupancy = grossRevenue * (operatingExpenseRatio / 100);
-    // Striking opex on in-place revenue instead would make a half-empty
-    // building look half as expensive to run — the same error the schedule
-    // avoids by budgeting off the revenue base rather than off actual EGI.
-    const inPlaceOpex =
-      opexAtFullOccupancy * ((1 - a.variableOpexShare) + a.variableOpexShare * inPlaceOcc);
-    const inPlaceTax = acquisitionBasis * (propertyTaxRate / 100);
-    // Recoveries scale with occupancy — vacant space has nobody to bill —
-    // exactly as they do in the schedule. Credited at 100% on a part-leased
-    // building they can exceed the entire in-place rent roll, which is how a
-    // negative in-place NOI comes to report a positive going-in cap rate.
-    const inPlaceRecoveries = (inPlaceOpex + inPlaceTax) * expenseRecoveryRate * inPlaceOcc;
-    // Tax and reserves are netted here, on the same definition of NOI the
-    // STABILISED operating schedule uses. A going-in cap gross of a 2.81%
-    // Houston tax bill overstates the yield by most of 200 bps, which is exactly
-    // the kind of error reporting this number separately is meant to prevent.
-    goingInNOI = inPlaceRevenue + inPlaceRecoveries - inPlaceOpex - inPlaceTax - capexReserveAnnual;
-  }
-  const goingInCapRate = goingInNOI === null ? null : goingInNOI / acquisitionBasis;
+  // The in-place NOI the renovation schedule itself charges, not a parallel
+  // derivation of it. Tax and reserves are netted, on the definition the
+  // STABILISED operating schedule uses: a going-in cap gross of a 2.81% Houston
+  // tax bill overstates the yield by most of 200 bps, which is exactly the kind
+  // of error reporting this number separately is meant to prevent. Because the
+  // schedule and this figure are now the same quantity, months[].noi during the
+  // renovation period annualises to it exactly.
+  // The NOI and the RATE fail separately. A tenant-improvement deal bought
+  // empty has a perfectly knowable in-place NOI — Dallas Office TI carries
+  // -$220,890 of tax, fixed opex and reserves — and reporting it as n/a beside
+  // IRR and profit cells that do reflect that carry is the same-row divergence
+  // this metric exists to close. What it does not have is a cap RATE: a
+  // pricing multiple struck on negative income is not a yield, and the reason
+  // it is missing is stated on `goingInCapUnavailable`.
+  const goingInNOI = hasInPlaceIncome ? inPlaceNOI : null;
+  const goingInCapRate =
+    goingInCapUnavailable === null ? goingInNOI / acquisitionBasis : null;
 
   const yieldOnCost = totalProjectCost > 0 ? stabilizedNOI / totalProjectCost : null;
   const developmentSpreadBps =
@@ -808,6 +944,11 @@ export function runModel(deal = {}, overrides = {}) {
       ltc: totalProjectCost > 0 ? permanentLoanBalance / totalProjectCost : null,
       gpCoInvest: equityCommitment * (deal.gpCoInvestShare ?? 0.20),
       lpEquity: equityCommitment * (1 - (deal.gpCoInvestShare ?? 0.20)),
+      // The deal did not ask for constrained sizing, so there is nothing to
+      // honour and no sizing result. Both facts are stated: a caller must not
+      // have to reach back to the deal record to tell "did not ask" from
+      // "asked, and it could not be done".
+      sizingRequested: false,
       sizing: null,   // populated only on the sizeDebtToConstraints path
     },
     exit: { forwardNoi, grossSalePrice, costOfSale, loanPayoff, netSaleProceeds, exitCapRate },
@@ -848,20 +989,65 @@ function rollUpAnnual(months) {
   return years;
 }
 
-function degenerateResult({ baseProjectCost, propertyTaxRate, equityCommitment, loanCommitment, interestRate, loanTerm, a, C, N }) {
+function degenerateResult({
+  lineItems, baseProjectCost, propertyTaxRate, equityCommitment, loanCommitment,
+  interestRate, loanTerm, exitCapRate, leaseUpMonths, capexReserveAnnual,
+  expenseRecoveryRate, a, C, N,
+}) {
   // Every figure that needs a schedule is unknown, not zero. This model is
   // marked `incomplete`, and a caller reading a confident 0 off it — no NOI, no
   // equity at risk, no profit — is reading a claim the engine never made.
+  //
+  // The rule applies to the debt and the exit as well, which it previously did
+  // not. A permanent balance of 0 on an unmodelled deal is not "borrowed
+  // nothing", it is "never drew a schedule": the loan commitment beside it is
+  // whatever the equity share implies, and one surface papered over the
+  // contradiction by testing `model.incomplete` before printing the balance —
+  // which is the caller doing the engine's job. The same holds for the payment
+  // that amortises that balance, the interest reserve that no draw loop
+  // accumulated, the total cost that includes it, and every sale figure.
   const nulls = {
     leveredIRR: null, unleveredIRR: null, equityMultiple: null,
     peakEquity: null, profit: null, totalEquityInvested: null, totalDistributions: null,
   };
   return {
     months: [], annual: [],
-    assumptions: { ...a, propertyTaxRate },
-    budget: { land: 0, hardCost: 0, softCost: 0, ffe: 0, contingency: 0, contingencyRate: 0, financingCosts: 0, baseProjectCost, capitalizedInterest: 0, totalProjectCost: baseProjectCost, lines: [] },
-    financing: { equityCommitment, loanCommitment, permanentLoanBalance: 0, interestRate, loanTerm, monthlyPayment: 0, annualDebtService: 0, ltc: null, gpCoInvest: 0, lpEquity: 0, sizing: null },
-    exit: { forwardNoi: 0, grossSalePrice: 0, costOfSale: 0, loanPayoff: 0, netSaleProceeds: 0, exitCapRate: 0 },
+    // The normal path always carries these four; dropping them here returned
+    // `undefined` — a third state beside the known/unknown doctrine this
+    // function exists to state. All four are input- or config-derived and are
+    // resolved before the early return, so they are known.
+    assumptions: {
+      ...a, propertyTaxRate, leaseUpMonths, capexReserveAnnual, expenseRecoveryRate,
+    },
+    budget: {
+      ...lineItems,
+      baseProjectCost,
+      // Both need the construction schedule this path never ran.
+      capitalizedInterest: null, totalProjectCost: null,
+      // `lines` stays empty deliberately. It is a sources & uses schedule, and
+      // every surface renders each line as a share of total development cost —
+      // which is unknown here, so the shares would be unbounded rather than
+      // merely missing. The amounts above are readable on their own; a table
+      // apportioning them against nothing is not.
+      lines: [],
+    },
+    financing: {
+      equityCommitment, loanCommitment,
+      permanentLoanBalance: null, interestRate, loanTerm,
+      monthlyPayment: null, annualDebtService: null, ltc: null,
+      // Both are shares of a known equity commitment, so a zero here would
+      // claim an unsplit cheque on a deal whose equity is stated above.
+      gpCoInvest: null, lpEquity: null,
+      sizingRequested: false, sizing: null,
+    },
+    exit: {
+      forwardNoi: null, grossSalePrice: null, costOfSale: null,
+      loanPayoff: null, netSaleProceeds: null,
+      // A pure pass-through INPUT, echoed unchanged on the normal path. Nulling
+      // it here is the mirror image of the budget-line bug directly above —
+      // a known value reported as unknown — in the same function.
+      exitCapRate,
+    },
     returns: nulls,
     operating: {
       stabilizedNOI: null, stabilizedDebtService: null, stabilizedOccupancy: null,
@@ -871,9 +1057,14 @@ function degenerateResult({ baseProjectCost, propertyTaxRate, equityCommitment, 
       // reasons applies, so the reason is unknown too rather than asserted.
       goingInCapUnavailable: null,
       developmentSpreadBps: null, stabilizedDSCR: null, minDSCR: null, minStabilizedDSCR: null,
-      debtYield: null, stabilizationMonth: 0, interestOnlyMonths: 0,
+      // Both are months into a schedule that was never built. Month 0 is the
+      // closing, so a 0 here names a real month rather than an absent one.
+      debtYield: null, stabilizationMonth: null, interestOnlyMonths: null,
     },
-    timeline: { constructionMonths: C, operatingMonths: N, leaseUpMonths: 0, saleMonth: 0 },
+    // The construction and hold lengths ARE known — they are inputs, and one of
+    // them being zero is why this path was taken. The lease-up and the sale
+    // month are properties of a schedule that does not exist.
+    timeline: { constructionMonths: C, operatingMonths: N, leaseUpMonths: null, saleMonth: null },
     incomplete: true,
   };
 }

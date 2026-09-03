@@ -533,3 +533,49 @@ export function waterfallFromModel(model, config = {}) {
     ...config,
   });
 }
+
+/**
+ * The co-invest share comes off the capital stack the model funded, never off
+ * the stored structure: a structure carrying its own gpCoInvestShare would
+ * split one equity commitment two ways inside a single document.
+ */
+export function stripCoInvest(structure) {
+  const copy = { ...structure };
+  delete copy.gpCoInvestShare;
+  return copy;
+}
+
+/**
+ * What a deal's stored promote structure actually does to a given model.
+ *
+ * FOUR states, and they are not interchangeable:
+ *   'none'     — no structure; returns are project-level, before promote.
+ *   'no-flows' — a structure, but no equity schedule under it to split.
+ *   'rejected' — a structure whose arithmetic resolveWaterfall() refuses.
+ *   'applied'  — a split actually ran, and only here may LP/GP figures print.
+ *
+ * One predicate because four surfaces were each deciding it for themselves and
+ * disagreeing about the same deal: the CSV printed "Configured, no equity
+ * schedule to split" with every promote cell n/a, the Waterfall screen printed
+ * "No equity cash flow to split" and rendered no split, and the IC memo — whose
+ * only branch was whether waterfallFromModel THREW, and runWaterfall([]) does
+ * not throw — declared the waterfall APPLIED and printed a $0 GP promote and a
+ * $0 preferred return as facts. A zero in a promote column reads as "the
+ * sponsor earned nothing", which is a claim about the deal rather than about
+ * the absence of one. Reachable from a blank deal in three clicks.
+ *
+ * @returns {{state:'none'|'no-flows'|'rejected'|'applied', wf:Object|null, reason:string|null}}
+ */
+export function promoteState(model, structure) {
+  if (!structure || typeof structure !== 'object' || Array.isArray(structure)) {
+    return { state: 'none', wf: null, reason: null };
+  }
+  if (!model || !Array.isArray(model.months) || model.months.length === 0) {
+    return { state: 'no-flows', wf: null, reason: null };
+  }
+  try {
+    return { state: 'applied', wf: waterfallFromModel(model, stripCoInvest(structure)), reason: null };
+  } catch (e) {
+    return { state: 'rejected', wf: null, reason: String(e.message).replace(/^waterfall:\s*/, '') };
+  }
+}

@@ -6,6 +6,7 @@
  */
 
 import { runModel } from './finance';
+import { firmDefault } from './firmDefaults';
 
 /** Variables a user can flex, and how each maps onto the deal inputs. */
 export const VARIABLES = {
@@ -195,11 +196,21 @@ export const DEFAULT_SCENARIOS = [
 
 export function applyScenario(deal, deltas = {}) {
   let d = { ...deal };
-  if (deltas.exitCapRate) d.exitCapRate = d.exitCapRate + deltas.exitCapRate;
-  if (deltas.interestRate) d.interestRate = d.interestRate + deltas.interestRate;
-  if (deltas.constructionCostPct) d.constructionCost = d.constructionCost * (1 + deltas.constructionCostPct);
-  if (deltas.grossRevenuePct) d.grossRevenue = d.grossRevenue * (1 + deltas.grossRevenuePct);
-  if (deltas.vacancyRate) d.vacancyRate = d.vacancyRate + deltas.vacancyRate;
+  // A shift is applied to the value runModel would ACTUALLY use, which for an
+  // omitted field is the same default runModel resolves — not to `undefined`.
+  // `undefined + 2` and `undefined * 1.1` are both NaN, and a NaN input used to
+  // slip past the engine's degenerate guard (NaN fails every comparison) and
+  // come back as a fully populated model reporting confident zeros. Every memo
+  // runs the Downside scenario, so a legitimate pure acquisition with no
+  // constructionCost and no vacancyRate on the record hit it.
+  const base = (field, fallback) => (Number.isFinite(d[field]) ? d[field] : fallback);
+  const vacancyDefault = firmDefault('vacancyRate', deal.propertyType) ?? 5;
+
+  if (deltas.exitCapRate) d.exitCapRate = base('exitCapRate', 6.5) + deltas.exitCapRate;
+  if (deltas.interestRate) d.interestRate = base('interestRate', 6.5) + deltas.interestRate;
+  if (deltas.constructionCostPct) d.constructionCost = base('constructionCost', 0) * (1 + deltas.constructionCostPct);
+  if (deltas.grossRevenuePct) d.grossRevenue = base('grossRevenue', 0) * (1 + deltas.grossRevenuePct);
+  if (deltas.vacancyRate) d.vacancyRate = base('vacancyRate', vacancyDefault) + deltas.vacancyRate;
   return d;
 }
 

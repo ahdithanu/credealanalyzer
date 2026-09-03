@@ -1,4 +1,5 @@
 import { propertyTypes, constructionTypes } from './propertyTypes';
+import { promoteState } from './waterfall';
 
 const round = (n, dp = 0) =>
   n === null || n === undefined || !Number.isFinite(n) ? null : Number(n.toFixed(dp));
@@ -23,6 +24,43 @@ const ratioPct = (r, dp = 2) =>
  * crash the export of every other row in the pipeline.
  */
 const op = (d) => d.metrics?.model?.operating ?? {};
+
+/**
+ * The deal's promote structure, resolved exactly once per deal.
+ *
+ * Four outcomes, and they are not interchangeable. A deal with no structure has
+ * pre-promote returns and no LP/GP split to report; a structure the engine
+ * refuses splits nothing at all; a structure with no equity schedule under it
+ * has nothing to split yet. Only the fourth produces LP and GP figures, and
+ * only the fourth may fill the columns that carry them — a zero in the promote
+ * column on any of the first three would read as "the sponsor earned nothing",
+ * which is a claim about the deal rather than about the absence of one.
+ *
+ * Cached because the eleven columns below would otherwise each re-run the
+ * waterfall over every month of every deal in the pipeline.
+ *
+ * @returns {{state:'none'|'no-flows'|'rejected'|'applied', wf:Object|null, reason:string|null}}
+ */
+const promoteCache = new WeakMap();
+
+function promote(d) {
+  if (!d || typeof d !== 'object') return { state: 'none', wf: null, reason: null };
+  if (promoteCache.has(d)) return promoteCache.get(d);
+  const out = promoteState(d.metrics?.model, d.waterfall);
+  promoteCache.set(d, out);
+  return out;
+}
+
+/** A figure off the applied waterfall, or null on any deal where none applied. */
+const wfValue = (get) => (d) => {
+  const p = promote(d);
+  return p.state === 'applied' ? get(p.wf) : null;
+};
+
+const PROMOTE_STATE_LABEL = {
+  none: 'None configured',
+  'no-flows': 'Configured, no equity schedule to split',
+};
 
 /** The lender test that sized the loan, or the fact that none did. */
 const CONSTRAINT_LABEL = {
@@ -55,12 +93,13 @@ export const COLUMNS = [
   // yield-on-cost cell.
   ['Yield on Cost (%)',        d => round(d.metrics?.yieldOnCost, 2)],
   // Struck net of property tax, capital reserves and occupancy-scaled
-  // recoveries — the institutional definition, and the one stabilised NOI in
-  // this row uses. The model's own RENOVATION-period schedule credits in-place
-  // income net of opex alone, so it runs up to 312 bps richer than this column,
-  // and it is that schedule which feeds the IRR, Profit and Equity Multiple
-  // cells beside it. The header says which definition this is so the two are
-  // not read as one number.
+  // recoveries — the institutional definition, and the one both stabilised NOI
+  // in this row and the model's own renovation schedule use. The header carries
+  // the definition because TWO conventions for a cap rate are in circulation
+  // and the choice is worth ~200 bps on a Texas asset: a reader importing this
+  // column into a comp set has to know which one they are holding. The
+  // schedule-versus-column divergence this header once also guarded against is
+  // closed at source — see the reconciliation test in finance.test.js.
   ['Going-In Cap Rate, net of tax & reserves (%)', d => ratioPct(op(d).goingInCapRate)],
   ['Going-In NOI, net of tax & reserves ($)',      d => round(op(d).goingInNOI)],
   ['Acquisition Basis ($)',    d => round(op(d).acquisitionBasis)],
@@ -87,16 +126,16 @@ export const COLUMNS = [
     const financing = d.metrics?.model?.financing;
     if (!financing) return null;
     // What the deal ASKED for and what the engine could DO are separate facts,
-    // and the sizing object alone reports neither cleanly. A credit-box deal
-    // whose model never reached a schedule carried no sizing at all and
-    // exported as "Equity share input"; one where no lender test could be
-    // evaluated carried a sizing with a null loan and exported as "Lender
-    // constraint (unconverged)" — a constraint that was never applied.
-    const asked = Boolean(d.sizeDebtToConstraints);
+    // and both now come off the model. Inferring the request from
+    // `d.sizeDebtToConstraints` on the deal record is the caller reaching back
+    // past the model it was handed to answer a question the model already
+    // states — the exact guessing `sizingRequested` and `sizing.honoured` were
+    // added to end.
+    const asked = Boolean(financing.sizingRequested);
     if (!financing.sizing) {
       return asked ? 'Lender constraint requested, not applied' : 'Equity share input';
     }
-    if (financing.sizing.loanAmount === null) return 'Lender constraint requested, no test evaluable';
+    if (!financing.sizing.honoured) return 'Lender constraint requested, no test evaluable';
     // Sizing is a fixed point — the loan capitalises interest, which moves
     // basis, which moves the loan. An unsettled loop reports its last iterate,
     // and a balance that is one pass short of its own constraint should not
@@ -115,6 +154,29 @@ export const COLUMNS = [
   ['Equity Multiple (x)',      d => round(d.metrics?.equityMultiple, 2)],
   ['Profit ($)',               d => round(d.metrics?.profit)],
   ['Construction Months',      d => d.metrics?.constructionTimeframe],
+  // ─── promote ──────────────────────────────────────────────────────────────
+  // Every column above is a project-level figure, before promote. These carry
+  // the LP/GP split of those same cash flows, and the first of them says
+  // whether there was one — without it a row of 'n/a' promote cells cannot be
+  // told from a deal whose sponsor structure simply was not run.
+  ['Promote Structure',        d => {
+    const p = promote(d);
+    if (p.state === 'rejected') return `Configured, not applied — ${p.reason}`;
+    if (p.state === 'applied') return 'Applied';
+    return PROMOTE_STATE_LABEL[p.state];
+  }],
+  ['Preferred Return (%)',     wfValue(wf => ratioPct(wf.config.prefRate))],
+  ['Residual GP Promote (%)',  wfValue(wf => ratioPct(wf.config.tiers[wf.config.tiers.length - 1].gpShare))],
+  ['LP IRR (%)',               wfValue(wf => ratioPct(wf.returns.lpIRR))],
+  ['LP Equity Multiple (x)',   wfValue(wf => round(wf.returns.lpEquityMultiple, 2))],
+  ['GP IRR (%)',               wfValue(wf => ratioPct(wf.returns.gpIRR))],
+  ['To LP ($)',                wfValue(wf => round(wf.totals.lpDistributions))],
+  ['To GP ($)',                wfValue(wf => round(wf.totals.gpDistributions))],
+  // Gross promote and clawed-back promote are separate facts about a deal, so
+  // the net figure travels with the clawback rather than in place of it.
+  ['GP Promote, net ($)',      wfValue(wf => round(wf.totals.gpPromoteNet))],
+  ['Promote Clawback ($)',     wfValue(wf => round(wf.totals.gpClawback))],
+  ['Promote Share of Profit (%)', wfValue(wf => ratioPct(wf.returns.gpPromoteShareOfProfit, 1))],
 ];
 
 export function toCSV(deals) {

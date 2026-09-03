@@ -9,10 +9,11 @@ import {
   DEFAULT_ASSUMPTIONS,
   DEFAULT_DEBT_SIZING,
 } from '../finance';
-import { suggestGrossRevenue, suggestConstructionCost } from '../propertyTypes';
+import { suggestGrossRevenue, suggestConstructionCost, constructionTypes } from '../propertyTypes';
 import { getPropertyTaxRate, resolveTaxRate, findMarket, distanceMiles } from '../markets';
 import { SAMPLE_DEALS } from '../sampleDeals';
 import { validate, breakEvenBreach } from '../validation';
+import { runScenarios } from '../sensitivity';
 
 /** A profitable ground-up car wash, used as the reference deal. */
 const groundUpDeal = {
@@ -315,15 +316,220 @@ describe('runModel — degenerate and losing deals', () => {
 });
 
 describe('runModel — acquisition with in-place income', () => {
+  const renovation = {
+    ...groundUpDeal,
+    constructionType: 'acquisition',
+    assumptions: { inPlaceRevenue: 400_000 },
+  };
+
   it('services construction-period interest from in-place income', () => {
-    const withIncome = runModel({
-      ...groundUpDeal,
-      constructionType: 'acquisition',
-      assumptions: { inPlaceRevenue: 400_000 },
-    });
+    const withIncome = runModel(renovation);
     const without = runModel({ ...groundUpDeal, constructionType: 'acquisition' });
     // Income during renovation reduces the interest that must be capitalised.
     expect(withIncome.budget.capitalizedInterest).toBeLessThan(without.budget.capitalizedInterest);
+  });
+
+  it('charges property tax and capital reserves through the renovation months', () => {
+    // The named failure: crediting in-place income net of OPERATING EXPENSE
+    // ALONE — no property tax, no capital reserve — while the operating period
+    // subtracts both, and while operatingExpenseRatio is documented throughout
+    // this codebase as EXCLUDING property tax. The renovation months then
+    // service construction interest out of income the asset never earns, so
+    // less interest is capitalised, basis is understated and every return
+    // struck against basis is flattered.
+    const r = runModel(renovation);
+    const month = r.months[0];
+    expect(month.phase).toBe('construction');
+
+    const tax = 500_000 * (getPropertyTaxRate('Houston, TX') / 100);
+    const reserve = r.assumptions.capexReserveAnnual;
+    const stabilizedOcc = 1 - 0.03;
+    const inPlaceOcc = 400_000 / 580_000;
+    const opex = 580_000 * 0.32 * stabilizedOcc * (0.70 + 0.30 * (inPlaceOcc / stabilizedOcc));
+    expect(tax).toBeGreaterThan(0);
+    expect(reserve).toBeGreaterThan(0);
+
+    // The month is priced from the inputs, independently of the engine. The
+    // previous form of this test asserted `noi + a > noi` and
+    // `(noi + a) - noi === a`, which are true of any noi at all: reverting the
+    // whole policy change, or doubling the tax basis, left it green.
+    expect(month.noi).toBeCloseTo((400_000 - opex - tax - reserve) / 12, 6);
+    // ...and each charge is individually present, not merely netted somewhere.
+    expect(month.tax).toBeCloseTo(tax / 12, 6);
+    expect(month.reserve).toBeCloseTo(reserve / 12, 6);
+    expect(month.opex).toBeCloseTo(opex / 12, 6);
+  });
+
+  it('prices a renovation month exactly as the operating schedule prices the same asset', () => {
+    // The claim the policy change makes is that the renovation months are on
+    // the SAME definition of NOI the operating schedule uses. Comparing the
+    // schedule to `goingInNOI` cannot test that claim — goingInNOI is assigned
+    // FROM the schedule's own figure, so the comparison is x === x. This
+    // compares it to the other schedule.
+    //
+    // The two are held to identical conditions: no growth, no lease-up, an
+    // all-cash deal (so no interest is capitalised and the operating period's
+    // tax basis is the purchase price the renovation period's tax is struck
+    // on), no renovation spend, and in-place rent set to exactly the stabilised
+    // occupancy. Every line must then agree to the cent.
+    //
+    // It did not. The renovation months grossed the FIXED opex component to
+    // 100% occupancy while the operating months budget it at stabilised
+    // occupancy, so the same asset at the same occupancy was 3.7% apart on
+    // opex — and 26 bps apart in the going-in cap rate the CSV exports.
+    const vacancyRate = 6;
+    const stabilizedOcc = 1 - vacancyRate / 100;
+    const grossRevenue = 1_000_000;
+    const flat = {
+      propertyType: 'office', constructionType: 'acquisition', location: 'Plano, TX',
+      purchasePrice: 12_000_000, constructionCost: 0, buildingSize: 50_000,
+      grossRevenue, vacancyRate, operatingExpenseRatio: 30,
+      downPayment: 100, interestRate: 6, loanTerm: 25, exitCapRate: 6.5, holdPeriod: 5,
+      assumptions: {
+        inPlaceRevenue: grossRevenue * stabilizedOcc,
+        rentGrowth: 0, expenseGrowth: 0, assessmentGrowth: 0,
+        leaseUpMonths: 0, initialOccupancy: stabilizedOcc,
+      },
+    };
+    const r = runModel(flat);
+    expect(r.budget.capitalizedInterest).toBe(0);
+    const renovation = r.months[0];
+    const operating = r.months[r.timeline.constructionMonths];
+    expect(renovation.phase).toBe('construction');
+    expect(operating.phase).toBe('stabilized');
+    for (const key of ['gpr', 'occ', 'egi', 'recoveries', 'opex', 'tax', 'reserve', 'noi']) {
+      expect(renovation[key]).toBeCloseTo(operating[key], 6);
+    }
+  });
+
+  it('reports the same in-place NOI it charges, on every deal that has one', () => {
+    // The exported row carries a going-in NOI beside IRR, profit and equity
+    // multiple cells that are produced by the schedule. If the two disagree the
+    // row is describing two different assets. They were 312 bps apart on Alamo
+    // Ridge because only one of them netted tax, reserves and recoveries.
+    //
+    // The reconciliation must cover the deal it is hardest on. Dallas Office TI
+    // is bought empty, so it has no going-in cap RATE — and while goingInNOI
+    // was gated on the rate, this loop skipped the one deal in the portfolio
+    // where the schedule and the reported figure could actually diverge.
+    let checkedBoughtEmpty = 0;
+    for (const deal of [renovation, ...SAMPLE_DEALS]) {
+      const r = runModel(deal);
+      const renovationMonths = r.months.filter((m) => m.phase === 'construction');
+      if (!constructionTypes[deal.constructionType ?? 'groundUp'].hasInPlaceIncome) {
+        expect(r.operating.goingInNOI).toBeNull();
+        continue;
+      }
+      expect(r.operating.goingInNOI).not.toBeNull();
+      expect(renovationMonths.length).toBeGreaterThan(0);
+      for (const m of renovationMonths) {
+        expect(m.noi * 12).toBeCloseTo(r.operating.goingInNOI, 6);
+      }
+      if (r.operating.goingInCapRate === null) {
+        checkedBoughtEmpty++;
+      } else {
+        expect(r.operating.goingInCapRate)
+          .toBeCloseTo(r.operating.goingInNOI / r.operating.acquisitionBasis, 12);
+      }
+    }
+    // The sample portfolio must keep exercising the no-cap-rate case.
+    expect(checkedBoughtEmpty).toBeGreaterThan(0);
+  });
+
+  it('never reports the lender paying the borrower during renovation', () => {
+    // `debtService` was `min(inPlaceNOI, interest)`, which is safe only while
+    // in-place NOI cannot go negative. Charging tax and fixed opex against an
+    // asset bought empty made it negative, so the schedule reported a negative
+    // debt service — rendered as a positive inflow on the Cash Flow screen, and
+    // netted against the real debt service in the annual roll-up the IC memo
+    // prints. A month that pays nothing pays zero, and capitalises the rest.
+    for (const deal of [{ ...groundUpDeal, constructionType: 'acquisition' }, ...SAMPLE_DEALS]) {
+      const r = runModel(deal);
+      for (const m of r.months) {
+        expect(m.debtService).toBeGreaterThanOrEqual(0);
+        // Renovation debt service is capped at the interest accrued: nothing
+        // amortises before completion, so a month cannot pay more than it owes.
+        // (Operating months legitimately exceed interest — the level payment
+        // carries principal.)
+        if (m.phase === 'construction') {
+          expect(m.debtService).toBeLessThanOrEqual(m.interest + 1e-9);
+        }
+      }
+      for (const y of r.annual) expect(y.debtService).toBeGreaterThanOrEqual(0);
+    }
+    const empty = runModel({ ...groundUpDeal, constructionType: 'acquisition' });
+    expect(empty.months[0].noi).toBeLessThan(0);
+    expect(empty.months[0].debtService).toBe(0);
+  });
+
+  it('carries every cash flow line through the renovation months, so the year foots', () => {
+    // rollUpAnnual sums each component key. Renovation months carrying `noi`
+    // and nothing else produced a year-one row whose NOI was net of tax and
+    // opex that the Tax and OpEx columns beside it reported as $0 — the IC
+    // memo's annual cash flow table, which prints exactly those columns.
+    for (const deal of [{ ...groundUpDeal, constructionType: 'acquisition' }, ...SAMPLE_DEALS]) {
+      const r = runModel(deal);
+      for (const y of r.annual) {
+        expect(y.egi + y.recoveries - y.opex - y.tax - y.reserve).toBeCloseTo(y.noi, 6);
+        expect(y.noi - y.debtService).toBeCloseTo(y.cashFlow, 6);
+      }
+    }
+  });
+
+  it('carries the tax and fixed opex of an asset bought empty rather than reading zero', () => {
+    // A renovation asset with nothing let still pays its tax bill and its fixed
+    // operating cost. Reporting zero NOI for those months claims a building
+    // that costs nothing to hold, and hands the interest reserve the same
+    // flattery in the opposite direction.
+    const empty = runModel({ ...groundUpDeal, constructionType: 'acquisition' });
+    const month = empty.months[0];
+    expect(month.phase).toBe('construction');
+    expect(month.noi).toBeLessThan(0);
+    // ...and it costs real money: the reserve is larger than it would be with
+    // the renovation months credited at zero.
+    const asIfFree = runModel({
+      ...groundUpDeal, constructionType: 'acquisition',
+      purchasePrice: 500_000, operatingExpenseRatio: 0, propertyTaxRate: 0,
+    });
+    expect(empty.budget.capitalizedInterest).toBeGreaterThan(asIfFree.budget.capitalizedInterest);
+    expect(empty.budget.totalProjectCost).toBeGreaterThan(asIfFree.budget.totalProjectCost);
+  });
+
+  it('bills renovation-period recoveries only on space that is actually let', () => {
+    // Under NNN the tenant repays opex and tax pro rata to occupied space. A
+    // half-let building credited at full occupancy collects reimbursements from
+    // tenants who are not there, which is how a negative in-place NOI came to
+    // read as a positive going-in yield.
+    const nnn = {
+      propertyType: 'retail', constructionType: 'acquisition', location: 'Tampa, FL',
+      purchasePrice: 5_200_000, constructionCost: 1_100_000, buildingSize: 18_000,
+      grossRevenue: 558_000, vacancyRate: 6, operatingExpenseRatio: 20,
+      downPayment: 30, interestRate: 6.1, loanTerm: 25, exitCapRate: 7.0, holdPeriod: 5,
+    };
+    const quarterLet = runModel({ ...nnn, assumptions: { inPlaceRevenue: 140_000 } });
+    const mostlyLet = runModel({ ...nnn, assumptions: { inPlaceRevenue: 480_000 } });
+    const occQuarter = 140_000 / 558_000;
+    const occMostly = 480_000 / 558_000;
+    // Recoveries per dollar of in-place rent rise with occupancy, so the gap
+    // between the two schedules is wider than the rent difference alone.
+    expect(mostlyLet.months[0].noi - quarterLet.months[0].noi)
+      .toBeGreaterThan((480_000 - 140_000) / 12);
+    expect(occMostly).toBeGreaterThan(occQuarter);
+  });
+
+  it('leaves a ground-up schedule with no in-place income at all', () => {
+    // A ground-up deal runs no operating statement during construction: there
+    // is no building, no rent roll and no tenant to bill, and its land carry —
+    // tax, insurance, the rest — is budgeted inside the 14% soft cost load
+    // constructionTypes.groundUp applies (against 6-8% for acquisition and TI).
+    // Charging tax here alone, with no offsetting soft-cost relief, would
+    // double-count it. The renovation charge must not leak onto a construction
+    // deal. See the note in the module header for what this convention costs.
+    const r = runModel(groundUpDeal);
+    for (const m of r.months.filter((x) => x.phase === 'construction')) {
+      expect(m.noi).toBe(0);
+    }
+    expect(r.operating.goingInNOI).toBeNull();
   });
 });
 
@@ -619,11 +825,15 @@ describe('going-in cap rate', () => {
   it('prices day-one income against day-one basis', () => {
     const basis = 20_000_000;                       // purchase price
     const inPlaceOcc = 2_800_000 / 3_200_000;       // in-place rent over potential rent
-    // Opex is struck on the revenue base and flexed by the variable share, not
-    // struck on in-place revenue: charging 35% of what a part-leased building
-    // collects makes a half-empty building look half as expensive to run, which
-    // is the error the operating schedule is explicitly built to avoid.
-    const opex = 3_200_000 * 0.35 * (0.70 + 0.30 * inPlaceOcc);
+    const stabilizedOcc = 1 - 0.06;
+    // Opex is budgeted off the STABILISED revenue base and then flexed by the
+    // variable share — the two moves the operating schedule makes, in that
+    // order. Not struck on in-place revenue: charging 35% of what a part-leased
+    // building collects makes a half-empty building look half as expensive to
+    // run, which is the error the operating schedule is built to avoid. And not
+    // grossed to 100% occupancy either: that charged the renovation months
+    // 1/0.94 of the operating months' fixed cost for the same asset.
+    const opex = 3_200_000 * 0.35 * stabilizedOcc * (0.70 + 0.30 * (inPlaceOcc / stabilizedOcc));
     const tax = basis * 0.0281;                     // Houston effective rate
     const reserve = 300 * 180;                      // multifamily reserve per unit
     const noi = 2_800_000 - opex - tax - reserve;   // gross lease: no reimbursements
@@ -664,7 +874,8 @@ describe('going-in cap rate', () => {
     };
     const m = runModel(halfLeased);
     const occ = 500_000 / 4_200_000;
-    const opex = 4_200_000 * 0.30 * (0.70 + 0.30 * occ);
+    const stabilizedOcc = 1 - 0.08;
+    const opex = 4_200_000 * 0.30 * stabilizedOcc * (0.70 + 0.30 * (occ / stabilizedOcc));
     const tax = 20_000_000 * 0.0281;
     const reserve = 0.25 * 150_000;
     const recoveries = (opex + tax) * m.assumptions.expenseRecoveryRate * occ;
@@ -994,9 +1205,110 @@ describe('debt sized to constraints, wired into the model', () => {
     expect(m.cashOnCash).toBeNull();
   });
 
+  it('reports the debt and the exit of an unmodelled deal as unknown too', () => {
+    // The same rule, on the fields that were still answering zero. A permanent
+    // balance of 0 is not "borrowed nothing", it is "never drew a schedule" —
+    // and it sat beside a loan commitment the equity share had already filled
+    // in, so the pair contradicted each other. One screen papered over it by
+    // testing `model.incomplete` before printing the balance, which is a caller
+    // doing the engine's job; the CSV and the memo had no such guard.
+    const r = runModel({ purchasePrice: 1_000_000, holdPeriod: 0 });
+    expect(r.financing.loanCommitment).toBeGreaterThan(0);
+    for (const key of ['permanentLoanBalance', 'monthlyPayment', 'annualDebtService', 'ltc', 'gpCoInvest', 'lpEquity']) {
+      expect(r.financing[key]).toBeNull();
+    }
+    for (const key of ['forwardNoi', 'grossSalePrice', 'costOfSale', 'loanPayoff', 'netSaleProceeds']) {
+      expect(r.exit[key]).toBeNull();
+    }
+    // ...but the exit cap rate is a pure pass-through INPUT, echoed unchanged on
+    // the normal path, so it is known here for the same reason the land basis
+    // below is. Nulling it applied the rule in both directions at once.
+    expect(r.exit.exitCapRate).toBe(6.5);
+    // The interest reserve was never accumulated, so neither it nor the total
+    // cost that contains it is known. The capital plan IS known — it is an
+    // input, and it was computed before the engine decided the deal could not
+    // be scheduled. Reporting a million-dollar land basis as $0 is the same
+    // conflation of zero with unknown, pointed the other way.
+    expect(r.budget.baseProjectCost).toBeGreaterThan(0);
+    expect(r.budget.land).toBe(1_000_000);
+    expect(r.budget.capitalizedInterest).toBeNull();
+    expect(r.budget.totalProjectCost).toBeNull();
+    // ...and no sources & uses table, because every surface renders its rows as
+    // a share of a total development cost that is genuinely unknown here.
+    expect(r.budget.lines).toEqual([]);
+    // Months into a schedule that does not exist. Month 0 is the closing, so a
+    // 0 here names a real month rather than an absent one.
+    expect(r.operating.stabilizationMonth).toBeNull();
+    expect(r.operating.interestOnlyMonths).toBeNull();
+    expect(r.timeline.leaseUpMonths).toBeNull();
+    expect(r.timeline.saleMonth).toBeNull();
+    // The hold and construction lengths are inputs, and one of them being zero
+    // is the reason this path was taken at all.
+    expect(r.timeline.operatingMonths).toBe(0);
+  });
+
   it('still returns an incomplete model rather than sizing an unmodellable deal', () => {
     const r = runModel({ sizeDebtToConstraints: true });
     expect(r.incomplete).toBe(true);
+  });
+
+  it('says in the model whether the sizing flag was actually honoured', () => {
+    // The named failure: with no lender test evaluable the sizing loop breaks
+    // on its first pass and the model returned is the UNSIZED one — a loan
+    // derived from the equity share, carried under a sizeDebtToConstraints
+    // flag, with a fully populated loanCommitment beside a null sizing amount.
+    // Nothing in the model marked the flag unhonoured, so every surface
+    // inferred it from that null and they did not agree.
+    const untestable = {
+      ...geared, sizeDebtToConstraints: true,
+      debtSizing: { maxLTC: Number.NaN, minDSCR: 0, minDebtYield: 0 },
+    };
+    const unhonoured = runModel(untestable);
+    expect(unhonoured.financing.sizingRequested).toBe(true);
+    expect(unhonoured.financing.sizing.honoured).toBe(false);
+    expect(unhonoured.financing.sizing.loanAmount).toBeNull();
+    // ...and the loan it carries is exactly the equity-share loan, which is the
+    // fact `honoured: false` exists to disclose.
+    expect(unhonoured.financing.loanCommitment)
+      .toBeCloseTo(runModel({ ...geared }).financing.loanCommitment, 6);
+
+    const honoured = runModel({ ...geared, sizeDebtToConstraints: true });
+    expect(honoured.financing.sizingRequested).toBe(true);
+    expect(honoured.financing.sizing.honoured).toBe(true);
+    expect(honoured.financing.loanCommitment)
+      .toBeLessThan(unhonoured.financing.loanCommitment);
+  });
+
+  it('distinguishes a deal that never asked for constrained sizing from one that asked in vain', () => {
+    // Three states, and before this the model expressed two of them. A caller
+    // reaching back to the deal record for the third is a caller guessing.
+    const neverAsked = runModel(geared);
+    expect(neverAsked.financing.sizingRequested).toBe(false);
+    expect(neverAsked.financing.sizing).toBeNull();
+
+    // Asked, but the model never reached a schedule to size against.
+    const noSchedule = runModel({ ...geared, sizeDebtToConstraints: true, holdPeriod: 0 });
+    expect(noSchedule.incomplete).toBe(true);
+    expect(noSchedule.financing.sizingRequested).toBe(true);
+    expect(noSchedule.financing.sizing).toBeNull();
+  });
+
+  it('does not report an unconverged loop as an unapplied constraint, or the reverse', () => {
+    // `converged` and `honoured` answer different questions: whether the fixed
+    // point settled, and whether a lender test sized the loan at all. A loan
+    // that no test could size was being described as one that merely had not
+    // settled, which reads as a near-miss rather than as no sizing at all.
+    const sized = runModel({ ...geared, sizeDebtToConstraints: true });
+    expect(sized.financing.sizing.converged).toBe(true);
+    expect(sized.financing.sizing.honoured).toBe(true);
+
+    const untestable = runModel({
+      ...geared, sizeDebtToConstraints: true,
+      debtSizing: { maxLTC: Number.NaN, minDSCR: 0, minDebtYield: 0 },
+    });
+    expect(untestable.financing.sizing.converged).toBe(false);
+    expect(untestable.financing.sizing.honoured).toBe(false);
+    expect(untestable.financing.sizing.bindingConstraint).toBeNull();
   });
 });
 
@@ -1093,12 +1405,19 @@ describe('break-even verdict has one definition', () => {
   });
 
   it('fires on a break-even above underwritten occupancy that is still under the ceiling', () => {
-    // The exact configuration the ceiling-only test missed.
+    // The exact configuration the ceiling-only test missed: break-even between
+    // the underwritten occupancy and the firm's ceiling, so only the cushion
+    // test can catch it. The fixture is tuned to sit in that band and was
+    // re-tuned when the renovation period began carrying tax, reserves and
+    // fixed opex on a deal bought empty — that carry capitalises more interest,
+    // which enlarges basis and the tax struck on it, and pushed break-even past
+    // 0.80 where the ceiling test would have covered for the cushion test. The
+    // invariant under test is unchanged; the numbers that isolate it are not.
     const deal = {
       name: 'No cushion', propertyType: 'multifamily', constructionType: 'acquisition',
       location: 'Dallas, TX', purchasePrice: 12_000_000, constructionCost: 2_000_000,
-      buildingSize: 200_000, grossRevenue: 2_600_000, vacancyRate: 33,
-      operatingExpenseRatio: 35, downPayment: 30, interestRate: 6.2, loanTerm: 30,
+      buildingSize: 200_000, grossRevenue: 2_800_000, vacancyRate: 33,
+      operatingExpenseRatio: 35, downPayment: 40, interestRate: 6.2, loanTerm: 30,
       exitCapRate: 6.5, holdPeriod: 5,
     };
     const v = breakEvenBreach(runModel(deal).operating);
@@ -1114,5 +1433,96 @@ describe('break-even verdict has one definition', () => {
     const none = breakEvenBreach({ breakEvenOccupancy: null, stabilizedOccupancy: 0.95 });
     expect(none.breached).toBe(false);
     expect(none.cushion).toBeNull();
+  });
+});
+
+describe('non-finite inputs', () => {
+  // The degenerate guard tested `N === 0 || baseProjectCost <= 0`, and NaN
+  // satisfies neither: every comparison against NaN is false. A deal carrying
+  // one therefore ran the whole schedule and came back `incomplete: false`.
+  const base = {
+    propertyType: 'multifamily', constructionType: 'groundUp', location: 'Dallas, TX',
+    purchasePrice: 1_000_000, constructionCost: 5_000_000, units: 50,
+    grossRevenue: 900_000, holdPeriod: 5, exitCapRate: 6.0,
+  };
+
+  it('reports a NaN input as unmodelled rather than as a confident zero', () => {
+    const r = runModel({ ...base, holdPeriod: NaN });
+    expect(r.incomplete).toBe(true);
+    // These were the values it returned instead: no NOI, no equity multiple,
+    // a -650 bps development spread and a $7.8m loss, all stated as measured.
+    for (const key of ['stabilizedNOI', 'yieldOnCost', 'developmentSpreadBps', 'breakEvenOccupancy']) {
+      expect(r.operating[key]).toBeNull();
+    }
+    for (const key of ['equityMultiple', 'profit', 'peakEquity', 'leveredIRR']) {
+      expect(r.returns[key]).toBeNull();
+    }
+    expect(r.exit.grossSalePrice).toBeNull();
+    expect(r.months).toEqual([]);
+    // A NaN hold period is not a known hold period either: it reports as
+    // unknown, not as the NaN that produced it.
+    expect(r.timeline.operatingMonths).toBeNull();
+    expect(r.timeline.saleMonth).toBeNull();
+  });
+
+  it('never reports a non-finite figure, whichever input is not a number', () => {
+    // The invariant is not "always incomplete" — a negative purchase price is
+    // clamped to zero, which is a real reading of the input. It is that no
+    // reported figure is ever NaN or Infinity, however the deal arrives.
+    const nonFinite = [];
+    const walk = (o, path) => {
+      for (const [k, v] of Object.entries(o)) {
+        if (typeof v === 'number' && !Number.isFinite(v)) nonFinite.push(`${path}${k}`);
+        else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, `${path}${k}.`);
+      }
+    };
+    for (const field of ['purchasePrice', 'constructionCost', 'grossRevenue', 'vacancyRate',
+                         'operatingExpenseRatio', 'interestRate', 'loanTerm', 'exitCapRate',
+                         'downPayment', 'holdPeriod', 'propertyTaxRate', 'buildingSize', 'units']) {
+      for (const bad of [NaN, Infinity, -Infinity]) {
+        const r = runModel({ ...base, [field]: bad });
+        for (const section of ['budget', 'financing', 'exit', 'returns', 'operating', 'timeline']) {
+          walk(r[section], `${field}=${bad} ${section}.`);
+        }
+      }
+    }
+    expect(nonFinite).toEqual([]);
+  });
+
+  it('never emits a NaN in a reported figure, whatever the input', () => {
+    const r = runModel({ ...base, constructionCost: NaN });
+    const walk = (o, path = '') => {
+      for (const [k, v] of Object.entries(o)) {
+        if (typeof v === 'number') expect([`${path}${k}`, Number.isFinite(v)]).toEqual([`${path}${k}`, true]);
+        else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, `${path}${k}.`);
+      }
+    };
+    for (const section of ['budget', 'financing', 'exit', 'returns', 'operating', 'timeline']) {
+      walk(r[section], `${section}.`);
+    }
+  });
+
+  it('flags the unmodelled deal instead of screening it as a failure', () => {
+    // `incomplete: false` meant validate() raised nothing (its incomplete rule
+    // never fired) and screeningVerdict() printed an affirmative "does not meet
+    // stated criteria" naming four failed tests, about a model never computed.
+    const r = runModel({ ...base, constructionCost: NaN });
+    expect(validate(r, base).some((f) => /incomplete|not been modell?ed|cannot be/i.test(f.message ?? ''))
+      || validate(r, base).length > 0).toBe(true);
+  });
+
+  it('does not turn an absent construction cost into NaN in a scenario', () => {
+    // applyScenario scaled `undefined * 1.1`, and every memo runs the Downside
+    // scenario. A legitimate pure acquisition came back from it uncomputed.
+    const acquisition = {
+      constructionType: 'acquisition', propertyType: 'office', location: 'Dallas, TX',
+      constructionMonths: 0, purchasePrice: 8_000_000, buildingSize: 60_000,
+      grossRevenue: 700_000, holdPeriod: 5, exitCapRate: 6.5,
+    };
+    const scenarios = runScenarios(acquisition);
+    for (const s of scenarios) {
+      expect([s.label ?? s.key, s.model.incomplete]).toEqual([s.label ?? s.key, undefined]);
+      expect(Number.isFinite(s.model.budget.totalProjectCost)).toBe(true);
+    }
   });
 });

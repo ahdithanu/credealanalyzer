@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Plus, AlertTriangle } from 'lucide-react';
 import { runModel } from '../lib/finance';
-import { waterfallFromModel, DEFAULT_WATERFALL } from '../lib/waterfall';
+import { promoteState, DEFAULT_WATERFALL } from '../lib/waterfall';
 import { Panel, MetricStrip, Seg } from '../ui/components';
 import { money, money0, pct, mult, NA } from '../lib/format';
 
@@ -64,23 +64,82 @@ const initialStructure = () => ({
   tiers: DEFAULT_WATERFALL.tiers.map((t) => ({ ...t })),
 });
 
-export default function Waterfall({ deal }) {
-  const [cfg, setCfg] = useState(initialStructure);
+/**
+ * A stored structure filled out with every term the band edits.
+ *
+ * A structure on a deal need not name them all: resolveWaterfall() completes a
+ * partial one from DEFAULT_WATERFALL before it validates, so `{prefRate: 0.08}`
+ * is a legitimate thing to find on a deal — and the band, which renders a
+ * control per term, would otherwise blank a control or throw on the missing
+ * catchUp. Completed with the same values resolveWaterfall() would supply, so
+ * the screen and the memo describe one structure.
+ *
+ * gpCoInvestShare stays out, exactly as it does from initialStructure(): the
+ * co-invest is derived from the capital stack the model funded, and a share
+ * written here would override it on the deal.
+ */
+const completeStructure = (stored) => {
+  const catchUp = stored.catchUp && typeof stored.catchUp === 'object' ? stored.catchUp : {};
+  const tiers = Array.isArray(stored.tiers) ? stored.tiers : DEFAULT_WATERFALL.tiers;
+  return {
+    ...initialStructure(),
+    ...stored,
+    catchUp: { ...DEFAULT_WATERFALL.catchUp, ...catchUp },
+    tiers: tiers.map((t) => ({ irrHurdle: null, gpShare: 0, ...t })),
+  };
+};
 
+/**
+ * The promote structure is a property of the DEAL, edited here the way the Deal
+ * Model edits an assumption: every change goes through onChange and is saved
+ * with the deal.
+ *
+ * It used to live in this component's own state, which meant the memo, the CSV
+ * and this screen could each describe a different promote for one deal, and the
+ * structure died on reload. A screen is where a number is shown, not where it
+ * lives.
+ */
+export default function Waterfall({ deal, onChange }) {
   const model = useMemo(() => runModel(deal), [deal]);
+
+  const stored = deal.waterfall ?? null;
+  const configured = stored !== null;
+
+  // With nothing on the deal the band shows the module default as a PROPOSAL,
+  // not as the deal's terms. Writing it on mount would promote every deal in
+  // the pipeline the first time anyone opened this screen, and a deal with no
+  // structure is meant to keep its pre-promote returns and the memo that says
+  // so. Memoised so the proposal keeps one identity across renders and can
+  // never be the shared DEFAULT_WATERFALL itself.
+  const proposed = useMemo(initialStructure, []);
+  const cfg = useMemo(
+    () => (stored === null ? proposed : completeStructure(stored)),
+    [stored, proposed],
+  );
+
+  const setCfg = (update) =>
+    onChange({ ...deal, waterfall: typeof update === 'function' ? update(cfg) : update });
 
   // resolveWaterfall() throws on a structure whose arithmetic has no answer,
   // and an analyst editing a tier stack passes through those states on the way
   // to a valid one — clearing a hurdle before retyping it, dropping a promote
   // below the catch-up that feeds it. The throw is the module refusing to
-  // fabricate a split, so it is caught and shown, not suppressed.
-  const { result, error } = useMemo(() => {
-    try {
-      return { result: waterfallFromModel(model, cfg), error: null };
-    } catch (e) {
-      return { result: null, error: String(e.message).replace(/^waterfall:\s*/, '') };
-    }
-  }, [model, cfg]);
+  // fabricate a split, so it is caught and shown, not suppressed. It is also
+  // not written away: the rejected structure stays on the deal so it can be
+  // finished, and every surface that reads it resolves it again before
+  // claiming a split was applied.
+  //
+  // promoteState() is the shared predicate — the same one the IC memo, the CSV
+  // export and the pipeline banner run — so this screen and those three cannot
+  // reach different verdicts about one deal. It also strips the structure's own
+  // gpCoInvestShare, because the co-invest belongs to the capital stack the
+  // model funded: a share stored on the structure would split one equity
+  // commitment two ways within a single document.
+  const { result, error, noFlows } = useMemo(() => {
+    if (!configured) return { result: null, error: null, noFlows: false };
+    const p = promoteState(model, cfg);
+    return { result: p.wf, error: p.reason, noFlows: p.state === 'no-flows' };
+  }, [model, cfg, configured]);
 
   const commitment = model.financing.equityCommitment;
   // With no schedule the model funded no capital stack, so there is no share to
@@ -113,8 +172,6 @@ export default function Waterfall({ deal }) {
       return { ...c, tiers };
     });
 
-  const noFlows = !model.months.length;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
       <StructureBand
@@ -125,13 +182,29 @@ export default function Waterfall({ deal }) {
         removeTier={removeTier}
         coInvestShare={coInvestShare}
         resolvedCatchUpTarget={result?.config.catchUp.targetPromoteShare ?? null}
+        configured={configured}
+        onApply={() => setCfg(initialStructure())}
+        onRemove={() => onChange({ ...deal, waterfall: null })}
       />
 
-      {error ? (
+      {!configured ? (
+        <Callout
+          tone="warn"
+          title="No promote structure on this deal"
+          detail={
+            'The returns on every other screen and in the IC memo are project-level equity returns, before any promote, and the memo says so. ' +
+            'The terms above are this tool\u2019s default, shown as a proposal only \u2014 nothing is split until they are on the deal. ' +
+            'Editing any field above, or applying the proposal, writes the structure to the deal and saves it with the deal.'
+          }
+        />
+      ) : error ? (
         <Callout
           tone="neg"
           title="This promote structure has no arithmetic"
-          detail={`${error}. Nothing is shown below because the alternative is a fabricated split.`}
+          detail={
+            `${error}. Nothing is shown below because the alternative is a fabricated split. ` +
+            'The structure stays on the deal so it can be finished, but no split has been applied: the IC memo and the CSV export both report it as configured and not applied, and the returns they carry are pre-promote.'
+          }
         />
       ) : noFlows ? (
         <Callout
@@ -148,7 +221,10 @@ export default function Waterfall({ deal }) {
 
 /* ── structure ──────────────────────────────────────────────────────────── */
 
-function StructureBand({ cfg, setCfg, setTier, addTier, removeTier, coInvestShare, resolvedCatchUpTarget }) {
+function StructureBand({
+  cfg, setCfg, setTier, addTier, removeTier, coInvestShare, resolvedCatchUpTarget,
+  configured, onApply, onRemove,
+}) {
   const set = (patch) => setCfg((c) => ({ ...c, ...patch }));
   const setCatchUp = (patch) => setCfg((c) => ({ ...c, catchUp: { ...c.catchUp, ...patch } }));
   // The catch-up target follows tier 1's promote unless it is set outright, so
@@ -169,7 +245,27 @@ function StructureBand({ cfg, setCfg, setTier, addTier, removeTier, coInvestShar
         <span className="chip" title="The model reports equity flows monthly, so the waterfall accrues monthly.">
           monthly accrual
         </span>
-        <button className="btn ghost" onClick={() => setCfg(initialStructure())}>Reset</button>
+        {/* Whether these terms are the DEAL's or merely this screen's is the
+            one fact a reader needs before trusting anything below, so it is
+            stated rather than implied by which buttons are showing. */}
+        <span
+          className={`chip ${configured ? '' : 'warn'}`}
+          title={configured
+            ? 'Saved with the deal, and read by the IC memo and the CSV export.'
+            : 'This deal carries no promote structure. Nothing below is applied to it.'}
+        >
+          {configured ? 'on the deal' : 'proposal only'}
+        </span>
+        {configured ? (
+          <>
+            <button className="btn ghost" onClick={onApply}>Reset</button>
+            <button className="btn ghost" onClick={onRemove} title="Remove the promote structure from this deal and return to project-level returns">
+              Remove
+            </button>
+          </>
+        ) : (
+          <button className="btn primary" onClick={onApply}>Apply to deal</button>
+        )}
       </div>
 
       <div

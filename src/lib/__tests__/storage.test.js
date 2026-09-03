@@ -75,3 +75,102 @@ describe('storage', () => {
     spy.mockRestore();
   });
 });
+
+/**
+ * The promote structure used to live in the Waterfall screen's component state
+ * and was never written to the deal, so it died on every reload and the memo
+ * and that screen could describe two different promotes for one deal.
+ */
+describe('promote structure', () => {
+  const structure = {
+    prefRate: 0.09,
+    prefCompounding: false,
+    catchUp: { enabled: true, gpShare: 0.5, targetPromoteShare: null },
+    tiers: [{ irrHurdle: 0.15, gpShare: 0.2 }, { irrHurdle: null, gpShare: 0.3 }],
+  };
+  // Not open-ended at the top: resolveWaterfall() refuses it because the money
+  // above the last hurdle has no split. It is a state an analyst passes through
+  // while typing a tier stack, so it can reach disk.
+  const unrunnable = { tiers: [{ irrHurdle: 0.15, gpShare: 0.2 }] };
+
+  it('round-trips the structure the analyst configured', () => {
+    saveDeals([{ ...deal(1, 'A'), waterfall: structure }]);
+    expect(loadDeals().deals[0].waterfall).toEqual(structure);
+  });
+
+  it('records the absence of a structure rather than omitting the field', () => {
+    // A missing key and a null are the same fact, but only one of them states
+    // it. Downstream code reading a bare `deal.waterfall` cannot tell "this
+    // deal has no promote" from "this field was lost", and the difference
+    // decides whether the memo's returns are labelled pre-promote.
+    saveDeals([deal(1, 'A')]);
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY)).deals[0];
+    expect('waterfall' in stored).toBe(true);
+    expect(stored.waterfall).toBeNull();
+    expect(loadDeals().deals[0].waterfall).toBeNull();
+  });
+
+  it('loads a deal saved before promote structures were persisted', () => {
+    // The v2 envelope has no waterfall key anywhere. It must still load, and
+    // it must load pre-promote — not with a default promote invented for it.
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      deals: [{ id: 7, name: 'Legacy', purchasePrice: 4200000, holdPeriod: 5 }],
+    }));
+    const { deals, migrated } = loadDeals();
+    expect(migrated).toBe(true);
+    expect(deals[0].name).toBe('Legacy');
+    expect(deals[0].purchasePrice).toBe(4200000);
+    expect(deals[0].waterfall).toBeNull();
+  });
+
+  it('migrates a bare v1 array to an explicit absence too', () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify([deal(1, 'Ancient')]));
+    expect(loadDeals().deals[0].waterfall).toBeNull();
+  });
+
+  it('hands back a structure the engine refuses, byte for byte, rather than repairing it', () => {
+    // A half-typed tier stack is the analyst's work in progress. Dropping it
+    // would destroy it; silently completing it would put a fabricated promote
+    // in front of a committee. It survives the round trip untouched.
+    //
+    // POLICY: this module no longer decides whether a stored structure splits
+    // anything, and loadDeals() no longer returns `rejectedWaterfalls`. That
+    // verdict is a fact about a structure AND a model — a structure can be
+    // perfectly valid with no equity schedule under it, and the co-invest the
+    // split runs on comes off the model's capital stack rather than off the
+    // stored object — so a verdict reached from the stored bytes alone
+    // disagreed with the memo, the CSV and the Waterfall screen in both
+    // directions. promoteState() in waterfall.js is the single predicate, and
+    // its four states are asserted in waterfall.test.js.
+    saveDeals([{ ...deal(1, 'Half-typed'), waterfall: unrunnable }]);
+    const { deals } = loadDeals();
+    expect(deals[0].waterfall).toEqual(unrunnable);
+    expect(loadDeals()).not.toHaveProperty('rejectedWaterfalls');
+  });
+
+  it('drops a stored value that is not a structure at all', () => {
+    // Nothing this app writes produces a string or an array here, so there is
+    // nothing to repair and no analyst input to preserve. A structure whose
+    // ARITHMETIC has no answer is the opposite case and is kept above.
+    for (const junk of ['{"prefRate":0.08}', 42, [], true]) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        schemaVersion: __internals.SCHEMA_VERSION,
+        deals: [{ ...deal(1, 'A'), waterfall: junk }],
+      }));
+      expect(loadDeals().deals[0].waterfall).toBeNull();
+    }
+  });
+
+  it('reports a payload at an older schema version as migrated', () => {
+    // The version is what tells a reader the shape on disk changed. Writing the
+    // new shape under the old number would make the migration undetectable.
+    expect(SCHEMA_VERSION).toBeGreaterThan(2);
+    saveDeals([deal(1, 'A')]);
+    expect(loadDeals().migrated).toBe(false);
+    const payload = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...payload, schemaVersion: 2 }));
+    expect(loadDeals().migrated).toBe(true);
+  });
+});

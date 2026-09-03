@@ -16,7 +16,7 @@
  */
 
 import { runModel } from './finance';
-import { waterfallFromModel } from './waterfall';
+import { promoteState } from './waterfall';
 import { validate, DEFAULT_COVENANTS } from './validation';
 import { runScenarios, sensitivityGrid, breakeven } from './sensitivity';
 import { findMarket } from './markets';
@@ -167,16 +167,23 @@ const CONSTRAINT_LABEL = {
  * the whole point: an LTC-bound deal is solved with more equity, a
  * coverage-bound deal is not solved with equity at all.
  */
-function debtSizingNote(sizing) {
+function debtSizingNote(financing) {
+  const { sizing, sizingRequested } = financing;
   if (!sizing) {
+    // Three states, and only the engine can tell them apart. Reading `!sizing`
+    // alone printed the never-asked sentence as fact about a deal that DID ask
+    // and could not be served — an incomplete model carries sizingRequested
+    // true and sizing null — in the document that leaves the building.
     return {
       type: 'note',
       title: 'Debt sizing',
-      text: 'The loan is the residual of the underwritten equity share, not a lender-sized amount. It has not been tested against loan-to-cost, coverage or debt yield limits at sizing; the screen on the summary page tests the resulting balance after the fact.',
+      text: sizingRequested
+        ? 'Sizing to the binding lender constraint was requested but could not be run: this deal has no completed schedule to size against, so the balance below is the residual of the underwritten equity share and no loan-to-cost, coverage or debt yield limit has been applied to it.'
+        : 'The loan is the residual of the underwritten equity share, not a lender-sized amount. It has not been tested against loan-to-cost, coverage or debt yield limits at sizing; the screen on the summary page tests the resulting balance after the fact.',
     };
   }
 
-  if (!sizing.bindingConstraint) {
+  if (!sizing.honoured || !sizing.bindingConstraint) {
     return {
       type: 'note',
       title: 'Debt sizing',
@@ -206,49 +213,104 @@ function debtSizingNote(sizing) {
 }
 
 /**
+ * A line's share of total development cost, or null when either side is unknown.
+ *
+ * The `|| 1` fallback these rows used turned an unknown into a confident 0.0%:
+ * on an unmodelled deal the amount cell read 'n/a' while the % TDC cell beside
+ * it printed 0.0%, and the total row printed 100.0% of a cost it had just
+ * reported as unmeasured. A share of nothing is not zero percent.
+ */
+function shareOfTdc(amount, totalProjectCost) {
+  if (amount === null || amount === undefined) return null;
+  if (!(totalProjectCost > 0)) return null;
+  return amount / totalProjectCost;
+}
+
+/** The residual split, tier by tier, in the words the promote is quoted in. */
+function tierText(cfg) {
+  return cfg.tiers
+    .map((t) => (t.irrHurdle === null
+      ? `${pct(t.gpShare, 0)} above the top hurdle`
+      : `${pct(t.gpShare, 0)} to a ${pct(t.irrHurdle, 1)} IRR`))
+    .join(', then ');
+}
+
+/**
+ * The promote terms in one clause, for the disclosure page.
+ *
+ * Built from the RESOLVED config the split was actually run on, not from the
+ * structure as supplied: resolveWaterfall() fills the catch-up target from
+ * tier 1 and waterfallFromModel() takes the co-invest off the capital stack,
+ * so the supplied object can be silent on terms the money moved under. A
+ * disclosure quoting the input rather than the applied config would state
+ * terms the numbers on the page were not produced by.
+ */
+function promoteTermsClause(cfg) {
+  const catchUp = cfg.catchUp.enabled && cfg.catchUp.targetPromoteShare > 0
+    ? `a GP catch-up at ${pct(cfg.catchUp.gpShare, 0)} to a ${pct(cfg.catchUp.targetPromoteShare, 0)} promote`
+    : 'no GP catch-up';
+  return `a ${pct(cfg.prefRate, 1)} ${cfg.prefCompounding ? 'compounding' : 'simple'} preferred return on unreturned capital, `
+    + `${cfg.returnOfCapitalFirst ? 'capital returned before pref is paid' : 'pref paid before capital is returned'}, `
+    + `${catchUp}, a residual promote of ${tierText(cfg)}, and a GP co-invest of `
+    + `${pct(cfg.gpCoInvestShare, 0)} ranking pari passu with the LP`;
+}
+
+/**
  * Returns after the promote, when a structure has been configured.
  *
  * `resolveWaterfall()` throws on a tier stack whose arithmetic has no answer.
  * That refusal has to reach the page rather than be swallowed: a memo that
  * silently dropped the waterfall would present pre-promote returns under a
  * document that says a promote structure exists.
+ *
+ * @returns {{applied:boolean, error:string|null, terms:string|null, blocks:Array}}
+ *          `applied` is the only thing any caller may branch on to claim a
+ *          waterfall ran; `terms` is null unless it did.
  */
 function waterfallBlocks(model, config) {
-  // The capital stack on page 1 is the model's, and waterfallFromModel derives
-  // the co-invest from that same stack. A supplied structure carrying its own
-  // gpCoInvestShare would split one equity commitment two ways inside a single
-  // document, so the model's share wins here.
-  const structure = { ...config };
-  delete structure.gpCoInvestShare;
+  // One predicate, shared with the CSV, the Waterfall screen and the pipeline
+  // banner. The memo's own branch was whether waterfallFromModel THREW — and
+  // runWaterfall([]) does not throw, it returns zeros — so a deal with no
+  // equity schedule got an "applied" disclosure over a $0 GP promote and a $0
+  // preferred return stated as facts, while the CSV called the same deal
+  // "Configured, no equity schedule to split" and the screen refused to render
+  // a split at all. Three surfaces, three claims, one deal.
+  const { state, wf, reason } = promoteState(model, config);
 
-  let wf;
-  try {
-    wf = waterfallFromModel(model, structure);
-  } catch (e) {
+  if (state === 'no-flows') {
+    return {
+      applied: false,
+      error: null,
+      terms: null,
+      blocks: [{
+        type: 'note',
+        title: 'Distribution waterfall',
+        text: 'A promote structure is recorded on this deal, but the model has no equity cash flow schedule to split — there are no contributions and no distributions to run through it. No split has been applied, and every return in this memorandum is a project-level figure before promote.',
+      }],
+    };
+  }
+
+  if (state === 'rejected') {
     // `applied: false`. Callers branched on block COUNT, and the failure note is
     // itself a block — so a rejected structure printed "the waterfall below
     // splits the same cash flows" above the note saying it could not be run, and
     // a disclosure page claiming LP and GP figures the document does not carry.
     return {
       applied: false,
+      error: reason,
+      terms: null,
       blocks: [{
         type: 'note',
         title: 'Distribution waterfall',
-        text: `A promote structure was supplied but could not be run: ${String(e.message).replace(/^waterfall:\s*/, '')}. Every return in this memorandum is therefore a project-level figure before promote.`,
+        text: `A promote structure was supplied but could not be run: ${reason}. Every return in this memorandum is therefore a project-level figure before promote.`,
       }],
     };
   }
 
   const cfg = wf.config;
-  const tierText = cfg.tiers
-    .map((t) => (t.irrHurdle === null
-      ? `${pct(t.gpShare, 0)} above the top hurdle`
-      : `${pct(t.gpShare, 0)} to a ${pct(t.irrHurdle, 1)} IRR`))
-    .join(', then ');
-
   const shortfall = wf.returns.capitalShortfall + wf.returns.prefShortfall;
 
-  return { applied: true, blocks: [
+  return { applied: true, error: null, terms: promoteTermsClause(cfg), blocks: [
     {
       type: 'table',
       title: 'Distribution waterfall',
@@ -269,7 +331,7 @@ function waterfallBlocks(model, config) {
     {
       type: 'note',
       title: 'Promote structure',
-      text: `Pref ${pct(cfg.prefRate, 1)} ${cfg.prefCompounding ? 'compounding' : 'simple'}, quoted as ${cfg.prefRateBasis === 'nominal' ? 'a nominal annual rate divided by twelve' : 'an effective annual rate'}, accruing on unreturned capital; ${cfg.returnOfCapitalFirst ? 'capital is returned before pref is paid' : 'pref is paid before capital is returned'}; ${cfg.catchUp.enabled ? `GP catch-up at ${pct(cfg.catchUp.gpShare, 0)} to a ${pct(cfg.catchUp.targetPromoteShare, 0)} promote` : 'no GP catch-up'}; residual promote ${tierText}. GP co-invest of ${pct(cfg.gpCoInvestShare, 0)} ranks pari passu with the LP, so promote is the only preferential GP economics. ${
+      text: `Pref ${pct(cfg.prefRate, 1)} ${cfg.prefCompounding ? 'compounding' : 'simple'}, quoted as ${cfg.prefRateBasis === 'nominal' ? 'a nominal annual rate divided by twelve' : 'an effective annual rate'}, accruing on unreturned capital; ${cfg.returnOfCapitalFirst ? 'capital is returned before pref is paid' : 'pref is paid before capital is returned'}; ${cfg.catchUp.enabled ? `GP catch-up at ${pct(cfg.catchUp.gpShare, 0)} to a ${pct(cfg.catchUp.targetPromoteShare, 0)} promote` : 'no GP catch-up'}; residual promote ${tierText(cfg)}. GP co-invest of ${pct(cfg.gpCoInvestShare, 0)} ranks pari passu with the LP, so promote is the only preferential GP economics. ${
         wf.totals.gpClawback > 0
           ? `Promote of ${money0(wf.totals.gpClawback)} was clawed back at sale because the investor class ended short.`
           : 'No clawback was triggered.'
@@ -352,8 +414,9 @@ export function buildMemo(deal, {
         source: 'model.budget.lines',
         headers: ['Use', '$000', '% TDC'],
         align: ['l', 'r', 'r'],
-        rows: budget.lines.map((l) => [l.label, thousands(l.amount), pct(l.amount / (budget.totalProjectCost || 1), 1)]),
-        total: ['Total development cost', thousands(budget.totalProjectCost), '100.0%'],
+        rows: budget.lines.map((l) => [l.label, thousands(l.amount), pct(shareOfTdc(l.amount, budget.totalProjectCost), 1)]),
+        total: ['Total development cost', thousands(budget.totalProjectCost),
+          budget.totalProjectCost === null || budget.totalProjectCost === undefined ? NA : '100.0%'],
       },
       {
         type: 'table',
@@ -362,9 +425,9 @@ export function buildMemo(deal, {
         headers: ['Source', 'Amount', '% TDC'],
         align: ['l', 'r', 'r'],
         rows: [
-          ['Senior debt', money0(financing.permanentLoanBalance), pct(financing.permanentLoanBalance / (budget.totalProjectCost || 1), 1)],
-          ['LP equity', money0(financing.lpEquity), pct(financing.lpEquity / (budget.totalProjectCost || 1), 1)],
-          ['GP co-invest', money0(financing.gpCoInvest), pct(financing.gpCoInvest / (budget.totalProjectCost || 1), 1)],
+          ['Senior debt', money0(financing.permanentLoanBalance), pct(shareOfTdc(financing.permanentLoanBalance, budget.totalProjectCost), 1)],
+          ['LP equity', money0(financing.lpEquity), pct(shareOfTdc(financing.lpEquity, budget.totalProjectCost), 1)],
+          ['GP co-invest', money0(financing.gpCoInvest), pct(shareOfTdc(financing.gpCoInvest, budget.totalProjectCost), 1)],
         ],
       },
     ],
@@ -374,15 +437,27 @@ export function buildMemo(deal, {
   // The waterfall is run only when a structure exists, and its absence is a
   // disclosure rather than a blank space: returns with no waterfall behind them
   // are pre-promote, and nothing on the page says so otherwise.
-  const wf = waterfall ? waterfallBlocks(model, waterfall) : { applied: false, blocks: [] };
+  const wf = waterfall
+    ? waterfallBlocks(model, waterfall)
+    : { applied: false, error: null, terms: null, blocks: [] };
   const wfBlocks = wf.blocks;
   const wfApplied = wf.applied;
+  // Three states, not two. A structure the engine refused is neither an applied
+  // waterfall nor an absent one, and collapsing it into "absent" prints "no
+  // promote structure has been applied to this deal" on a deal that carries
+  // one — the reader then has no reason to go and fix it.
+  // Recorded but not applied: the structure was refused, or there was no
+  // equity schedule to split. Either way it is neither an applied waterfall nor
+  // an absent one, and collapsing it into "absent" prints "no promote structure
+  // has been applied to this deal" on a deal that carries one — the reader then
+  // has no reason to go and fix it. The block above names which case it is.
+  const wfRecordedNotApplied = Boolean(waterfall) && !wf.applied;
   // Which of the three tests failed is decided by the engine, not re-derived
   // here: the same null used to print "a ground-up deal has no going-in yield"
   // on a tenant-improvement deal, and on an acquisition carrying $3.4m of
   // in-place income whose purchase price was simply blank.
   const goingInBasis = operating.goingInCapRate !== null
-    ? `In-place NOI net of property tax, reserves and occupancy-scaled recoveries ÷ acquisition basis of ${money0(operating.acquisitionBasis)}, excluding construction draws. The renovation-period cash flows credit in-place income net of operating expense alone and so run richer than this yield.`
+    ? `In-place NOI net of property tax, reserves and occupancy-scaled recoveries ÷ acquisition basis of ${money0(operating.acquisitionBasis)}, excluding construction draws. The renovation-period cash flows are struck on this same NOI, so the schedule and this yield reconcile exactly.`
     : GOING_IN_UNAVAILABLE[operating.goingInCapUnavailable]
       ?? 'The going-in yield could not be measured on this deal';
 
@@ -410,7 +485,9 @@ export function buildMemo(deal, {
         type: 'note',
         text: wfApplied
           ? 'The measures above are project-level equity returns, before any promote. The waterfall below splits the same cash flows between the limited partners and the sponsor.'
-          : 'No promote structure has been applied to this deal, so the measures above are project-level equity returns, before any promote. LP and GP outcomes will be lower and higher than these respectively.',
+          : wfRecordedNotApplied
+            ? 'A promote structure is recorded on this deal but could not be run, so no split was applied and the measures above are project-level equity returns, before any promote. The note below says why. LP and GP outcomes will be lower and higher than these respectively.'
+            : 'No promote structure has been applied to this deal, so the measures above are project-level equity returns, before any promote. LP and GP outcomes will be lower and higher than these respectively.',
       },
       ...wfBlocks,
       {
@@ -448,7 +525,7 @@ export function buildMemo(deal, {
           ['Interest-only', `${operating.interestOnlyMonths} mo`, 'Through stabilization'],
         ],
       },
-      debtSizingNote(financing.sizing),
+      debtSizingNote(financing),
       {
         type: 'table',
         title: 'Exit',
@@ -638,9 +715,17 @@ export function buildMemo(deal, {
           // waterfall. It now does, so the standing claim would be false on
           // every memo built with a structure — and still needs saying on the
           // ones built without one, where the returns really are pre-promote.
+          // The terms are quoted, not merely acknowledged: a disclosure that
+          // says a waterfall was applied without saying WHICH one describes
+          // every promote structure equally well, and the reader cannot check
+          // the LP and GP figures beside it against anything.
           wfApplied
-            ? 'The model has no rent roll and no tenant-level rollover. A joint-venture waterfall is applied on the returns page: the LP and GP figures there are after pref, return of capital and promote, and every other equity return in this memorandum is a project-level figure before promote.'
-            : 'The model has no rent roll and no tenant-level rollover. No joint-venture waterfall or promote structure has been applied to this deal, so every equity return in this memorandum is a project-level figure shown before any promote.',
+            ? `The model has no rent roll and no tenant-level rollover. A joint-venture waterfall is applied on the returns page, on ${wf.terms}. The LP and GP figures there are after pref, return of capital and promote, and every other equity return in this memorandum is a project-level figure before promote.`
+            : wfRecordedNotApplied
+              ? wf.error
+                ? `The model has no rent roll and no tenant-level rollover. A promote structure is recorded on this deal but the waterfall could not be run on it (${wf.error}), so no split has been applied and every equity return in this memorandum is a project-level figure shown before any promote.`
+                : 'The model has no rent roll and no tenant-level rollover. A promote structure is recorded on this deal, but the model carries no equity cash flow schedule to split, so no split has been applied and every equity return in this memorandum is a project-level figure shown before any promote.'
+              : 'The model has no rent roll and no tenant-level rollover. No joint-venture waterfall or promote structure has been applied to this deal, so every equity return in this memorandum is a project-level figure shown before any promote.',
           'MARKET DATA: property tax rates aside, the market factors on the Market Context page are directional seed values. They are not sourced, not current, and must not be relied upon for an investment decision until replaced with a sourced feed.',
           'The screening result is a mechanical test against stated thresholds. It is not an investment recommendation, a valuation, or an appraisal.',
         ],

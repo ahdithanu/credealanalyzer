@@ -4,6 +4,7 @@ import {
   resolveWaterfall,
   runWaterfall,
   waterfallFromModel,
+  promoteState,
 } from '../waterfall';
 import { runModel, irr, annualize } from '../finance';
 import { SAMPLE_DEALS } from '../sampleDeals';
@@ -721,5 +722,59 @@ describe('against runModel', () => {
   it('rejects anything that is not a model result', () => {
     expect(() => waterfallFromModel(null)).toThrow(TypeError);
     expect(() => waterfallFromModel({})).toThrow(TypeError);
+  });
+});
+
+describe('promoteState — the one predicate four surfaces run', () => {
+  const structure = { prefRate: 0.08, tiers: [{ irrHurdle: 0.15, gpShare: 0.2 }, { irrHurdle: null, gpShare: 0.35 }] };
+  const unrunnable = { tiers: [{ irrHurdle: 0.15, gpShare: 0.2 }] };   // no open-ended tier
+  const model = runModel(SAMPLE_DEALS[0]);
+  const noSchedule = runModel({ ...SAMPLE_DEALS[0], holdPeriod: 0 });
+
+  it('separates no structure from one with nothing to split', () => {
+    // These were the same state to the IC memo, whose only branch was whether
+    // waterfallFromModel THREW. runWaterfall([]) does not throw — irr([])
+    // returns null and the totals come back zero — so a deal with no equity
+    // schedule got an "applied" disclosure over a $0 GP promote and a $0
+    // preferred return stated as facts, while the CSV called the same deal
+    // "Configured, no equity schedule to split" and the screen refused to
+    // render a split at all.
+    expect(promoteState(model, null).state).toBe('none');
+    expect(promoteState(model, undefined).state).toBe('none');
+    expect(noSchedule.months).toHaveLength(0);
+    expect(promoteState(noSchedule, structure).state).toBe('no-flows');
+    expect(promoteState(noSchedule, structure).wf).toBeNull();
+  });
+
+  it('names a refusal without applying it, and applies a runnable one', () => {
+    const bad = promoteState(model, unrunnable);
+    expect(bad.state).toBe('rejected');
+    expect(bad.wf).toBeNull();
+    expect(bad.reason).toMatch(/open-ended/i);
+    // A reader's sentence, not a stack trace.
+    expect(bad.reason).not.toMatch(/^waterfall:/);
+
+    const good = promoteState(model, structure);
+    expect(good.state).toBe('applied');
+    expect(good.reason).toBeNull();
+    expect(good.wf.returns.lpIRR).not.toBeNull();
+  });
+
+  it('strikes the promote on the capital stack the model funded, never on the structure', () => {
+    // A gpCoInvestShare stored on the structure would split one equity
+    // commitment two ways between the screen that stored it and the memo that
+    // strips it — two documents reporting different promotes for one deal.
+    const implied = model.financing.gpCoInvest / model.financing.equityCommitment;
+    expect(implied).toBeGreaterThan(0);
+    const forced = promoteState(model, { ...structure, gpCoInvestShare: 0 });
+    expect(forced.wf.config.gpCoInvestShare).toBeCloseTo(implied, 12);
+    expect(forced.wf.totals.gpPromoteNet)
+      .toBeCloseTo(promoteState(model, structure).wf.totals.gpPromoteNet, 6);
+  });
+
+  it('treats a stored value that is not a structure as no structure', () => {
+    for (const junk of ['{"prefRate":0.08}', 42, [], true]) {
+      expect(promoteState(model, junk).state).toBe('none');
+    }
   });
 });

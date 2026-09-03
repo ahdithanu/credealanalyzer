@@ -82,7 +82,11 @@ export default function DealModel({ deal, onChange, posture, onPosture }) {
 
   const { budget, financing, operating, returns } = model;
   const cov = DEFAULT_COVENANTS;
-  const sized = Boolean(deal.sizeDebtToConstraints);
+  // The request comes off the MODEL, which states it on every path including
+  // the one where the deal asked and no schedule existed to size against.
+  // Reading `deal.sizeDebtToConstraints` is the screen reaching back past the
+  // model it was handed to re-derive a fact the model already carries.
+  const sized = Boolean(financing.sizingRequested);
 
   // A covenant verdict is only meaningful once the metric exists. Coercing an
   // unmeasured figure to zero reads it as the worst possible answer and prints
@@ -406,17 +410,17 @@ function DebtSizing({ model, deal, sized }) {
             <td className="r num dim">
               {sized ? `${pct(financing.ltc, 1)} of total cost` : `${pct(equityShare, 1)} equity of total cost`}
             </td>
-            {/* A model with no schedule has no permanent balance. The engine's
-                degenerate result carries a literal 0 there, and printing it as
-                a confident total under three rows that all read n/a is the one
-                fabricated number this panel could produce. */}
-            <td className="r num">{model.incomplete ? NA : money0(financing.permanentLoanBalance)}</td>
+            {/* No `model.incomplete` guard: the engine reports an unmodelled
+                permanent balance as null and money0 renders null as n/a, so a
+                guard here would be the screen restating a claim the engine now
+                makes for itself. */}
+            <td className="r num">{money0(financing.permanentLoanBalance)}</td>
           </tr>
         </tbody>
       </table>
       <div className="dim2" style={{ fontSize: '10.5px', padding: '10px 10px 12px', lineHeight: 1.5 }}>
         {sized
-          ? sizing && sizing.loanAmount !== null
+          ? sizing && sizing.honoured
             ? <>Sized to the smallest of the three tests. Equity is the residual — the {' '}
                 <span className="num">{pct(equityShareOfBase, 1)}</span> equity share is an output here, not an input.
                 {!sizing.converged && ' The basis-to-loan feedback did not settle within the pass limit; treat the balance as approximate.'}</>
@@ -506,7 +510,10 @@ function Field({ spec, deal, flagged, superseded, supersededValue = null, onSet 
 function SourcesUses({ model, deal }) {
   const { budget } = model;
   const perUnit = deal.units > 0 ? deal.units : null;
-  const denom = budget.totalProjectCost || 1;
+  // Not `|| 1`: that renders a share of an unknown total as a confident 0.0%
+  // beside an amount cell that reads n/a. pct() renders the resulting non-finite
+  // ratio as n/a instead.
+  const denom = budget.totalProjectCost > 0 ? budget.totalProjectCost : null;
   return (
     <table className="grid">
       <thead>
@@ -545,7 +552,10 @@ function unitCost(amount, units, sf) {
 
 function CapitalStack({ model }) {
   const { financing, budget } = model;
-  const total = budget.totalProjectCost || 1;
+  // A `|| 1` denominator turns an unknown total into a confident 0% width and a
+  // confident 0.0% label beside an 'n/a' amount. With no total there is no
+  // stack to draw.
+  const total = budget.totalProjectCost > 0 ? budget.totalProjectCost : null;
   const parts = [
     { label: 'Senior debt', amount: financing.permanentLoanBalance, color: 'var(--accent)' },
     { label: 'LP equity', amount: financing.lpEquity, color: 'var(--accent-dim)' },
@@ -555,7 +565,7 @@ function CapitalStack({ model }) {
     <div style={{ padding: '14px' }}>
       <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', marginBottom: '12px' }}>
         {parts.map((p) => (
-          <div key={p.label} style={{ width: `${(p.amount / total) * 100}%`, background: p.color }} />
+          <div key={p.label} style={{ width: total && p.amount !== null ? `${(p.amount / total) * 100}%` : '0%', background: p.color }} />
         ))}
       </div>
       {parts.map((p) => (

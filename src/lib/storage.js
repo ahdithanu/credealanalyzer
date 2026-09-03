@@ -12,7 +12,7 @@
  */
 
 const STORAGE_KEY = 'cre-deal-analyzer:deals';
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function storage() {
   try {
@@ -38,6 +38,17 @@ export function isPersistenceAvailable() {
  *          `deals: null` means nothing has ever been saved — the caller should
  *          seed samples. An empty array means the user deleted everything and
  *          must NOT be re-seeded.
+ *
+ * A stored promote structure is handed back exactly as it was saved, including
+ * one whose arithmetic has no answer: it is the analyst's half-typed work and
+ * deleting it would destroy it. This module deliberately does NOT adjudicate
+ * whether a structure splits anything. That is a fact about a structure AND a
+ * model — a structure can also be perfectly valid with no equity schedule under
+ * it, and the co-invest the split actually runs on comes off the model's
+ * capital stack, not off the stored object — so a verdict reached here from the
+ * stored bytes alone disagreed with the memo, the CSV and the Waterfall screen
+ * in both directions. `promoteState()` in waterfall.js is the one predicate;
+ * App runs it over the live deals.
  */
 export function loadDeals() {
   const store = storage();
@@ -75,7 +86,7 @@ export function saveDeals(deals) {
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     savedAt: new Date().toISOString(),
-    deals: (deals || []).map(stripDerived),
+    deals: (deals || []).map((d) => withWaterfall(stripDerived(d))),
   };
   try {
     store.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -98,18 +109,43 @@ function stripDerived(deal) {
 }
 
 /**
+ * The promote structure, stated rather than omitted.
+ *
+ * A missing key and a null are the same fact — this deal has no promote
+ * structure, so its returns are project-level — but only one of them says it.
+ * v2 deals omit the key, and code downstream of a bare `deal.waterfall` read
+ * cannot tell "no structure" from "field lost in a partial write". Writing the
+ * null makes the absence a recorded decision that survives the round trip.
+ *
+ * Anything that is not an object is not a structure any version of this app
+ * ever wrote, so it cannot be repaired into one and is dropped to null. A
+ * structure whose ARITHMETIC has no answer is a different matter and is kept
+ * verbatim — see the note on loadDeals(); promoteState() in waterfall.js is
+ * what decides whether it splits anything.
+ */
+function withWaterfall(deal) {
+  const wf = deal.waterfall;
+  const usable = Boolean(wf) && typeof wf === 'object' && !Array.isArray(wf);
+  return { ...deal, waterfall: usable ? wf : null };
+}
+
+/**
  * Bring a stored payload up to the current schema.
  *
  * v1: a bare array of deals, with cached `metrics` from the old engine.
  * v2: an envelope with a schema version; metrics always recomputed.
+ * v3: every deal states its promote structure, `waterfall: null` where it has
+ *     none. Before v3 the structure lived in component state and was never
+ *     written at all, so a v1 or v2 deal migrates to an explicit null and
+ *     keeps the pre-promote returns it was saved with.
  */
 function migrate(parsed) {
   if (Array.isArray(parsed)) {
-    return { deals: parsed.map(stripDerived).filter(isPlausibleDeal), migrated: true };
+    return { deals: parsed.map(stripDerived).filter(isPlausibleDeal).map(withWaterfall), migrated: true };
   }
   if (parsed && typeof parsed === 'object' && Array.isArray(parsed.deals)) {
     return {
-      deals: parsed.deals.map(stripDerived).filter(isPlausibleDeal),
+      deals: parsed.deals.map(stripDerived).filter(isPlausibleDeal).map(withWaterfall),
       migrated: parsed.schemaVersion !== SCHEMA_VERSION,
     };
   }

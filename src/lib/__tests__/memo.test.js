@@ -451,3 +451,151 @@ describe('promote disclosure', () => {
     }
   });
 });
+
+/**
+ * The disclosure page is the part of this document that travels furthest from
+ * the deal team, so what it says about the promote has to be checkable against
+ * the split it sits behind.
+ */
+describe('promote terms on the disclosure page', () => {
+  const structure = {
+    prefRate: 0.08,
+    prefCompounding: true,
+    catchUp: { enabled: true, gpShare: 1.0, targetPromoteShare: null },
+    tiers: [{ irrHurdle: 0.15, gpShare: 0.20 }, { irrHurdle: null, gpShare: 0.30 }],
+  };
+  const disclosure = (memo) => memo.pages[5].blocks.find((b) => b.type === 'disclosure').items.join(' ');
+
+  it('states the terms the split was actually run on, not merely that one exists', () => {
+    // "A waterfall is applied" describes every promote structure equally well.
+    // A reader cannot check the LP and GP figures on the returns page against
+    // a sentence that names no pref, no hurdle and no promote.
+    const text = disclosure(buildMemo(healthy, { waterfall: structure }));
+    expect(text).toMatch(/8\.0% compounding preferred return/);
+    expect(text).toMatch(/pref paid before capital is returned/);
+    expect(text).toMatch(/GP catch-up at 100% to a 20% promote/);
+    expect(text).toMatch(/20% to a 15\.0% IRR, then 30% above the top hurdle/);
+  });
+
+  it('quotes the resolved terms, not the structure as supplied', () => {
+    // The supplied object is silent on the catch-up target and on the
+    // co-invest: resolveWaterfall fills the first from tier 1 and
+    // waterfallFromModel takes the second off the capital stack the model
+    // funded. Quoting the input would state terms the money did not move under.
+    const model = runModel(healthy);
+    const implied = model.financing.gpCoInvest / model.financing.equityCommitment;
+    expect(structure.catchUp.targetPromoteShare).toBeNull();
+    const text = disclosure(buildMemo(healthy, { waterfall: { ...structure, gpCoInvestShare: 0 } }));
+    expect(text).toMatch(/to a 20% promote/);
+    expect(text).toContain(`GP co-invest of ${(implied * 100).toFixed(0)}%`);
+  });
+
+  it('says the same thing about the promote as the returns page it discloses', () => {
+    // Two descriptions of one promote inside one document is how a memo ends up
+    // disclosing terms the numbers were not produced by.
+    const memo = buildMemo(healthy, { waterfall: structure });
+    const note = memo.pages[1].blocks.find((b) => b.title === 'Promote structure');
+    const tiers = '20% to a 15.0% IRR, then 30% above the top hurdle';
+    expect(note.text).toContain(tiers);
+    expect(disclosure(memo)).toContain(tiers);
+  });
+
+  it('keeps the pre-promote wording only for a deal with no structure at all', () => {
+    // Three states, and the middle one used to collapse into the last: a
+    // structure the engine refused printed "no promote structure has been
+    // applied to this deal", so nobody reading the memo had a reason to go and
+    // fix the structure that was sitting on it.
+    const none = disclosure(buildMemo({ ...healthy, waterfall: null }));
+    expect(none).toMatch(/no joint-venture waterfall or promote structure/i);
+
+    const refused = disclosure(buildMemo(healthy, { waterfall: { tiers: [{ irrHurdle: 0.15, gpShare: 0.2 }] } }));
+    expect(refused).not.toMatch(/no joint-venture waterfall or promote structure/i);
+    expect(refused).toMatch(/recorded on this deal but the waterfall could not be run/i);
+    expect(refused).toMatch(/open-ended/i);
+    expect(refused).toMatch(/before any promote/i);
+
+    const applied = disclosure(buildMemo(healthy, { waterfall: structure }));
+    expect(applied).not.toMatch(/no joint-venture waterfall or promote structure/i);
+    expect(applied).not.toMatch(/could not be run/i);
+  });
+
+  it('reads an explicit null on the deal as no structure, the same as an absent field', () => {
+    // Storage writes the null so the absence is a recorded fact rather than a
+    // missing key. Both must produce the identical pre-promote document.
+    expect(JSON.stringify(buildMemo({ ...healthy, waterfall: null }).pages))
+      .toBe(JSON.stringify(buildMemo(healthy).pages));
+  });
+});
+
+describe('a promote structure with no cash flow to split', () => {
+  // Reachable in three clicks and without editing anything by hand: App's
+  // blankDeal() sets purchasePrice and constructionCost to 0, so the model is
+  // degenerate and months is empty. Open the Waterfall screen, type one pref
+  // value (which writes the structure to the deal), export the memo.
+  const structure = { prefRate: 0.08, tiers: [{ irrHurdle: 0.15, gpShare: 0.2 }, { irrHurdle: null, gpShare: 0.35 }] };
+  const noFlows = { ...SAMPLE_DEALS[0], holdPeriod: 0, waterfall: structure };
+  const memo = buildMemo(noFlows);
+  const text = JSON.stringify(memo.pages);
+
+  it('does not declare a waterfall applied over a table of zeros', () => {
+    // The memo's only branch was whether waterfallFromModel THREW, and
+    // runWaterfall([]) does not throw. So this exact deal printed "The
+    // waterfall below splits the same cash flows between the limited partners
+    // and the sponsor" over GP promote $0, preferred return paid $0 and
+    // unreturned capital $0 — every one of them stated as a fact — and a
+    // disclosure page reading "A joint-venture waterfall is applied on the
+    // returns page". A $0 in a promote column reads as "the sponsor earned
+    // nothing", which is a claim about the deal, not about the absence of one.
+    expect(runModel(noFlows).months).toHaveLength(0);
+    expect(text).not.toMatch(/waterfall below splits the same cash flows/i);
+    expect(text).not.toMatch(/waterfall is applied on the returns page/i);
+    expect(text).not.toMatch(/GP promote/);
+    expect(text).not.toMatch(/Preferred return paid/);
+  });
+
+  it('says a structure is recorded, and why nothing split on it', () => {
+    // Not collapsed into "no structure set" either: the reader has to be given
+    // a reason to go and look at the structure sitting on the deal.
+    expect(text).not.toMatch(/No promote structure has been applied to this deal/);
+    expect(text).not.toMatch(/No joint-venture waterfall or promote structure has been applied/);
+    expect(text).toMatch(/no equity cash flow schedule to split/i);
+    expect(text).toMatch(/before promote/i);
+  });
+
+  it('does not state a co-invest share it does not know', () => {
+    // waterfallFromModel coerces the model's null gpCoInvest with `?? 0`, so
+    // the applied path printed "a GP co-invest of 0% ranking pari passu with
+    // the LP" for a deal whose configured share is 20%.
+    expect(text).not.toMatch(/co-invest of 0%/i);
+  });
+});
+
+describe('debt sizing states in the memo', () => {
+  const noteText = (memo) => JSON.stringify(memo.pages.flatMap((pg) => pg.blocks))
+    .match(/"title":"Debt sizing","text":"(.*?)"/)[1];
+
+  it('does not tell the committee a deal never asked when it did', () => {
+    // financing.sizingRequested exists precisely so the three states — never
+    // asked / asked and applied / asked and unhonoured — are distinguishable
+    // from the model alone. No consumer read it, so the memo printed the
+    // state-1 sentence, as fact, about a state-3 deal.
+    const asked = { ...SAMPLE_DEALS[0], holdPeriod: 0, sizeDebtToConstraints: true };
+    const model = runModel(asked);
+    expect(model.financing.sizingRequested).toBe(true);
+    expect(model.financing.sizing).toBeNull();
+    const text = noteText(buildMemo(asked));
+    expect(text).not.toMatch(/not a lender-sized amount\. It has not been tested/);
+    expect(text).toMatch(/requested but could not be run/i);
+  });
+
+  it('keeps the never-asked sentence for a deal that never asked', () => {
+    const text = noteText(buildMemo({ ...SAMPLE_DEALS[0], holdPeriod: 0 }));
+    expect(runModel({ ...SAMPLE_DEALS[0], holdPeriod: 0 }).financing.sizingRequested).toBe(false);
+    expect(text).toMatch(/residual of the underwritten equity share/i);
+  });
+
+  it('names the binding test when one actually sized the loan', () => {
+    const text = noteText(buildMemo({ ...SAMPLE_DEALS[0], sizeDebtToConstraints: true }));
+    expect(text).toMatch(/sized to the binding lender constraint/i);
+  });
+});
