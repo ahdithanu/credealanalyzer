@@ -139,8 +139,14 @@ const GOING_IN_UNAVAILABLE = {
  */
 function sizedEquityRow(deal, model) {
   const row = governedRow('downPayment', deal);
-  if (!model.financing.sizing || !(model.budget.baseProjectCost > 0)) return row;
-  const effective = (model.financing.equityCommitment / model.budget.baseProjectCost) * 100;
+  if (!model.financing.sizing || !(model.budget.totalProjectCost > 0)) return row;
+  // TOTAL project cost, the basis the engine strikes the equity share on and
+  // the one the loan-to-cost covenant measures. Inverting through BASE cost
+  // printed an equity share that did not complement the LTC on the facing page:
+  // Miami read 31.04% equity beside 70.00% loan to cost, and a committee adding
+  // those to 101.04% is entitled to conclude the model does not foot. The two
+  // are one number split in two, and they must be split on one denominator.
+  const effective = (model.financing.equityCommitment / model.budget.totalProjectCost) * 100;
   return [row[0], `${FIELD_PRESENTATION.downPayment.fmt(effective)} (sized)`, row[2]];
 }
 

@@ -33,7 +33,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { amortizingPayment } from './finance';
+import { amortizingPayment, DEFAULT_ASSUMPTIONS } from './finance';
 import { propertyTypes, constructionTypes } from './propertyTypes';
 import { resolveTaxRate } from './markets';
 import { firmDefault } from './firmDefaults';
@@ -297,6 +297,14 @@ export function screenProperty(candidate = {}, assumptions = {}) {
     1 - (vacancyRate ?? firmDefault('vacancyRate', candidate.propertyType)) / 100,
   );
   if (vacancyRate === null) defaulted.push('vacancyRate');
+  // The house standard for the type, never this candidate's own number — the
+  // anchor the fixed operating budget is struck on. Same fallback chain as
+  // finance.js, for the same reason: an unrecognised type falls through to the
+  // firm-wide figure, and what it must never fall back to is `vacancyRate`.
+  const houseOccupancy = Math.max(
+    0.01,
+    1 - (firmDefault('vacancyRate', candidate.propertyType) ?? 5) / 100,
+  );
 
   const operatingExpenseRatio = num('operatingExpenseRatio');
   const opexRatio = operatingExpenseRatio
@@ -314,6 +322,26 @@ export function screenProperty(candidate = {}, assumptions = {}) {
   const expenseRecoveryRate = num('expenseRecoveryRate');
   const recoveryRate = expenseRecoveryRate ?? typeCfg?.expenseRecoveryRate ?? 0;
   if (expenseRecoveryRate === null) defaulted.push('expenseRecoveryRate');
+
+  // Construction-period property tax on the land, the same line finance.js
+  // charges as `budget.landCarry`. The screen has everything it needs to
+  // compute it — the asking price IS the land basis, the market tax rate is
+  // resolved above, and constructionTypes carries the build duration — and
+  // until it did, it understated basis by exactly the carry and overstated
+  // yield by the carry's share of it. That bias is not random: it lands only on
+  // ground-up candidates, hardest on a heavy land basis against a light capital
+  // budget in a high-tax county, which is the one shape a Texas land screen
+  // sees constantly. The screening guard in screen.test.js was widened to
+  // tolerate it; charging the carry here is what lets that guard go back to
+  // requiring the screen never to out-yield the model.
+  //
+  // Gated on `hasInPlaceIncome` exactly as the engine gates it: a repositioning
+  // candidate pays the same bill through its renovation operating statement,
+  // and charging it here as well would double it.
+  const landCarry = constCfg && !constCfg.hasInPlaceIncome && askingPrice !== null && taxRate
+    ? askingPrice * (taxRate / 100) * ((constCfg.timeframe ?? 0) / 12)
+    : 0;
+  if (landCarry > 0 && estimatedBasis !== null) estimatedBasis += landCarry;
 
   // Tax is struck on what the asset will be assessed at once it is producing
   // the income being screened. An assessment values the property AS IT STANDS,
@@ -348,10 +376,29 @@ export function screenProperty(candidate = {}, assumptions = {}) {
   }
 
   const estimatedEGI = estimatedGPR === null ? null : estimatedGPR * occupancy;
-  // Opex is budgeted off the stabilised revenue base, as in finance.js: at
-  // stabilised occupancy that is exactly EGI, so the two agree at this point
-  // and the screen inherits none of the lease-up distortion.
-  const estimatedOpex = estimatedEGI === null ? null : estimatedEGI * (opexRatio / 100);
+  // Opex on the SAME anchor finance.js uses: the fixed share is struck on the
+  // firm's house vacancy for the property type, only the variable share moves
+  // with this candidate's own occupancy.
+  //
+  // Budgeting the whole line off EGI — GPR x this deal's occupancy — is the
+  // convention the engine abolished, and leaving it here did not merely make
+  // the two tiers disagree. It made them disagree in the FLATTERING direction
+  // on exactly the candidates a sourcing screen sees most: anything
+  // underwritten above its house vacancy got a proportionally smaller fixed
+  // operating budget, so the screen credited it with NOI the model would not
+  // underwrite. On a multifamily candidate at 20% vacancy the screen ranked the
+  // asset ABOVE the model by 20 bps of yield where it had ranked it 33 bps
+  // below — the sign flip that screen.test.js calls the dangerous failure,
+  // because a screen that ranks a deal better than the model is a screen that
+  // sends an analyst to underwrite something that was never there.
+  //
+  // At the house vacancy this returns exactly `estimatedEGI x opexRatio`, the
+  // figure the previous line produced, so a candidate at house standard is
+  // unmoved and the two tiers reconcile to the cent as they always did.
+  const vs = DEFAULT_ASSUMPTIONS.variableOpexShare;
+  const estimatedOpex = estimatedEGI === null
+    ? null
+    : estimatedGPR * (opexRatio / 100) * ((1 - vs) * houseOccupancy + vs * occupancy);
   const estimatedTax = taxBase === null ? null : taxBase * (taxRate / 100);
   const estimatedRecoveries = estimatedOpex === null || estimatedTax === null
     ? null
@@ -396,6 +443,7 @@ export function screenProperty(candidate = {}, assumptions = {}) {
       estimatedReserve,
       estimatedNOI,
       estimatedBasis,
+      landCarry,
       estimatedYieldOnCost,
       estimatedYieldBand: yieldBand(estimatedYieldOnCost, confidence.level),
       estimatedLoanAmount,

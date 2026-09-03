@@ -192,9 +192,17 @@ export function countSignChanges(cashFlows) {
  * a dozen callers depend on that shape, and widening it would have every one of
  * them silently comparing an object against a rate.
  *
- * @returns {{rate:number|null, signChanges:number|null, unique:boolean|null}}
- *   `unique` false means several rates zero the NPV and the one in `rate` was
- *   chosen by the bracket, not by the deal.
+ * @returns {{rate:number|null, signChanges:number|null, uniquenessGuaranteed:boolean|null}}
+ *   `uniquenessGuaranteed` is deliberately NOT called `unique`, because
+ *   Descartes' rule bounds the root count from ABOVE and says nothing from
+ *   below. One sign change PROVES at most one root, so `true` is a guarantee.
+ *   Two or more proves nothing either way: `false` means uniqueness was not
+ *   established, NOT that several rates exist. The distinction is not
+ *   pedantic — all three sample deals that trip this have exactly one real
+ *   IRR, and `irrWithDiagnostics([-1, 3, -9])` has none at all while still
+ *   counting two sign changes. A surface that reads `false` as "there are
+ *   several returns" would be stating a falsehood about most deals that
+ *   trip it.
  */
 export function irrWithDiagnostics(cashFlows, options = {}) {
   const signChanges = countSignChanges(cashFlows);
@@ -203,7 +211,7 @@ export function irrWithDiagnostics(cashFlows, options = {}) {
     signChanges,
     // Unknown stays unknown. `true` here would assert uniqueness about a series
     // this function could not even read.
-    unique: signChanges === null ? null : signChanges <= 1,
+    uniquenessGuaranteed: signChanges === null ? null : signChanges <= 1,
   };
 }
 
@@ -567,6 +575,23 @@ export function runModel(deal = {}, overrides = {}) {
   // construction cost overrunning; a tax bill on a known basis at a published
   // rate over a known duration has no overrun to price, and loading it would
   // charge 15% of a certainty.
+  //
+  // A KNOWN CONSEQUENCE, stated rather than discovered later: the soft-cost
+  // relief that came with this line DID carry contingency, so relieving 1.01
+  // points of soft cost also relieved 15% of that. A ground-up deal whose carry
+  // is exactly the portfolio-average 1.0102% of hard cost therefore comes out
+  // ~0.15% of hard cost CHEAPER than before, not neutral. That is structural,
+  // not an error in the derivation, and re-deriving the mean will not remove
+  // it. Removing it means deciding whether contingency should ride on the carry
+  // after all — which is the same question answered "no" above, and answering
+  // it "no" is what produces the discount.
+  //
+  // Also inherited: the operating period assesses tax on TOTAL project cost,
+  // which now contains this carry, so construction-period tax is taxed again
+  // each operating year (~$9.5K/yr on Katy) and reaches the exit through
+  // forward NOI. That follows from the pre-existing `assessed = totalProjectCost`
+  // convention rather than from this line, and the no-circularity claim above
+  // is scoped to the BUILD period, where the basis is land and is known.
   const baseProjectCost =
     land + hardCost + softCost + ffe + contingency + landCarry + financingCosts;
 
@@ -660,10 +685,12 @@ export function runModel(deal = {}, overrides = {}) {
    * variable share is measured against the same house occupancy the base is
    * struck on, which is what makes the variable cost per point of occupancy a
    * constant of the asset rather than of the vacancy forecast. At the house
-   * vacancy, running at stabilised occupancy, this returns exactly
+   * vacancy, running at stabilised occupancy, this returns
    * `atFullOccupancy x stabilizedOcc` — the figure the previous convention
-   * produced — which is the identity finance.test.js and sampleDeals.test.js
-   * assert deal by deal.
+   * produced — to within a unit in the last place. The reassociation from
+   * `x*s*((1-v)+v*o/s)` to `x*((1-v)*s+v*o)` moves a handful of monthly figures
+   * by ~1e-11 dollars; the tests assert it to six decimals, which is where the
+   * claim is honest. "Bit-for-bit" would not be.
    */
   const opexAt = (atFullOccupancy, occ) =>
     atFullOccupancy * ((1 - a.variableOpexShare) * houseOcc + a.variableOpexShare * occ);
@@ -833,28 +860,65 @@ export function runModel(deal = {}, overrides = {}) {
   //
   // It is a fixed point rather than a formula because capitalised interest
   // depends on the split (equity draws first, so more equity means a smaller
-  // balance accruing) and the split depends on capitalised interest. The
-  // feedback is negative and weak — about -1.5% per pass — so it converges to
-  // the cent within three or four. `converged` is not returned because the loop
-  // runs to a dollar tolerance well inside the reporting precision of every
-  // surface; if it ever does not, the LTC assertions in finance.test.js fail.
+  // balance accruing) and the split depends on capitalised interest. On any
+  // ordinary deal the feedback is negative and weak — about -1.5% per pass — so
+  // simple iteration lands on the cent within three or four.
+  //
+  // But the map is DECREASING, and a decreasing map can cycle instead of
+  // converge. It does: when the target exceeds base cost it clamps to
+  // all-equity, which capitalises no interest, which throws the target straight
+  // back down to `base x share`, which capitalises the full reserve again. That
+  // is an exact period-2 orbit, and plain iteration escapes it only by running
+  // out of passes — returning whichever end of the cycle the parity landed on,
+  // with no caller able to tell. A 40% rate over a 120-month build reported
+  // 94.6% LTC on a 30% equity cheque, and flipping the pass cap from 24 to 23
+  // reported 0.0% on the same deal. It needs extreme inputs, and it failed
+  // silently when it got them, which is the part that mattered.
+  //
+  // So: iterate while it is working, and fall back to BISECTION when it is not.
+  // The residual `f(e) - e` is strictly decreasing — `f` falls with `e` and
+  // `-e` obviously does — so it has exactly one root and a bracket cannot lie
+  // about it. Same reason `irr()` bisects rather than using Newton-Raphson: a
+  // guaranteed answer beats a fast one that can wander off.
   const EQUITY_BASIS_MAX_PASSES = 24;
   const EQUITY_BASIS_TOLERANCE = 1e-9; // dollars
+  const equityTargetFor = (drawResult) => Math.min(
+    baseProjectCost,
+    Math.max(0, (baseProjectCost + drawResult.capitalizedInterest) * equityShare),
+  );
+
   let equityCommitment = baseProjectCost * equityShare;
   let loanCommitment = baseProjectCost - equityCommitment;
   let draw = drawConstruction(equityCommitment, loanCommitment);
+  let equityBasisConverged = false;
   for (let pass = 0; pass < EQUITY_BASIS_MAX_PASSES; pass++) {
-    // Capped at base cost: the draw loop only ever funds the base budget, so an
-    // equity share that would exceed it simply funds all of it and borrows
-    // nothing — which then capitalises no interest, and the target agrees.
-    const next = Math.min(
-      baseProjectCost,
-      Math.max(0, (baseProjectCost + draw.capitalizedInterest) * equityShare),
-    );
-    if (Math.abs(next - equityCommitment) < EQUITY_BASIS_TOLERANCE) break;
+    const next = equityTargetFor(draw);
+    if (Math.abs(next - equityCommitment) < EQUITY_BASIS_TOLERANCE) {
+      equityBasisConverged = true;
+      break;
+    }
     equityCommitment = next;
     loanCommitment = baseProjectCost - equityCommitment;
     draw = drawConstruction(equityCommitment, loanCommitment);
+  }
+
+  if (!equityBasisConverged && baseProjectCost > 0) {
+    // g(0) >= 0 and g(base) = base x share - base < 0 for any share below 1, so
+    // the bracket is [0, base] by construction and needs no expansion.
+    let lo = 0;
+    let hi = baseProjectCost;
+    for (let i = 0; i < 80 && hi - lo > EQUITY_BASIS_TOLERANCE; i++) {
+      const mid = (lo + hi) / 2;
+      const midDraw = drawConstruction(mid, baseProjectCost - mid);
+      if (equityTargetFor(midDraw) - mid >= 0) lo = mid; else hi = mid;
+    }
+    equityCommitment = (lo + hi) / 2;
+    loanCommitment = baseProjectCost - equityCommitment;
+    draw = drawConstruction(equityCommitment, loanCommitment);
+    // A share of exactly 100% has no root strictly inside the bracket; anything
+    // else does, and 80 halvings of a project budget is far past the cent.
+    equityBasisConverged = Math.abs(equityTargetFor(draw) - equityCommitment)
+      < Math.max(EQUITY_BASIS_TOLERANCE, baseProjectCost * 1e-12);
   }
 
   const months = draw.months;
@@ -1151,22 +1215,33 @@ export function runModel(deal = {}, overrides = {}) {
       // "asked, and it could not be done".
       sizingRequested: false,
       sizing: null,   // populated only on the sizeDebtToConstraints path
+      // Whether the equity-basis solve actually landed. False means the figures
+      // above are the best available answer and not a solved one, and no
+      // surface may present the leverage as the deal's stated leverage. It was
+      // previously not reported at all, on the argument that a failure would
+      // trip the LTC tests — it does not, because the tests only cover deals
+      // where it succeeds.
+      equityBasisConverged,
     },
     exit: { forwardNoi, grossSalePrice, costOfSale, loanPayoff, netSaleProceeds, exitCapRate },
     returns: {
       leveredIRR, unleveredIRR, equityMultiple, peakEquity, profit,
       totalEquityInvested: outflows, totalDistributions: inflows,
-      // Whether each IRR above is THE return or merely A root. `unique: false`
-      // means the flow series changes sign more than once, so several rates
-      // zero its NPV and the solver returned the one its bracket caught. A
-      // surface must then present the figure as indicative — labelled, or shown
-      // beside the equity multiple and the sign-change count — and must not
-      // print it bare as "the deal return". `signChanges` is the evidence, so a
-      // surface can say how many times the flow turns over rather than only
-      // that it did.
+      // Whether each IRR above is PROVABLY the only rate that zeroes the NPV.
+      // `uniquenessGuaranteed: true` is a guarantee — one sign change, so
+      // Descartes' rule bounds the roots at one and the figure IS the return.
+      // `false` withdraws the guarantee; it does NOT claim several roots exist,
+      // and a surface that says "there are several returns" would be wrong on
+      // every sample deal that trips this (all three have exactly one real
+      // IRR — checked by scanning for a second root, not by assuming).
+      //
+      // So the honest reading of `false` is: this figure was not proved unique,
+      // and a reader who needs it to be should look at the flow series. That is
+      // worth surfacing quietly beside the number; it is not a warning, and a
+      // surface must not dress it as one. `signChanges` is the evidence.
       irrDiagnostics: {
-        levered: { signChanges: leveredSolve.signChanges, unique: leveredSolve.unique },
-        unlevered: { signChanges: unleveredSolve.signChanges, unique: unleveredSolve.unique },
+        levered: { signChanges: leveredSolve.signChanges, uniquenessGuaranteed: leveredSolve.uniquenessGuaranteed },
+        unlevered: { signChanges: unleveredSolve.signChanges, uniquenessGuaranteed: unleveredSolve.uniquenessGuaranteed },
       },
     },
     operating: {
@@ -1226,12 +1301,12 @@ function degenerateResult({
     leveredIRR: null, unleveredIRR: null, equityMultiple: null,
     peakEquity: null, profit: null, totalEquityInvested: null, totalDistributions: null,
     // No flow series was built, so whether its IRR would be unique is not a
-    // fact this path established. `unique: true` here would be an assertion
+    // fact this path established. `true` here would be an assertion
     // about a schedule that does not exist; the shape is kept so callers
-    // reading `irrDiagnostics.levered.unique` find null rather than crash.
+    // reading `irrDiagnostics.levered.uniquenessGuaranteed` find null, not a crash.
     irrDiagnostics: {
-      levered: { signChanges: null, unique: null },
-      unlevered: { signChanges: null, unique: null },
+      levered: { signChanges: null, uniquenessGuaranteed: null },
+      unlevered: { signChanges: null, uniquenessGuaranteed: null },
     },
   };
   return {

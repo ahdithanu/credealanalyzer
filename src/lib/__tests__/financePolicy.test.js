@@ -340,7 +340,7 @@ describe('irrWithDiagnostics', () => {
   it('calls a conventional series unique', () => {
     const d = irrWithDiagnostics([-1000, 300, 300, 300, 300]);
     expect(d.signChanges).toBe(1);
-    expect(d.unique).toBe(true);
+    expect(d.uniquenessGuaranteed).toBe(true);
     expect(d.rate).toBeCloseTo(irr([-1000, 300, 300, 300, 300]), 12);
   });
 
@@ -352,7 +352,7 @@ describe('irrWithDiagnostics', () => {
     const flows = [-100, 350, -200];
     const d = irrWithDiagnostics(flows);
     expect(d.signChanges).toBe(2);
-    expect(d.unique).toBe(false);
+    expect(d.uniquenessGuaranteed).toBe(false);
 
     // NPV is the quadratic 200x^2 - 350x + 100 in x = 1/(1+r), and both its
     // roots are positive, so both map to a rate above -100%.
@@ -376,7 +376,7 @@ describe('irrWithDiagnostics', () => {
     const d = irrWithDiagnostics(flows);
     expect(d.rate).toBeNull();
     expect(d.signChanges).toBe(2);
-    expect(d.unique).toBe(false);
+    expect(d.uniquenessGuaranteed).toBe(false);
     expect(npv(0.10, flows)).toBeCloseTo(0, 9);
     expect(npv(0.50, flows)).toBeCloseTo(0, 9);
   });
@@ -385,7 +385,7 @@ describe('irrWithDiagnostics', () => {
     const d = irrWithDiagnostics([-100, NaN, 50]);
     expect(d.rate).toBeNull();
     expect(d.signChanges).toBeNull();
-    expect(d.unique).toBeNull();
+    expect(d.uniquenessGuaranteed).toBeNull();
   });
 });
 
@@ -395,7 +395,7 @@ describe('the model carries the IRR uniqueness verdict', () => {
     for (const key of ['levered', 'unlevered']) {
       expect(r.returns.irrDiagnostics[key]).toEqual({
         signChanges: expect.any(Number),
-        unique: expect.any(Boolean),
+        uniquenessGuaranteed: expect.any(Boolean),
       });
     }
   });
@@ -409,7 +409,7 @@ describe('the model carries the IRR uniqueness verdict', () => {
     // caught. A surface must label those three; the other six may print the
     // figure bare.
     const notUnique = SAMPLE_DEALS
-      .filter((d) => runModel(d).returns.irrDiagnostics.levered.unique === false)
+      .filter((d) => runModel(d).returns.irrDiagnostics.levered.uniquenessGuaranteed === false)
       .map((d) => d.name);
     expect(notUnique.sort()).toEqual([
       'Alamo Ridge Apartments',
@@ -420,7 +420,7 @@ describe('the model carries the IRR uniqueness verdict', () => {
       const dg = runModel(deal).returns.irrDiagnostics;
       // The unlevered series is one sign change on every sample: the property
       // spends, then earns, and never calls capital back.
-      expect(dg.unlevered.unique).toBe(true);
+      expect(dg.unlevered.uniquenessGuaranteed).toBe(true);
       expect(dg.levered.signChanges).toBeGreaterThanOrEqual(1);
     }
   });
@@ -428,8 +428,8 @@ describe('the model carries the IRR uniqueness verdict', () => {
   it('reports uniqueness as unknown on a model that was never scheduled', () => {
     const r = runModel({ purchasePrice: 1_000_000, holdPeriod: 0 });
     expect(r.incomplete).toBe(true);
-    expect(r.returns.irrDiagnostics.levered).toEqual({ signChanges: null, unique: null });
-    expect(r.returns.irrDiagnostics.unlevered).toEqual({ signChanges: null, unique: null });
+    expect(r.returns.irrDiagnostics.levered).toEqual({ signChanges: null, uniquenessGuaranteed: null });
+    expect(r.returns.irrDiagnostics.unlevered).toEqual({ signChanges: null, uniquenessGuaranteed: null });
   });
 });
 
@@ -565,4 +565,41 @@ describe('GP co-invest share', () => {
       FIRM_DEFAULTS.global.gpCoInvestShare = original;
     }
   });
+});
+
+
+describe('the equity-basis solve is robust, not merely usually right', () => {
+  // The simple iteration this replaced entered an exact period-2 orbit here and
+  // exited on its pass cap, reporting 94.64% LTC on a 30% equity cheque — and
+  // reporting it silently, with no field a caller could check. Flipping the cap
+  // from 24 passes to 23 made the same deal report 0.00%. These two tests are
+  // the reason the fallback bisection exists; delete them and nothing in the
+  // suite covers the regime where iteration fails.
+  const pathological = {
+    propertyType: 'multifamily', constructionType: 'groundUp', location: 'Austin, TX',
+    purchasePrice: 5_000_000, constructionCost: 20_000_000, buildingSize: 100_000,
+    grossRevenue: 4_000_000, vacancyRate: 5, operatingExpenseRatio: 32,
+    downPayment: 30, loanTerm: 25, exitCapRate: 5.6, holdPeriod: 5,
+    interestRate: 40, constructionMonths: 120,
+  };
+
+  it('the equity solve converges on the oscillating deal', () => {
+  const m = runModel(pathological);
+  expect(m.financing.equityBasisConverged).toBe(true);
+  expect(m.financing.ltc * 100).toBeCloseTo(70, 2);
+});
+
+  it('a boundary sweep holds LTC at the stated leverage', () => {
+  const bad = [];
+  [8, 15, 20, 26, 30, 40].forEach((rate) => {
+    [12, 36, 72, 96, 120].forEach((C) => {
+      const m = runModel({ ...pathological, interestRate: rate, constructionMonths: C });
+      const ltc = m.financing.ltc * 100;
+      if (Math.abs(ltc - 70) > 0.01 || !m.financing.equityBasisConverged) {
+        bad.push([rate, C, +ltc.toFixed(4), m.financing.equityBasisConverged]);
+      }
+    });
+  });
+  expect(bad).toEqual([]);
+});
 });

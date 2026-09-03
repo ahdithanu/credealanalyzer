@@ -65,9 +65,15 @@
  * IRR UNIQUENESS: Tampa, Plano and Alamo have levered equity series with three
  * sign changes — in-place income distributes during renovation, the first
  * operating months run negative through lease-up, then the hold turns positive.
- * Several rates zero those NPVs. `returns.irrDiagnostics.levered.unique` is
- * false on those three, and a surface must not present their IRR as THE deal
- * return without saying so.
+ * `returns.irrDiagnostics.levered.uniquenessGuaranteed` is false on those three.
+ *
+ * That withdraws a guarantee; it does not assert several returns. Each of the
+ * three was checked for a second root — by locating every positive critical
+ * point of the NPV polynomial and evaluating there — and each has exactly ONE
+ * real IRR above -100%. Descartes' rule bounds the root count from above only,
+ * so three sign changes permit up to three roots and prove nothing about how
+ * many there are. An earlier draft of this note claimed "several rates zero
+ * those NPVs", which was false on all three deals it named.
  */
 export const SAMPLE_DEALS = [
   {

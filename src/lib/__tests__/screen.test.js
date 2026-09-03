@@ -1,4 +1,5 @@
-import { runModel } from '../finance';
+import { runModel, DEFAULT_ASSUMPTIONS } from '../finance';
+import { firmDefault } from '../firmDefaults';
 import { SAMPLE_DEALS } from '../sampleDeals';
 import {
   screenProperty, screenAll, screeningCandidateFromDeal, costLoadFactor,
@@ -52,7 +53,18 @@ describe('screening arithmetic', () => {
     const r = screenProperty(candidate);
     const e = r.estimates;
     expect(e.estimatedEGI).toBeCloseTo(e.estimatedGPR * 0.94, 6);
-    expect(e.estimatedOpex).toBeCloseTo(e.estimatedEGI * 0.20, 6);
+    // Opex is NOT EGI x ratio. The fixed share is struck on the house vacancy
+    // for the type, only the variable share moves with this candidate's own
+    // occupancy — the anchor finance.js uses. This candidate is underwritten at
+    // 6% vacancy against retail's 7% house standard, so it carries slightly
+    // MORE fixed cost than its own occupancy would imply. That is the point:
+    // the roof does not get cheaper because the feed reported a lower vacancy.
+    const vs = DEFAULT_ASSUMPTIONS.variableOpexShare;
+    const houseOcc = 1 - firmDefault('vacancyRate', 'retail') / 100;
+    expect(e.estimatedOpex).toBeCloseTo(
+      e.estimatedGPR * 0.20 * ((1 - vs) * houseOcc + vs * 0.94),
+      6,
+    );
     expect(e.estimatedTax).toBeCloseTo(e.estimatedBasis * 0.0123, 6);
     expect(e.estimatedNOI).toBeCloseTo(
       e.estimatedEGI + e.estimatedRecoveries - e.estimatedOpex - e.estimatedTax - e.estimatedReserve,
@@ -430,36 +442,19 @@ describe('directional agreement with runModel', () => {
   const SHORTLIST = 3;
 
   /**
-   * How far the screen is allowed to sit ABOVE the model, in bps of yield, on
-   * one deal — and the only mechanism that entitles it to sit above at all.
+   * The screen may never sit ABOVE the model. Not by a basis point.
    *
-   * finance.js charges construction-period property tax on the land as an
-   * explicit budget line (`budget.landCarry`): a jurisdiction rate on a land
-   * basis over a build duration, so Harris County at 2.81% and Miami-Dade at
-   * 1.02% carry different loads. screen.js does not charge it. Its basis is
-   * `askingPrice + capitalBudget x costLoad`, and a hard-cost multiple cannot
-   * express a rate on land over time — the 1.01 points of soft-cost relief that
-   * came with the change is a portfolio average, not this deal's carry.
-   *
-   * So the screen understates basis by exactly the carry, and overstates yield
-   * by the carry's share of it. That is a REAL screen bias, not slack: it is
-   * capped here at the carry the model actually charges, deal by deal, which
-   * leaves the original `<= 0` guard fully in force on every deal with no carry
-   * — the four repositioning deals, whose land tax reaches the model through
-   * the renovation P&L instead.
-   *
-   * WHAT screen.js STILL OWES: the same term, which it has everything to
-   * compute — `askingPrice`, the resolved market tax rate, and
-   * `constructionTypes[type].timeframe`. Until it does, ground-up candidates
-   * with a heavy land basis against a light capital budget screen better than
-   * they underwrite. Houston Express Tunnel is that shape and is the one deal
-   * in the portfolio the screen currently flatters.
+   * This guard was briefly widened to `<= landCarryHeadroomBps(model)` when
+   * finance.js began charging construction-period land tax as an explicit
+   * budget line and screen.js did not, which left the screen understating basis
+   * by exactly that carry on every ground-up candidate. Widening it was the
+   * wrong move and is recorded here so it is not made again: a screening tier
+   * that is allowed to out-yield the underwriting tier sends an analyst to
+   * model a deal that was never there, and the guard is the only thing standing
+   * between a sourcing funnel and that waste. screen.js now charges the carry
+   * itself, on the same gate and the same basis the engine uses, so the
+   * original bound is back in force on every deal — carry or no carry.
    */
-  const landCarryHeadroomBps = (model) => {
-    const carry = model.budget.landCarry;
-    if (!(carry > 0) || !(model.budget.totalProjectCost > 0)) return 0;
-    return (carry / model.budget.totalProjectCost) * model.operating.yieldOnCost * 10000;
-  };
 
   const rows = SAMPLE_DEALS.map((deal) => ({
     name: deal.name,
@@ -541,7 +536,7 @@ describe('directional agreement with runModel', () => {
       expect(modelYield).toBeGreaterThanOrEqual(band.low);
       expect(modelYield).toBeLessThanOrEqual(band.high);
       const d = (screened.estimates.estimatedYieldOnCost - modelYield) * 10000;
-      expect(d).toBeLessThanOrEqual(landCarryHeadroomBps(model));
+      expect(d).toBeLessThanOrEqual(0);
       diffs.push(d);
     }
     expect(Math.max(...diffs) - Math.min(...diffs)).toBeLessThan(SEPARATION_BPS);
@@ -580,7 +575,7 @@ describe('directional agreement with runModel', () => {
     // than the carry, is the dangerous failure and still fails here.
     for (const { deal, modelYield, screened } of rows) {
       const d = (screened.estimates.estimatedYieldOnCost - modelYield) * 10000;
-      expect(d).toBeLessThanOrEqual(landCarryHeadroomBps(runModel(deal)));
+      expect(d).toBeLessThanOrEqual(0);
     }
     const diffs = rows.map(({ modelYield, screened }) =>
       (screened.estimates.estimatedYieldOnCost - modelYield) * 10000);
