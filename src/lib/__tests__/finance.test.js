@@ -147,12 +147,18 @@ describe('runModel — structure', () => {
 
   it('breaks the budget into discrete sources & uses lines', () => {
     const hard = 1_200_000;
-    const soft = hard * 0.14;
+    const soft = hard * 0.1299;
     const contingency = (hard + soft) * 0.15;
+    // Land tax across the 18-month build, on the land basis at the Harris
+    // County rate. Contingency is struck on hard + soft only: a published rate
+    // on a known basis over a known duration has no overrun to price.
+    const landCarry = 500_000 * 0.0281 * 1.5;
     expect(r.budget.hardCost).toBeCloseTo(hard, 6);
     expect(r.budget.softCost).toBeCloseTo(soft, 6);
     expect(r.budget.contingency).toBeCloseTo(contingency, 6);
-    expect(r.budget.baseProjectCost).toBeCloseTo(500_000 + hard + soft + contingency, 6);
+    expect(r.budget.landCarry).toBeCloseTo(landCarry, 6);
+    expect(r.budget.baseProjectCost)
+      .toBeCloseTo(500_000 + hard + soft + contingency + landCarry, 6);
   });
 
   it('emits sources & uses lines that reconcile to total development cost', () => {
@@ -825,15 +831,18 @@ describe('going-in cap rate', () => {
   it('prices day-one income against day-one basis', () => {
     const basis = 20_000_000;                       // purchase price
     const inPlaceOcc = 2_800_000 / 3_200_000;       // in-place rent over potential rent
-    const stabilizedOcc = 1 - 0.06;
-    // Opex is budgeted off the STABILISED revenue base and then flexed by the
-    // variable share — the two moves the operating schedule makes, in that
-    // order. Not struck on in-place revenue: charging 35% of what a part-leased
+    // The fixed 70% is anchored to the HOUSE vacancy for multifamily — 5%, from
+    // FIRM_DEFAULTS — not to this deal's 6%. The deal's own vacancy assumption
+    // does not make the roof, the insurance or the payroll cheaper, and this
+    // deal is underwritten one point above house, so it carries slightly MORE
+    // fixed cost than the old convention charged it, not less.
+    const houseOcc = 1 - 0.05;
+    // Not struck on in-place revenue: charging 35% of what a part-leased
     // building collects makes a half-empty building look half as expensive to
     // run, which is the error the operating schedule is built to avoid. And not
     // grossed to 100% occupancy either: that charged the renovation months
     // 1/0.94 of the operating months' fixed cost for the same asset.
-    const opex = 3_200_000 * 0.35 * stabilizedOcc * (0.70 + 0.30 * (inPlaceOcc / stabilizedOcc));
+    const opex = 3_200_000 * 0.35 * (0.70 * houseOcc + 0.30 * inPlaceOcc);
     const tax = basis * 0.0281;                     // Houston effective rate
     const reserve = 300 * 180;                      // multifamily reserve per unit
     const noi = 2_800_000 - opex - tax - reserve;   // gross lease: no reimbursements
@@ -874,8 +883,8 @@ describe('going-in cap rate', () => {
     };
     const m = runModel(halfLeased);
     const occ = 500_000 / 4_200_000;
-    const stabilizedOcc = 1 - 0.08;
-    const opex = 4_200_000 * 0.30 * stabilizedOcc * (0.70 + 0.30 * (occ / stabilizedOcc));
+    const houseOcc = 1 - 0.10;    // house vacancy for office, not this deal's 8%
+    const opex = 4_200_000 * 0.30 * (0.70 * houseOcc + 0.30 * occ);
     const tax = 20_000_000 * 0.0281;
     const reserve = 0.25 * 150_000;
     const recoveries = (opex + tax) * m.assumptions.expenseRecoveryRate * occ;
@@ -1058,8 +1067,17 @@ describe('debt sized to constraints, wired into the model', () => {
   it('leaves the equity-percentage path untouched unless asked', () => {
     expect(runModel(geared)).toEqual(runModel({ ...geared, sizeDebtToConstraints: false }));
     expect(runModel(geared).financing.sizing).toBeNull();
-    expect(runModel(geared).financing.loanCommitment)
-      .toBeCloseTo(runModel(geared).budget.baseProjectCost * 0.92, 6);
+    // The equity share is struck on TOTAL project cost — the basis the LTC
+    // covenant measures — so the loan the equity percentage implies is the
+    // residual of base cost after that cheque, and the permanent balance it
+    // becomes is exactly 92% of total cost. Against base cost it would be 92%
+    // of base plus the whole interest reserve, which is above 92% of total by
+    // construction.
+    const r = runModel(geared);
+    expect(r.financing.equityCommitment).toBeCloseTo(r.budget.totalProjectCost * 0.08, 6);
+    expect(r.financing.loanCommitment)
+      .toBeCloseTo(r.budget.baseProjectCost - r.budget.totalProjectCost * 0.08, 6);
+    expect(r.financing.ltc).toBeCloseTo(0.92, 12);
   });
 
   it('resizes an over-levered deal down to the binding constraint', () => {
@@ -1213,8 +1231,15 @@ describe('debt sized to constraints, wired into the model', () => {
     // testing `model.incomplete` before printing the balance, which is a caller
     // doing the engine's job; the CSV and the memo had no such guard.
     const r = runModel({ purchasePrice: 1_000_000, holdPeriod: 0 });
-    expect(r.financing.loanCommitment).toBeGreaterThan(0);
-    for (const key of ['permanentLoanBalance', 'monthlyPayment', 'annualDebtService', 'ltc', 'gpCoInvest', 'lpEquity']) {
+    // The capital plan moved into the unknown column with the equity-basis fix.
+    // `downPayment` is now a share of TOTAL project cost — the basis the LTC
+    // covenant tests — and total cost contains an interest reserve that only a
+    // construction schedule produces. On this path there is no schedule, so
+    // there is no equity commitment either, and the loan is its residual.
+    // Reporting the pre-fix figure would publish a number the normal path no
+    // longer computes: two definitions of the same key.
+    for (const key of ['equityCommitment', 'loanCommitment', 'permanentLoanBalance',
+      'monthlyPayment', 'annualDebtService', 'ltc', 'gpCoInvest', 'lpEquity']) {
       expect(r.financing[key]).toBeNull();
     }
     for (const key of ['forwardNoi', 'grossSalePrice', 'costOfSale', 'loanPayoff', 'netSaleProceeds']) {

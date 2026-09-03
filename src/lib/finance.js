@@ -24,20 +24,21 @@
  *   - Debt can be sized to the binding lender constraint instead of falling out
  *     of an equity-percentage input (opt in with `deal.sizeDebtToConstraints`).
  *
- * KNOWN CONVENTION, deliberate and worth a reader's attention: a GROUND-UP deal
- * runs no operating statement during construction. It is charged no property
- * tax on the land it holds and no capital reserve, while an acquisition or TI
- * deal in renovation is charged both. The land carry on a ground-up — tax,
- * insurance, the rest — is budgeted inside the soft cost load, which
- * constructionTypes sets at 14% for ground-up against 6-8% for acquisition and
- * TI; charging tax here as well, with no offsetting relief, would double-count
- * it. The cost of the convention is real and is stated rather than hidden: an
- * $8m Houston land basis carried through an 18-month build is ~$337K of tax
- * that appears in soft cost as a percentage rather than as a line, so
- * yield-on-cost comparisons BETWEEN a ground-up and a repositioning deal in the
- * same portfolio are not struck on identical treatments. Modelling land carry
- * as an explicit line on both would be the right answer and is a policy change,
- * not a bug fix.
+ * CONVENTION, deliberate and worth a reader's attention: a GROUND-UP deal runs
+ * no operating statement during construction — no revenue, no capital reserve —
+ * but it DOES hold land from month 0, and land is taxed from month 0. That tax
+ * is charged here as its own budget line (`budget.landCarry`), on the land
+ * basis at the jurisdiction's own rate, drawn month by month across the build
+ * and therefore accruing interest into the reserve like any other draw. It used
+ * to be buried inside the ground-up soft cost load instead, at a flat 14% of
+ * hard cost against 6-8% for acquisition and TI. A flat percentage of HARD cost
+ * is not a rate on LAND over a DURATION: a Houston build at 2.81% and a Miami
+ * build at 1.02% carried the identical implied load, and their yields on cost
+ * are compared side by side on the Pipeline screen. constructionTypes.groundUp
+ * .softCostPct has been relieved of exactly the carry it was standing in for
+ * (14.00% -> 12.99%; the derivation is documented there), so the tax is charged
+ * once, not twice. A repositioning deal's land tax continues to arrive through
+ * its renovation-period operating statement, where it always did.
  */
 
 import { propertyTypes, constructionTypes } from './propertyTypes';
@@ -78,12 +79,12 @@ export function amortizingPayment(principal, annualRate, termYears) {
  * callers must render that as "n/a", never as 0.
  *
  * KNOWN LIMIT: it returns the FIRST bracketed root and does not detect that
- * others exist. The model's own equity series has one sign change and therefore
- * one root, but a series that alternates sign more than once — a mid-life
- * capital call, or a sponsor funding co-invest across several draws and taking
- * promote at sale — can admit several, and this returns one of them with no
- * warning. Callers building such series (see waterfall.js) should treat a
- * single IRR on them as indicative.
+ * others exist. A series that alternates sign more than once — a mid-life
+ * capital call, a refinance, a lease-up year that flips negative after
+ * distributions have started — can admit several, and this returns one of them.
+ * The solver is not the place to fix that; `countSignChanges` and
+ * `irrWithDiagnostics` below detect it, and runModel threads the verdict onto
+ * `returns.irrDiagnostics` so a surface can say so.
  *
  * @param {number[]} cashFlows Flow at each period; index 0 is time zero.
  * @returns {number|null} Rate per period.
@@ -149,6 +150,61 @@ export function irr(cashFlows, { tol = 1e-10, maxIter = 300 } = {}) {
   const residual = npv(root);
   if (!Number.isFinite(residual) || Math.abs(residual) > Math.max(tol, scale * 1e-6)) return null;
   return root;
+}
+
+/**
+ * Sign changes in a cash flow series, ignoring zero periods.
+ *
+ * NPV(r) is the polynomial `sum c_i * x^i` in x = 1/(1+r), and x > 0 for every
+ * r > -100%. Descartes' rule of signs bounds the number of positive roots of
+ * that polynomial by the number of sign changes in its coefficients, so a
+ * series with at most one sign change has at most one IRR above -100% and the
+ * rate `irr()` returns IS the deal return. Two or more and it is A rate that
+ * zeroes the NPV, not THE rate, and nothing may present it as the return
+ * without saying so.
+ *
+ * Zero periods are skipped rather than counted: a month with no flow is not a
+ * change of direction, and counting it would report multiple roots on every
+ * schedule with an idle month.
+ *
+ * @returns {number|null} null when the series is not a finite numeric array —
+ *   unknown, not zero, since zero sign changes is itself a meaningful answer
+ *   (no IRR exists at all).
+ */
+export function countSignChanges(cashFlows) {
+  if (!Array.isArray(cashFlows)) return null;
+  let changes = 0;
+  let prev = 0;
+  for (const c of cashFlows) {
+    if (!Number.isFinite(c)) return null;
+    const s = Math.sign(c);
+    if (s === 0) continue;
+    if (prev !== 0 && s !== prev) changes++;
+    prev = s;
+  }
+  return changes;
+}
+
+/**
+ * `irr()` plus the evidence for whether the answer is unique.
+ *
+ * Deliberately a separate export: irr() keeps returning number-or-null because
+ * a dozen callers depend on that shape, and widening it would have every one of
+ * them silently comparing an object against a rate.
+ *
+ * @returns {{rate:number|null, signChanges:number|null, unique:boolean|null}}
+ *   `unique` false means several rates zero the NPV and the one in `rate` was
+ *   chosen by the bracket, not by the deal.
+ */
+export function irrWithDiagnostics(cashFlows, options = {}) {
+  const signChanges = countSignChanges(cashFlows);
+  return {
+    rate: irr(cashFlows, options),
+    signChanges,
+    // Unknown stays unknown. `true` here would assert uniqueness about a series
+    // this function could not even read.
+    unique: signChanges === null ? null : signChanges <= 1,
+  };
 }
 
 /** Compound a per-period rate to an annual rate. */
@@ -372,7 +428,18 @@ function runSizedToConstraints(deal, overrides) {
       Math.max(sizing.loanAmount - model.budget.capitalizedInterest, 0),
       baseProjectCost,
     );
-    const next = runModel({ ...unsized, downPayment: (1 - commitment / baseProjectCost) * 100 }, overrides);
+    // `downPayment` is a share of TOTAL project cost, so inverting a target
+    // loan COMMITMENT through it has to divide by total cost, not by base cost.
+    // Dividing by base cost here asked for an equity cheque of the right size
+    // measured against the wrong denominator, and funded a commitment above the
+    // one the lender sized. Total cost is read off the current pass and the
+    // loop re-tests convergence against the permanent balance, so a stale
+    // reserve estimate costs a pass rather than accuracy.
+    const equityTarget = baseProjectCost - commitment;
+    const nextDownPayment = model.budget.totalProjectCost > 0
+      ? (equityTarget / model.budget.totalProjectCost) * 100
+      : 100;
+    const next = runModel({ ...unsized, downPayment: nextDownPayment }, overrides);
     converged = Math.abs(next.financing.permanentLoanBalance - sizing.loanAmount) < SIZING_TOLERANCE;
     model = next;
     if (converged) break;
@@ -450,15 +517,28 @@ export function runModel(deal = {}, overrides = {}) {
   // building that is still leasing up.
   const interestOnlyMonths = a.interestOnlyMonths ?? leaseUpMonths;
   const expenseRecoveryRate = deal.expenseRecoveryRate ?? typeCfg.expenseRecoveryRate ?? 0;
+  // Read from the firm's assumption set, not hardcoded here. 0.20 is the house
+  // standard and it lives in FIRM_DEFAULTS.global.gpCoInvestShare; written out
+  // as a literal in this file, raising the house standard changed the
+  // governance layer and left the model splitting the equity cheque the old
+  // way. Undefined stays undefined rather than falling back to a literal: with
+  // no house standard there is no split, and `financing.gpCoInvest` below
+  // reports that as unknown rather than as a confident 80/20.
+  const gpCoInvestShare = deal.gpCoInvestShare ?? firmDefault('gpCoInvestShare', propertyType);
   const capexReserveAnnual =
     typeCfg.revenueBasis === 'unit' && units > 0
       ? (typeCfg.capexReservePerUnit ?? 300) * units
       : (typeCfg.capexReservePerSF ?? 0.25) * buildingSize;
 
+  // Overridable per deal so a stabilised acquisition — bought and let, with no
+  // works — can be modelled without inventing a construction period for it.
+  const C = Math.max(0, Math.round(deal.constructionMonths ?? constCfg.timeframe ?? 0));
+  const N = Math.max(0, Math.round(holdPeriod * 12));
+
   // Budget ------------------------------------------------------------------
   // Line items mirror a standard sources & uses schedule so the UI can render
-  // it directly: contingency and the interest reserve are their own lines
-  // rather than being folded into hard cost.
+  // it directly: contingency, the land carry and the interest reserve are their
+  // own lines rather than being folded into hard cost.
   const land = Math.max(0, purchasePrice);
   const hardCost = Math.max(0, constructionCost);
   const softCost = hardCost * (deal.softCostPct ?? constCfg.softCostPct);
@@ -466,16 +546,32 @@ export function runModel(deal = {}, overrides = {}) {
   const contingencyRate = deal.contingencyRate ?? constCfg.contingency;
   const contingency = (hardCost + softCost + ffe) * contingencyRate;
   const financingCosts = Math.max(0, deal.financingCosts ?? 0);
-  const baseProjectCost = land + hardCost + softCost + ffe + contingency + financingCosts;
 
-  const equityCommitment = baseProjectCost * (downPayment / 100);
-  const loanCommitment = baseProjectCost - equityCommitment;
+  // Construction-period property tax on the land, for a deal that runs no
+  // operating statement to charge it through. A repositioning deal charges the
+  // same bill month by month inside `inPlaceTax` below, so charging it here too
+  // would double it — hence the gate on `hasInPlaceIncome`, which is the same
+  // gate that decides whether a renovation P&L exists at all.
+  //
+  // The basis is the ACQUISITION basis, not total project cost: the land is
+  // what is owned and assessed during the build, and total project cost is not
+  // known until the interest reserve — which this line feeds, by drawing on the
+  // loan — has finished accumulating. Striking it on total cost would be
+  // circular; striking it on land is safe because land is known at closing.
+  // Verified in finance.test.js: the carry equals land x rate x months and does
+  // not move when construction cost, contingency or the reserve move.
+  const landCarryMonths = constCfg.hasInPlaceIncome ? 0 : C;
+  const landCarry = land * (propertyTaxRate / 100) * (landCarryMonths / 12);
+
+  // Contingency does NOT cover the land carry. Contingency prices the risk of
+  // construction cost overrunning; a tax bill on a known basis at a published
+  // rate over a known duration has no overrun to price, and loading it would
+  // charge 15% of a certainty.
+  const baseProjectCost =
+    land + hardCost + softCost + ffe + contingency + landCarry + financingCosts;
+
+  const equityShare = downPayment / 100;
   const monthlyRate = interestRate / 100 / 12;
-
-  // Overridable per deal so a stabilised acquisition — bought and let, with no
-  // works — can be modelled without inventing a construction period for it.
-  const C = Math.max(0, Math.round(deal.constructionMonths ?? constCfg.timeframe ?? 0));
-  const N = Math.max(0, Math.round(holdPeriod * 12));
 
   // A non-finite input is UNKNOWN, and it has to land on the same incomplete
   // path a zero hold period does. NaN satisfies neither `N === 0` nor
@@ -490,7 +586,7 @@ export function runModel(deal = {}, overrides = {}) {
   // constructionCost, and every memo runs it.
   const finite = (x) => (Number.isFinite(x) ? x : null);
   const modellable = [
-    N, C, baseProjectCost, equityCommitment, loanCommitment,
+    N, C, baseProjectCost, equityShare, landCarry,
     grossRevenue, vacancyRate, operatingExpenseRatio,
     interestRate, loanTerm, exitCapRate, propertyTaxRate,
     // Derived, but they drive the schedule just as directly: a unit count of
@@ -508,13 +604,17 @@ export function runModel(deal = {}, overrides = {}) {
       // the NaN that produced it.
       lineItems: {
         land: finite(land), hardCost: finite(hardCost), softCost: finite(softCost),
-        ffe: finite(ffe), contingency: finite(contingency),
+        ffe: finite(ffe), contingency: finite(contingency), landCarry: finite(landCarry),
         contingencyRate: finite(contingencyRate), financingCosts: finite(financingCosts),
       },
       baseProjectCost: finite(baseProjectCost),
       propertyTaxRate: finite(propertyTaxRate),
-      equityCommitment: finite(equityCommitment),
-      loanCommitment: finite(loanCommitment),
+      // The equity commitment is a share of TOTAL project cost, and total
+      // project cost needs the schedule this path never ran. It is genuinely
+      // unknown here — unlike the budget lines above, which are inputs. The
+      // loan commitment is the residual of an unknown, so it is unknown too.
+      equityCommitment: null,
+      loanCommitment: null,
       interestRate: finite(interestRate),
       loanTerm: finite(loanTerm),
       // Pure pass-through inputs, echoed unchanged on the normal path and
@@ -528,6 +628,45 @@ export function runModel(deal = {}, overrides = {}) {
   }
 
   const stabilizedOcc = Math.max(0.01, 1 - vacancyRate / 100);
+
+  // The occupancy the FIXED operating budget is anchored to: the firm's house
+  // vacancy for the property type, never the deal's own.
+  //
+  // The fixed share of an operating budget is the roof, the insurance, the
+  // property manager and the payroll. None of them get cheaper because the
+  // analyst typed a higher vacancy number, and anchoring them to the deal's
+  // vacancy said they did — permanently, at every month of the hold. A building
+  // underwritten at 15% budgeted 15% less fixed cost than the identical
+  // building at 5%, and on the Sensitivity screen dragging vacancy up
+  // understated the NOI hit because 70% of the expense line obligingly fell
+  // with it. Anchoring to the house vacancy keeps `operatingExpenseRatio`
+  // meaning what the market quotes — a ratio struck on effective gross income
+  // at house-standard occupancy — leaves every deal sitting AT its house
+  // vacancy bit-for-bit unchanged, and lets a vacancy sensitivity bite the
+  // fixed cost the way reality does.
+  //
+  // An unrecognised property type has no house vacancy of its own; firmDefault
+  // falls back to the firm-wide figure, and the final `?? 5` covers a defaults
+  // set that has lost even that. What it must never fall back to is
+  // `vacancyRate`, which is the deal's own number and would reinstate the bug
+  // on exactly the deals that escape the type table.
+  const houseVacancyRate = firmDefault('vacancyRate', propertyType) ?? 5;
+  const houseOcc = Math.max(0.01, 1 - houseVacancyRate / 100);
+
+  /**
+   * Monthly operating expense at an occupancy, given the budget at 100%.
+   *
+   * Fixed share x house occupancy, plus variable share x ACTUAL occupancy. The
+   * variable share is measured against the same house occupancy the base is
+   * struck on, which is what makes the variable cost per point of occupancy a
+   * constant of the asset rather than of the vacancy forecast. At the house
+   * vacancy, running at stabilised occupancy, this returns exactly
+   * `atFullOccupancy x stabilizedOcc` — the figure the previous convention
+   * produced — which is the identity finance.test.js and sampleDeals.test.js
+   * assert deal by deal.
+   */
+  const opexAt = (atFullOccupancy, occ) =>
+    atFullOccupancy * ((1 - a.variableOpexShare) * houseOcc + a.variableOpexShare * occ);
 
   // In-place income during the renovation period, on the SAME definition of NOI
   // the operating schedule and the going-in cap rate use: net of operating
@@ -550,22 +689,19 @@ export function runModel(deal = {}, overrides = {}) {
   const inPlaceRevenue = hasInPlaceIncome ? Math.max(0, a.inPlaceRevenue) : 0;
   // In-place rent against gross potential rent is the occupancy already let.
   const inPlaceOcc = grossRevenue > 0 ? Math.min(1, inPlaceRevenue / grossRevenue) : 0;
-  // Struck on the STABILISED revenue base and flexed by the variable share, in
-  // the same two moves and the same order `operatingMonth` below uses. Not
-  // struck on in-place revenue: a part-let building is not proportionally
-  // cheaper to run.
+  // Through `opexAt`, the SAME function `operatingMonth` below uses. Not struck
+  // on in-place revenue: a part-let building is not proportionally cheaper to
+  // run.
   //
-  // The base is what makes the two definitions one definition. Grossing the
-  // fixed component to 100% occupancy here while the operating schedule budgets
-  // it at stabilised occupancy charges the renovation months 1/stabilizedOcc of
-  // the operating months' fixed cost — the same asset, the same rent roll and
-  // the same occupancy reading 3.7% apart, and 26 bps of it landing in the
-  // going-in cap rate this figure is exported as.
+  // Sharing the function is what makes the two definitions one definition, and
+  // it is why the house-vacancy anchor had to land on both at once. The
+  // renovation months once grossed the fixed component to 100% occupancy while
+  // the operating months budgeted it at stabilised occupancy — the same asset,
+  // rent roll and occupancy reading 3.7% apart on opex, 26 bps of it landing in
+  // the going-in cap rate this figure is exported as. Two conventions written
+  // out twice is how that happened; one function is how it stays fixed.
   const inPlaceOpex = hasInPlaceIncome
-    ? grossRevenue *
-      (operatingExpenseRatio / 100) *
-      stabilizedOcc *
-      ((1 - a.variableOpexShare) + a.variableOpexShare * (inPlaceOcc / stabilizedOcc))
+    ? opexAt(grossRevenue * (operatingExpenseRatio / 100), inPlaceOcc)
     : 0;
   const inPlaceTax = hasInPlaceIncome ? land * (propertyTaxRate / 100) : 0;
   // Vacant space has nobody to bill, so recoveries scale with what is let.
@@ -594,10 +730,13 @@ export function runModel(deal = {}, overrides = {}) {
     reserve: inPlaceReserve / 12,
   };
 
-  // Cost draw schedule: land at closing, hard+soft straight-line across the
-  // construction period. (An S-curve is more realistic; straight-line is the
-  // conservative, auditable default and is overridable via `drawSchedule`.)
-  const spreadCost = hardCost + softCost + ffe + contingency;
+  // Cost draw schedule: land at closing, everything else straight-line across
+  // the construction period. (An S-curve is more realistic; straight-line is
+  // the conservative, auditable default and is overridable via `drawSchedule`.)
+  // The land carry draws with the spread costs because the tax accrues month by
+  // month across the build — funding it at closing would charge interest on a
+  // bill that has not been rendered yet.
+  const spreadCost = hardCost + softCost + ffe + contingency + landCarry;
   const costAt = (i) => {
     // Land and financing costs are incurred at closing; everything else draws
     // straight-line across the construction period. With no construction
@@ -609,67 +748,119 @@ export function runModel(deal = {}, overrides = {}) {
   };
 
   // Construction period ------------------------------------------------------
-  const months = [];
-  let loanBalance = 0;
-  let loanDrawn = 0;
-  let equityDrawn = 0;
-  let capitalizedInterest = 0;
+  /**
+   * Draw the construction budget against one capital plan.
+   *
+   * Pure in its inputs, because the equity commitment it is handed is itself
+   * solved from what it returns (see the fixed point below).
+   */
+  const drawConstruction = (equityCommitment, loanCommitment) => {
+    const months = [];
+    let loanBalance = 0;
+    let loanDrawn = 0;
+    let equityDrawn = 0;
+    let capitalizedInterest = 0;
 
-  for (let i = 0; i < C; i++) {
-    const cost = costAt(i);
-    const interest = loanBalance * monthlyRate;
-    const netOpsCash = inPlaceMonthlyNoi - interest;
+    for (let i = 0; i < C; i++) {
+      const cost = costAt(i);
+      const interest = loanBalance * monthlyRate;
+      const netOpsCash = inPlaceMonthlyNoi - interest;
 
-    let need = cost;
-    let equityThisMonth = Math.min(need, Math.max(0, equityCommitment - equityDrawn));
-    need -= equityThisMonth;
-    const loanThisMonth = Math.min(need, Math.max(0, loanCommitment - loanDrawn));
-    need -= loanThisMonth;
-    if (need > 1e-9) equityThisMonth += need; // budget overrun falls to equity
+      let need = cost;
+      let equityThisMonth = Math.min(need, Math.max(0, equityCommitment - equityDrawn));
+      need -= equityThisMonth;
+      const loanThisMonth = Math.min(need, Math.max(0, loanCommitment - loanDrawn));
+      need -= loanThisMonth;
+      if (need > 1e-9) equityThisMonth += need; // budget overrun falls to equity
 
-    equityDrawn += equityThisMonth;
-    loanDrawn += loanThisMonth;
-    loanBalance += loanThisMonth;
+      equityDrawn += equityThisMonth;
+      loanDrawn += loanThisMonth;
+      loanBalance += loanThisMonth;
 
-    // Interest shortfall is capitalised (the interest reserve); surplus in-place
-    // income is distributed.
-    let distribution = 0;
-    if (netOpsCash < 0) {
-      loanBalance += -netOpsCash;
-      capitalizedInterest += -netOpsCash;
-    } else {
-      distribution = netOpsCash;
+      // Interest shortfall is capitalised (the interest reserve); surplus
+      // in-place income is distributed.
+      let distribution = 0;
+      if (netOpsCash < 0) {
+        loanBalance += -netOpsCash;
+        capitalizedInterest += -netOpsCash;
+      } else {
+        distribution = netOpsCash;
+      }
+
+      // Cash actually paid to the lender. A month whose NOI is negative pays
+      // nothing and capitalises all of it — which the loanBalance branch above
+      // already does correctly. Unclamped, `min(noi, interest)` reported a
+      // NEGATIVE debt service on any asset bought empty: the Cash Flow screen
+      // renders the line negated and printed +$18,408 of debt service as an
+      // inflow, and rollUpAnnual netted six such months against the six real
+      // ones, so the IC memo's year-one debt service read $12.1K against the
+      // $122.6K actually charged.
+      const debtService = Math.max(0, Math.min(inPlaceMonthlyNoi, interest));
+
+      months.push({
+        index: i,
+        phase: 'construction',
+        cost,
+        ...inPlaceLines,
+        noi: inPlaceMonthlyNoi,
+        interest,
+        debtService,
+        equityDraw: equityThisMonth,
+        loanBalance,
+        // NOI less the debt service actually paid, the same definition the
+        // operating months use, so the statement foots down the column. Any
+        // shortfall is funded by the loan (`capitalizedInterest` above), not by
+        // equity — which is why the equity flow below is the distribution, not
+        // this figure.
+        cashFlow: inPlaceMonthlyNoi - debtService,
+        equityFlow: distribution - equityThisMonth,
+      });
     }
+    return { months, loanBalance, loanDrawn, equityDrawn, capitalizedInterest };
+  };
 
-    // Cash actually paid to the lender. A month whose NOI is negative pays
-    // nothing and capitalises all of it — which the loanBalance branch above
-    // already does correctly. Unclamped, `min(noi, interest)` reported a
-    // NEGATIVE debt service on any asset bought empty: the Cash Flow screen
-    // renders the line negated and printed +$18,408 of debt service as an
-    // inflow, and rollUpAnnual netted six such months against the six real
-    // ones, so the IC memo's year-one debt service read $12.1K against the
-    // $122.6K actually charged.
-    const debtService = Math.max(0, Math.min(inPlaceMonthlyNoi, interest));
-
-    months.push({
-      index: i,
-      phase: 'construction',
-      cost,
-      ...inPlaceLines,
-      noi: inPlaceMonthlyNoi,
-      interest,
-      debtService,
-      equityDraw: equityThisMonth,
-      loanBalance,
-      // NOI less the debt service actually paid, the same definition the
-      // operating months use, so the statement foots down the column. Any
-      // shortfall is funded by the loan (`capitalizedInterest` above), not by
-      // equity — which is why the equity flow below is the distribution, not
-      // this figure.
-      cashFlow: inPlaceMonthlyNoi - debtService,
-      equityFlow: distribution - equityThisMonth,
-    });
+  // The equity commitment is `downPayment` of TOTAL project cost — the number
+  // the loan-to-cost covenant is tested against — not of base cost.
+  //
+  // Struck on base cost, the residual loan lands above the limit by the whole
+  // interest reserve: the permanent balance is 70% of base PLUS the capitalised
+  // interest, over a total that is base PLUS the same interest, which exceeds
+  // 70% by construction on every deal with a reserve. Houston Express Tunnel
+  // and Dallas Office TI both raised an LTC flag at 70.89% on a 30% equity
+  // cheque, and neither was over-levered — the equity was simply struck on a
+  // base that is not what the covenant measures. Now
+  // `permanentLoanBalance / totalProjectCost` is exactly `1 - downPayment/100`.
+  //
+  // It is a fixed point rather than a formula because capitalised interest
+  // depends on the split (equity draws first, so more equity means a smaller
+  // balance accruing) and the split depends on capitalised interest. The
+  // feedback is negative and weak — about -1.5% per pass — so it converges to
+  // the cent within three or four. `converged` is not returned because the loop
+  // runs to a dollar tolerance well inside the reporting precision of every
+  // surface; if it ever does not, the LTC assertions in finance.test.js fail.
+  const EQUITY_BASIS_MAX_PASSES = 24;
+  const EQUITY_BASIS_TOLERANCE = 1e-9; // dollars
+  let equityCommitment = baseProjectCost * equityShare;
+  let loanCommitment = baseProjectCost - equityCommitment;
+  let draw = drawConstruction(equityCommitment, loanCommitment);
+  for (let pass = 0; pass < EQUITY_BASIS_MAX_PASSES; pass++) {
+    // Capped at base cost: the draw loop only ever funds the base budget, so an
+    // equity share that would exceed it simply funds all of it and borrows
+    // nothing — which then capitalises no interest, and the target agrees.
+    const next = Math.min(
+      baseProjectCost,
+      Math.max(0, (baseProjectCost + draw.capitalizedInterest) * equityShare),
+    );
+    if (Math.abs(next - equityCommitment) < EQUITY_BASIS_TOLERANCE) break;
+    equityCommitment = next;
+    loanCommitment = baseProjectCost - equityCommitment;
+    draw = drawConstruction(equityCommitment, loanCommitment);
   }
+
+  const months = draw.months;
+  let loanDrawn = draw.loanDrawn;
+  let loanBalance = draw.loanBalance;
+  const capitalizedInterest = draw.capitalizedInterest;
 
   // Closing-only funding. The draw loop above runs `for (i = 0; i < C; i++)`,
   // so a project with no construction period never enters it: without this the
@@ -684,7 +875,6 @@ export function runModel(deal = {}, overrides = {}) {
     loanDrawn = Math.min(baseProjectCost - closingEquityDraw, Math.max(0, loanCommitment));
     const overrun = baseProjectCost - closingEquityDraw - loanDrawn;
     if (overrun > 1e-9) closingEquityDraw += overrun;
-    equityDrawn = closingEquityDraw;
     loanBalance = loanDrawn;
   }
 
@@ -703,13 +893,12 @@ export function runModel(deal = {}, overrides = {}) {
         : stabilizedOcc;
     const egi = gpr * occ;
 
-    // Opex is budgeted off the STABILISED revenue base, then flexed by the
-    // variable share. Applying the ratio to actual EGI would make a
+    // Opex is budgeted off the potential revenue base and then flexed by
+    // occupancy through `opexAt`. Applying the ratio to actual EGI would make a
     // half-empty building look half as expensive to run.
     const opexAtFullOccupancy =
       (grossRevenue / 12) * (operatingExpenseRatio / 100) * Math.pow(1 + a.expenseGrowth, yr);
-    const opexBase = opexAtFullOccupancy * stabilizedOcc;
-    const opex = opexBase * ((1 - a.variableOpexShare) + a.variableOpexShare * (occ / stabilizedOcc));
+    const opex = opexAt(opexAtFullOccupancy, occ);
 
     const assessed = totalProjectCost * Math.pow(1 + a.assessmentGrowth, yr);
     const tax = (assessed * (propertyTaxRate / 100)) / 12;
@@ -781,8 +970,16 @@ export function runModel(deal = {}, overrides = {}) {
   const unleveredFlows = months.map((m) => m.noi - m.cost);
   unleveredFlows[unleveredFlows.length - 1] += grossSalePrice - costOfSale;
 
-  const leveredIRR = annualize(irr(equityFlows));
-  const unleveredIRR = annualize(irr(unleveredFlows));
+  // Solved with the uniqueness evidence attached. A hold that flips negative
+  // after distributions have started — a lease-up month behind an interest-only
+  // period that has just ended, a mid-hold capital call — gives the series more
+  // than one sign change, and the rate below is then whichever root the bracket
+  // caught. It is still A rate that zeroes the NPV; it is not THE deal return,
+  // and `returns.irrDiagnostics` is where a surface reads that.
+  const leveredSolve = irrWithDiagnostics(equityFlows);
+  const unleveredSolve = irrWithDiagnostics(unleveredFlows);
+  const leveredIRR = annualize(leveredSolve.rate);
+  const unleveredIRR = annualize(unleveredSolve.rate);
 
   const inflows = equityFlows.filter((f) => f > 0).reduce((s, f) => s + f, 0);
   const outflows = -equityFlows.filter((f) => f < 0).reduce((s, f) => s + f, 0);
@@ -920,10 +1117,14 @@ export function runModel(deal = {}, overrides = {}) {
     annual: rollUpAnnual(months),
     assumptions: { ...a, leaseUpMonths, interestOnlyMonths, propertyTaxRate, capexReserveAnnual, expenseRecoveryRate },
     budget: {
-      land, hardCost, softCost, ffe, contingency, contingencyRate, financingCosts,
+      land, hardCost, softCost, ffe, contingency, contingencyRate, landCarry, financingCosts,
       baseProjectCost, capitalizedInterest, totalProjectCost,
       lines: [
         { key: 'land',           label: 'Land & acquisition',   amount: land },
+        // Next to the land it is charged on, and named, so a reader can see
+        // that a Harris County build at 2.81% carries a different load from a
+        // Miami-Dade one at 1.02% — which a flat soft cost percentage hid.
+        { key: 'landCarry',      label: 'Land carry (property tax)', amount: landCarry },
         { key: 'hardCost',       label: 'Hard cost',            amount: hardCost },
         { key: 'softCost',       label: 'Soft cost',            amount: softCost },
         { key: 'ffe',            label: 'FF&E and amenities',   amount: ffe },
@@ -942,8 +1143,8 @@ export function runModel(deal = {}, overrides = {}) {
       // both sides and reports 70.0% on a deal funded at 70.9%: the interest
       // reserve is borrowed money, and it is spent on the project.
       ltc: totalProjectCost > 0 ? permanentLoanBalance / totalProjectCost : null,
-      gpCoInvest: equityCommitment * (deal.gpCoInvestShare ?? 0.20),
-      lpEquity: equityCommitment * (1 - (deal.gpCoInvestShare ?? 0.20)),
+      gpCoInvest: Number.isFinite(gpCoInvestShare) ? equityCommitment * gpCoInvestShare : null,
+      lpEquity: Number.isFinite(gpCoInvestShare) ? equityCommitment * (1 - gpCoInvestShare) : null,
       // The deal did not ask for constrained sizing, so there is nothing to
       // honour and no sizing result. Both facts are stated: a caller must not
       // have to reach back to the deal record to tell "did not ask" from
@@ -952,7 +1153,22 @@ export function runModel(deal = {}, overrides = {}) {
       sizing: null,   // populated only on the sizeDebtToConstraints path
     },
     exit: { forwardNoi, grossSalePrice, costOfSale, loanPayoff, netSaleProceeds, exitCapRate },
-    returns: { leveredIRR, unleveredIRR, equityMultiple, peakEquity, profit, totalEquityInvested: outflows, totalDistributions: inflows },
+    returns: {
+      leveredIRR, unleveredIRR, equityMultiple, peakEquity, profit,
+      totalEquityInvested: outflows, totalDistributions: inflows,
+      // Whether each IRR above is THE return or merely A root. `unique: false`
+      // means the flow series changes sign more than once, so several rates
+      // zero its NPV and the solver returned the one its bracket caught. A
+      // surface must then present the figure as indicative — labelled, or shown
+      // beside the equity multiple and the sign-change count — and must not
+      // print it bare as "the deal return". `signChanges` is the evidence, so a
+      // surface can say how many times the flow turns over rather than only
+      // that it did.
+      irrDiagnostics: {
+        levered: { signChanges: leveredSolve.signChanges, unique: leveredSolve.unique },
+        unlevered: { signChanges: unleveredSolve.signChanges, unique: unleveredSolve.unique },
+      },
+    },
     operating: {
       stabilizedNOI, stabilizedDebtService, stabilizedOccupancy,
       grossPotentialRevenue, stabilizedOutgoings, breakEvenOccupancy,
@@ -1009,6 +1225,14 @@ function degenerateResult({
   const nulls = {
     leveredIRR: null, unleveredIRR: null, equityMultiple: null,
     peakEquity: null, profit: null, totalEquityInvested: null, totalDistributions: null,
+    // No flow series was built, so whether its IRR would be unique is not a
+    // fact this path established. `unique: true` here would be an assertion
+    // about a schedule that does not exist; the shape is kept so callers
+    // reading `irrDiagnostics.levered.unique` find null rather than crash.
+    irrDiagnostics: {
+      levered: { signChanges: null, unique: null },
+      unlevered: { signChanges: null, unique: null },
+    },
   };
   return {
     months: [], annual: [],
@@ -1035,8 +1259,7 @@ function degenerateResult({
       equityCommitment, loanCommitment,
       permanentLoanBalance: null, interestRate, loanTerm,
       monthlyPayment: null, annualDebtService: null, ltc: null,
-      // Both are shares of a known equity commitment, so a zero here would
-      // claim an unsplit cheque on a deal whose equity is stated above.
+      // Shares of an equity commitment that is itself unknown here.
       gpCoInvest: null, lpEquity: null,
       sizingRequested: false, sizing: null,
     },

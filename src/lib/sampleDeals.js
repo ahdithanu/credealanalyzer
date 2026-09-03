@@ -30,6 +30,44 @@
  * spread and a coverage breach, in the market carrying the heaviest supply
  * pipeline in the peer set. A sample portfolio of nine winners teaches an
  * analyst that the screen never fires.
+ *
+ * ─── WHAT THREE ENGINE CHANGES DID TO THESE NUMBERS ──────────────────────────
+ *
+ * FIXED OPERATING COST no longer flexes with the deal's own vacancy; it is
+ * anchored to the firm's house vacancy for the property type. A deal
+ * underwritten ABOVE its house vacancy therefore carries more fixed cost than
+ * it used to, and one below carries less. Houston (3% vs a 3% house), Austin
+ * and Katy (5% vs 5%) are unmoved on opex; Plano (12 vs 10), Alamo (7 vs 5) and
+ * Corpus (8 vs 7) lost NOI; Dallas (8 vs 10) and Miami (2 vs 3) gained it.
+ *
+ * ALAMO RIDGE consequently sits at a 97 bps development spread against the
+ * 100 bps floor and now raises a WARNING it did not raise before. It is
+ * documented here rather than tuned away, for the same reason Austin is: the
+ * deal genuinely got thinner when it stopped budgeting 1.4 points less fixed
+ * operating cost than the house standard, and moving its basis to recover three
+ * basis points would hide exactly the effect the change exists to show. Tampa
+ * (94 bps), Corpus (55) and Katy (46) already carry the same warning. Alamo's
+ * $121K/door basis still clears its DSCR, debt yield and leverage tests.
+ *
+ * GROUND-UP LAND CARRY is now an explicit budget line — a jurisdiction rate on
+ * the land basis over the build duration — with the ground-up soft cost load
+ * relieved of the flat percentage that was standing in for it. Houston and
+ * Corpus, land-heavy against a light hard cost in high-tax counties, got more
+ * expensive; Katy, Austin and Miami got cheaper. Nothing changed on the four
+ * repositioning deals, whose land tax always arrived through the renovation P&L.
+ *
+ * EQUITY is struck on TOTAL project cost, the basis the loan-to-cost covenant
+ * measures, so every deal now funds exactly its stated leverage. Houston and
+ * Dallas previously reported 70.89% LTC on a 30% cheque and raised a flag
+ * neither deserved: the equity was struck on base cost, leaving the residual
+ * loan above the limit by the whole interest reserve.
+ *
+ * IRR UNIQUENESS: Tampa, Plano and Alamo have levered equity series with three
+ * sign changes — in-place income distributes during renovation, the first
+ * operating months run negative through lease-up, then the hold turns positive.
+ * Several rates zero those NPVs. `returns.irrDiagnostics.levered.unique` is
+ * false on those three, and a surface must not present their IRR as THE deal
+ * return without saying so.
  */
 export const SAMPLE_DEALS = [
   {

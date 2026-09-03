@@ -86,8 +86,24 @@ export const constructionTypes = {
     name: 'Ground-Up Development',
     timeframe: 18,
     contingency: 0.15,
-    softCostPct: 0.14,
-    // Ground-up carries no in-place income during construction.
+    // 14.00% until the land carry became an explicit budget line. The old load
+    // was standing in for construction-period property tax, which finance.js
+    // now charges by name on the land basis at the jurisdiction's own rate.
+    // Leaving it at 14% would charge that tax twice.
+    //
+    // The relief is DERIVED, not chosen: across the five ground-up samples the
+    // explicit carry is 1.5131% / 0.5395% / 1.0674% / 0.5528% / 1.3781% of hard
+    // cost (Houston, Austin, Miami, Katy, Corpus), a mean of 1.0102%. The
+    // per-deal mean rather than the $656,670-over-$91.56m aggregate (0.7172%),
+    // because this is a per-deal percentage and the aggregate is dollar-weighted
+    // by Katy alone, which is two thirds of the hard cost in the set.
+    //
+    // 12.99% sits well clear of a floor for design (4-5%), permitting and
+    // impact fees (2-3%), legal, title and insurance (1-2%) and the developer
+    // fee (3-4%) — call that floor 10%. No arithmetic was forced.
+    softCostPct: 0.1299,
+    // Ground-up carries no in-place income during construction. It DOES carry
+    // property tax on the land from month 0; that is a budget line, not income.
     hasInPlaceIncome: false,
   },
   ti: {
