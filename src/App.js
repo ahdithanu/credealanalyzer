@@ -4,6 +4,10 @@ import { List, Calculator, Table, Split, TrendingUp, Map, FileText, Plus, Downlo
 import './ui/theme.css';
 import { calculateMetrics } from './lib/finance';
 import { loadDeals, saveDeals, storageStatus } from './lib/storage';
+import { dealStore } from './lib/dealStore';
+import { isMultiTenant } from './lib/api';
+import { useSession } from './lib/useSession';
+import SignIn from './screens/SignIn';
 import { promoteState } from './lib/waterfall';
 import { SAMPLE_DEALS } from './lib/sampleDeals';
 import { firmDefault } from './lib/firmDefaults';
@@ -86,8 +90,19 @@ export default function App() {
   const [view, setView] = useState('pipeline');
   const [selectedId, setSelectedId] = useState(null);
   const [posture, setPosture] = useState('form');
+  const session = useSession();
 
+  // ── Hydration ────────────────────────────────────────────────────────────
+  //
+  // Single-user mode is unchanged from before there was a server: read
+  // localStorage, seed the samples when nothing was ever saved. Multi-tenant
+  // mode waits for a session first and then reads that firm's deals.
+  //
+  // The sample portfolio is seeded ONLY in single-user mode. Dropping nine
+  // fictional deals into a client firm's audited pipeline would be a support
+  // call at best, and at worst a memo citing a deal that does not exist.
   useEffect(() => {
+    if (isMultiTenant()) return;
     const { deals: saved, error } = loadDeals();
     setStorageState({ available: storageStatus() === 'available', loadError: error, writeError: null });
     const initial = withMetrics(saved === null ? SAMPLE_DEALS : saved);
@@ -97,7 +112,35 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!isMultiTenant() || session.status !== 'authenticated') return;
+    let cancelled = false;
+    (async () => {
+      const { deals: rows, error } = await dealStore.list();
+      if (cancelled) return;
+      if (error === 'unauthenticated') { session.refresh(); return; }
+      setStorageState({
+        available: error !== 'unreachable',
+        loadError: error === 'unreachable' ? 'unreachable' : null,
+        writeError: null,
+      });
+      const initial = withMetrics(rows || []);
+      setDeals(initial);
+      setSelectedId(initial[0]?.id ?? null);
+      setHydrated(true);
+    })();
+    return () => { cancelled = true; };
+    // Keyed on the TENANT, not just the status: switching firms must reload the
+    // pipeline rather than leave the previous firm's deals on screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.status, session.tenant?.id]);
+
+  // Local mode writes the whole collection on every change, because that is
+  // what localStorage is: one key holding one document. Remote mode does NOT —
+  // it would overwrite a colleague's concurrent edit to a different deal with
+  // whatever this tab last read, and turn one changed field into N requests.
+  // There, writes happen per deal in the mutators below.
+  useEffect(() => {
+    if (isMultiTenant() || !hydrated) return;
     const { ok, error } = saveDeals(deals);
     // Cleared on a successful write. A user who met a full quota and then
     // deleted deals to make room must stop being told their work is not saved.
@@ -112,6 +155,13 @@ export default function App() {
   const updateDeal = (next) => {
     const withFresh = { ...next, metrics: calculateMetrics(next) };
     setDeals((cur) => cur.map((d) => (d.id === next.id ? withFresh : d)));
+    if (!isMultiTenant()) return;
+    // Optimistic: the edit is on screen already. A failed write reports itself
+    // through the same notice a failed local write does, rather than silently
+    // reverting the field under the analyst's cursor mid-keystroke.
+    dealStore.update(withFresh)
+      .then(() => setStorageState((st) => ({ ...st, writeError: null })))
+      .catch(() => setStorageState((st) => ({ ...st, writeError: 'write-failed' })));
   };
 
   const openDeal = (deal) => {
@@ -124,6 +174,19 @@ export default function App() {
     setDeals((cur) => [...cur, { ...d, metrics: calculateMetrics(d) }]);
     setSelectedId(d.id);
     setView('model');
+    if (!isMultiTenant()) return;
+    // The SERVER assigns the id. The local one is a placeholder that exists
+    // only so the row can render before the round trip returns; keeping it
+    // would mean every later update posted to an id the server never issued.
+    dealStore.create(d)
+      .then((saved) => {
+        setDeals((cur) => cur.map((x) => (x.id === d.id
+          ? { ...x, id: saved.id, updatedAt: saved.updatedAt }
+          : x)));
+        setSelectedId((cur) => (cur === d.id ? saved.id : cur));
+        setStorageState((st) => ({ ...st, writeError: null }));
+      })
+      .catch(() => setStorageState((st) => ({ ...st, writeError: 'write-failed' })));
   };
 
   const switchRole = (next) => {
@@ -148,6 +211,22 @@ export default function App() {
 
   const notices = statusNotices({ ...storageState, rejectedWaterfalls });
   const needsDeal = view !== 'pipeline' && !selected;
+
+  // ── The gate ─────────────────────────────────────────────────────────────
+  //
+  // Only in multi-tenant mode. In single-user mode there is nothing to sign
+  // into and no isolation to enforce, so a login screen there would be the
+  // theatre this whole build exists to replace.
+  //
+  // `loading` renders NOTHING rather than the sign-in screen. The answer needs
+  // a round trip, and showing the login page while /auth/me is in flight
+  // flashes a sign-in prompt at someone already signed in on every page load.
+  if (isMultiTenant() && session.status === 'loading') {
+    return <div className="app-booting" aria-busy="true" />;
+  }
+  if (isMultiTenant() && session.status !== 'authenticated') {
+    return <SignIn status={session.status} />;
+  }
 
   return (
     <div className="app">
@@ -179,6 +258,22 @@ export default function App() {
             <span className="chip">{selected.stage}</span>
           )}
           <span className="spacer" />
+          {session.status === 'authenticated' && (
+            // Which firm's data is on screen, stated at all times. On a shared
+            // machine, or for a consultant with access to two clients, "whose
+            // pipeline am I looking at" must never be a guess.
+            <span className="chip" title={`Signed in as ${session.user?.email}`}>
+              {session.tenant?.name}
+              <button
+                type="button"
+                className="linkish"
+                onClick={session.signOut}
+                style={{ marginLeft: '8px' }}
+              >
+                Sign out
+              </button>
+            </span>
+          )}
           {deals.length > 1 && view !== 'pipeline' && (
             <select
               className="inp"

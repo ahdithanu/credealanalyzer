@@ -472,3 +472,97 @@ select.inp { cursor: pointer; }
   .sheet:last-child { break-after: auto; page-break-after: auto; }
   @page { size: letter; margin: 0.4in; }
 }
+
+/* ─── Sign-in ───────────────────────────────────────────────────────────────
+   The one screen an unauthenticated visitor sees. Deliberately plain: it is a
+   handoff to the firm's identity provider, not a place to linger. */
+.app-booting { min-height: 100vh; background: var(--bg); }
+
+.signin-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 32px;
+}
+
+.signin-mark {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+  margin-bottom: 20px;
+}
+
+.signin-card h1 { font-size: 19px; font-weight: 600; margin: 0 0 6px; color: var(--fg); }
+.signin-sub { font-size: 12.5px; color: var(--fg-dim); margin: 0 0 24px; }
+
+.signin-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+}
+.signin-input:focus { outline: none; border-color: var(--accent); }
+.signin-input:disabled { opacity: 0.5; }
+
+.signin-hint { font-size: 11px; color: var(--fg-dim); margin: 6px 0 18px; }
+
+.signin-button {
+  width: 100%;
+  height: 36px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+.signin-button:hover:not(:disabled) { filter: brightness(1.08); }
+.signin-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* An alert, not a decoration: it carries the reason a sign-in was refused. */
+.signin-error {
+  background: rgba(220, 38, 38, 0.09);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--neg);
+  margin-bottom: 18px;
+}
+
+.signin-foot {
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin: 22px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.linkish {
+  background: none; border: none; padding: 0;
+  color: inherit; opacity: 0.7;
+  font: inherit; font-size: 10.5px;
+  cursor: pointer; text-decoration: underline;
+}
+.linkish:hover { opacity: 1; }

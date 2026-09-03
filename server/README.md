@@ -99,12 +99,29 @@ In AWS these come from Secrets Manager via the task definition. `app_user` and
 task authenticates with a short-lived IAM token, so no long-lived database
 credential exists in the image or the environment.
 
+## Two modes, chosen by one variable
+
+`REACT_APP_API_URL` decides how the SPA persists deals, and nothing else does:
+
+| unset | **single-user** — localStorage, no server, samples seeded. Exactly what the app did before this API existed, and still supported: a solo analyst, a laptop demo, the test suite. |
+| set | **multi-tenant** — this API, SSO required, deals isolated per firm. |
+
+There is no runtime toggle. A persistence layer that can change under a running
+app is a way to write into the wrong place, and in multi-tenant mode "the wrong
+place" means a browser rather than a client firm's audited store.
+
+The sample portfolio is seeded **only** in single-user mode. Nine fictional
+deals in a client firm's pipeline is a support call at best, and at worst a memo
+citing a deal that never existed.
+
 ## Not done yet
 
-- The SPA still reads and writes `localStorage`; it is not yet wired to this API.
-- No IaC in this commit — the AWS footprint (ECS Fargate, ALB + WAF, RDS,
-  CloudFront) is described above but not yet expressed as CDK.
-- No real IdP handshake has ever run. The sandbox this was built in has no
+- **No real IdP handshake has ever run.** The sandbox this was built in has no
   outbound network, so `workosBroker()` is written against the documented API
-  and exercised only through the stub. It needs a live connection test before
-  anyone relies on it.
+  and exercised only through the stub. A wrong parameter name or a changed
+  response shape would not have been caught. Treat a live connection test as a
+  hard gate before onboarding a firm.
+- **Nothing has been deployed.** `cdk synth` plus 16 assertions catches
+  misconfiguration, not what only appears against real AWS.
+- No deal-delete path in the UI, so `DELETE /api/deals/:id` is tested but
+  unreachable from the app.
