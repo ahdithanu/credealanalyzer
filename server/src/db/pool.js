@@ -2,6 +2,7 @@
 
 const { Pool } = require('pg');
 const config = require('../config');
+const { iamClientConfig } = require('./iamAuth');
 
 /**
  * The database handle, and the only sanctioned way to touch tenant data.
@@ -13,11 +14,41 @@ const config = require('../config');
  * ordinary users and a busy afternoon. Everything below exists to make that
  * impossible to write by accident.
  */
-const pool = new Pool({
+/**
+ * Two ways to reach Postgres, chosen by environment rather than by a flag:
+ *
+ *   In AWS, DB_HOST is set and each connection authenticates with a short-lived
+ *   IAM token — see db/iamAuth.js. No password exists to leak.
+ *   Locally and in tests, a connection string.
+ *
+ * Driven by the presence of DB_HOST so there is no mode to set wrongly: a task
+ * deployed without DB_HOST fails to reach the database instead of silently
+ * falling back to a credential it does not have.
+ */
+function poolConfig({ user, connectionString, max }) {
+  const iam = iamClientConfig({
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    database: process.env.DB_NAME,
+    user,
+    region: process.env.AWS_REGION,
+  });
+  if (iam) return { ...iam, max };
+  // The connection string is passed in by the CALLER rather than inferred from
+  // the role name. Inferring it — comparing `user` against DB_AUTH_USER —
+  // silently resolved both pools to the app credential whenever that variable
+  // was unset, which is every local run and every test: the auth pool then
+  // connected as app_user, which has no grant on `sessions`, and every
+  // authenticated request failed with "permission denied for table sessions".
+  // A wrong role is not a thing to derive; it is a thing to state.
+  return { connectionString, ssl: config.db.ssl, max };
+}
+
+const pool = new Pool(poolConfig({
+  user: process.env.DB_APP_USER || 'app_user',
   connectionString: config.db.connectionString,
-  ssl: config.db.ssl,
   max: config.db.max,
-});
+}));
 
 // A runaway query holds a pooled connection and, under load, starves every
 // other request. Bounded per session rather than globally so migrations (which
@@ -97,11 +128,11 @@ function unscoped() {
  * tenant-data path cannot forge a session, and a flaw in the authentication
  * path cannot read a pipeline. See migrations/002_auth_role.sql.
  */
-const authPool = new Pool({
+const authPool = new Pool(poolConfig({
+  user: process.env.DB_AUTH_USER || 'auth_user',
   connectionString: config.db.authConnectionString,
-  ssl: config.db.ssl,
   max: Math.max(2, Math.floor(config.db.max / 2)),
-});
+}));
 authPool.on('connect', (client) => {
   client.query(`SET statement_timeout = ${config.db.statementTimeoutMs}`).catch(() => {});
 });

@@ -15,5 +15,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/rds-signer": "^3.700.0"
   }
 }
