@@ -58,7 +58,23 @@ module.exports = { migrate };
 if (require.main === module) {
   const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
   if (!url) { console.error('set DATABASE_MIGRATION_URL'); process.exit(1); }
-  migrate(url).then((applied) => {
-    console.log(applied.length ? `applied ${applied.length}` : 'up to date');
-  }).catch((e) => { console.error(e.message); process.exit(1); });
+
+  // Retry briefly. The compose healthcheck covers the ordinary case, but a
+  // cold volume's first-boot initialisation can still outlast it, and the
+  // failure reads as a configuration error rather than a race.
+  const attempt = async (left) => {
+    try {
+      const applied = await migrate(url);
+      console.log(applied.length ? `applied ${applied.length}` : 'up to date');
+    } catch (e) {
+      if (left > 0 && /ECONNREFUSED|starting up|not yet accepting/i.test(e.message)) {
+        await new Promise((r) => setTimeout(r, 2000));
+        return attempt(left - 1);
+      }
+      console.error(e.message);
+      process.exit(1);
+    }
+    return undefined;
+  };
+  attempt(15);
 }

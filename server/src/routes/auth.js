@@ -5,6 +5,7 @@ const config = require('../config');
 const login = require('../auth/login');
 const session = require('../auth/session');
 const { requireSession } = require('../middleware/requireSession');
+const { broker } = require('../auth/broker');
 
 /**
  * Authentication routes.
@@ -74,6 +75,77 @@ function authRoutes() {
       res.status(204).end();
     } catch (err) { next(err); }
   });
+
+  /**
+   * The fake identity provider's page. LOCAL DEMOS ONLY.
+   *
+   * Registered only when the stub provider is active, and config.js refuses to
+   * boot in production with the stub selected — so this route cannot exist on a
+   * real deployment. Both guards are deliberate: this page mints an identity
+   * from a form field, which is a total authentication bypass, and one guard is
+   * one mistake away from shipping it.
+   *
+   * It exists because the stub used to redirect to an unresolvable host, which
+   * is right for unit tests and meant nobody could click through a login to see
+   * the product work.
+   */
+  if (config.sso.provider === 'stub' && !config.isProd) {
+    r.get('/stub', (req, res) => {
+      const { state, code, organization } = req.query;
+      const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.send(`<!doctype html><meta charset="utf-8">
+<title>Demo identity provider</title>
+<style>
+ body{background:#0f111c;color:#e8e9f0;font:14px/1.5 -apple-system,system-ui,sans-serif;
+      display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+ .c{background:#171a28;border:1px solid #252938;border-radius:10px;padding:30px;width:360px}
+ h1{font-size:16px;margin:0 0 4px} p{color:#8b8fa3;font-size:12px;margin:0 0 18px}
+ label{font-size:11px;color:#8b8fa3;display:block;margin-bottom:5px}
+ input{width:100%;height:32px;background:#0f111c;border:1px solid #252938;border-radius:5px;
+       color:#e8e9f0;padding:0 9px;font:inherit;font-size:13px;box-sizing:border-box}
+ button{width:100%;height:34px;margin-top:16px;background:#9184d9;border:0;border-radius:5px;
+        color:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+ .w{margin-top:18px;padding-top:14px;border-top:1px solid #252938;font-size:11px;color:#8b8fa3}
+</style>
+<div class="c">
+ <h1>Demo identity provider</h1>
+ <p>Stands in for Okta, Entra ID or Google Workspace.</p>
+ <form method="POST" action="/auth/stub">
+  <input type="hidden" name="state" value="${esc(state)}">
+  <input type="hidden" name="code" value="${esc(code)}">
+  <label for="e">Email address</label>
+  <input id="e" name="email" value="analyst@firmx.com" autocomplete="off" spellcheck="false">
+  <label for="o" style="margin-top:12px">Organization</label>
+  <input id="o" name="organization" value="${esc(organization || 'org_firm_x')}" spellcheck="false">
+  <button type="submit">Sign in</button>
+ </form>
+ <div class="w">This page mints an identity from a form field. It is registered
+ only when SSO_PROVIDER=stub and never in production.</div>
+</div>`);
+    });
+
+    r.post('/stub', express.urlencoded({ extended: false }), (req, res) => {
+      const { state, code, email, organization } = req.body;
+      // Stage what the fake IdP asserts, then hand the browser back to the real
+      // callback — which runs every check a live provider's callback runs:
+      // single-use state, provisioned tenant, verified domain.
+      broker().__setProfile(code, {
+        organizationId: organization,
+        email,
+        emailVerified: true,
+        externalId: `stub|${email}`,
+        name: email.split('@')[0],
+        connectionId: 'conn_stub',
+        idpName: 'DemoIdP',
+      });
+      const u = new URL('/auth/callback', config.sso.stubBase);
+      u.searchParams.set('state', state);
+      u.searchParams.set('code', code);
+      res.redirect(302, u.toString());
+    });
+  }
 
   return r;
 }

@@ -104,7 +104,11 @@ function stubBroker() {
       // against it. A real IdP holds this server-side; so does this.
       const code = `stub_${crypto.randomBytes(8).toString('hex')}`;
       codes.set(code, { organizationId, state });
-      const u = new URL('http://stub-idp.invalid/authorize');
+      // Points at this server's own fake IdP page, so the whole flow is
+      // CLICKABLE in a browser for a local demo. It used to point at
+      // stub-idp.invalid, which is unresolvable by design — correct for unit
+      // tests, and it meant nobody could actually sign in to look at the thing.
+      const u = new URL('/auth/stub', config.sso.stubBase || 'http://localhost:8080');
       u.searchParams.set('state', state);
       u.searchParams.set('code', code);
       if (organizationId) u.searchParams.set('organization', organizationId);

@@ -81,6 +81,9 @@ const config = {
         || 'http://localhost:8080/auth/callback',
       apiBase: process.env.WORKOS_API_BASE || 'https://api.workos.com',
     },
+    // Where the fake IdP page lives, for local demos only. Never read when the
+    // provider is workos.
+    stubBase: process.env.STUB_IDP_BASE || 'http://localhost:8080',
     // How long a login handshake may stay open. Long enough for a slow IdP
     // page, short enough that a leaked state parameter is stale.
     stateTtlMs: Number(process.env.SSO_STATE_TTL_MS || 10 * 60 * 1000),

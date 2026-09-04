@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node src/index.js",
     "migrate": "node src/db/migrate.js",
-    "test": "node --test --test-concurrency=1 test/*.test.js"
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "seed": "node src/admin/seedDemo.js",
+    "tenants": "node src/admin/tenants.js"
   },
   "dependencies": {
     "express": "^4.21.2",
