@@ -116,13 +116,37 @@ aws s3 sync build/ s3://<SpaBucketName from outputs>/ --delete
 aws cloudfront create-invalidation --distribution-id <id> --paths '/*'
 ```
 
-### Before you point a real firm at it
+### Before you point a real firm at it: `npm run sso:check`
 
-**No live identity-provider handshake has ever run.** `workosBroker()` is written
-against the documented API and exercised only through the stub, so a wrong
-parameter name or a changed response shape would not have been caught. Run one
-real login against your own directory first. This is the last genuinely
-unverified thing in the system.
+The SSO path is tested against a stub and a fake transport, which proves our
+code is self-consistent and proves nothing about WorkOS. This turns "discovered
+by a client firm's first login" into one command:
+
+```sh
+cd server
+SSO_PROVIDER=workos WORKOS_API_KEY=sk_… WORKOS_CLIENT_ID=client_…   npm run sso:check
+```
+
+Without a code it verifies what needs no browser: the credentials are accepted,
+the endpoint is where we think it is, and what shape their errors take. It
+**requires positive evidence** — a JSON error naming the code as the problem,
+which only WorkOS produces. A proxy or WAF answering with HTML is reported as
+"this did not come from WorkOS", not as a pass. (An earlier version got that
+wrong and printed PREFLIGHT PASSED from behind an egress proxy it never got
+through. A preflight that passes when the network is blocked is worse than
+none, because someone acts on it.)
+
+To check the response **shape** — the thing that would otherwise surface as a
+misleading "your identity provider did not identify your organization" — capture
+a real authorization code and pass it:
+
+```sh
+npm run sso:check -- --code=<code from the callback of a real sign-in>
+```
+
+That does the full exchange and prints the parsed profile field by field, so a
+renamed field is visible immediately. Codes are single-use and expire in
+minutes; run it straight away.
 
 ### Cost
 

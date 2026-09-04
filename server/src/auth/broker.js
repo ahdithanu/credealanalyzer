@@ -25,6 +25,66 @@ const config = require('../config');
 
 // ─── WorkOS ──────────────────────────────────────────────────────────────────
 
+/**
+ * Turn a WorkOS token response into the profile the rest of the system uses.
+ *
+ * Separated from the request so it can be tested without a network, and
+ * VALIDATED rather than destructured optimistically.
+ *
+ * The failure this prevents is a bad one. `body.profile || {}` leaves every
+ * field undefined when the envelope is not what we expect — a changed response
+ * shape, an error returned with a 200, a different API version — and the caller
+ * then throws `no_org`, which reaches the user as "your identity provider did
+ * not identify your organization". Someone spends a day in their Okta
+ * configuration for a fault that is entirely ours. A parser that cannot read
+ * its input must say so in those words.
+ *
+ * TARGETS the WorkOS SSO API (`POST /sso/token`), whose success body is
+ * `{ access_token, profile: { id, connection_id, organization_id, email, ... } }`.
+ * The newer User Management API returns a different envelope; this does not
+ * attempt to read both, because guessing at a shape nobody here has observed is
+ * how you get a parser that is confidently wrong about two APIs instead of one.
+ */
+function parseProfile(body) {
+  const p = body && typeof body === 'object' ? body.profile : null;
+  if (!p || typeof p !== 'object') {
+    // Key names only, never values: this body carries an access token and the
+    // user's personal details, and this message reaches the logs.
+    const keys = body && typeof body === 'object' ? Object.keys(body).join(', ') : typeof body;
+    throw Object.assign(
+      new Error(`sso token response has no \`profile\` object (top-level keys: ${keys})`),
+      { status: 502, code: 'sso_shape' },
+    );
+  }
+
+  // The three the system cannot proceed without: the organization decides the
+  // TENANT, and the email decides admission via the verified-domain check.
+  const missing = ['organization_id', 'email'].filter((k) => !p[k]);
+  if (missing.length) {
+    throw Object.assign(
+      new Error(
+        `sso profile is missing ${missing.join(' and ')} `
+        + `(profile keys: ${Object.keys(p).join(', ')})`,
+      ),
+      { status: 502, code: 'sso_shape' },
+    );
+  }
+
+  return {
+    organizationId: p.organization_id,
+    email: p.email,
+    // WorkOS asserts an email only after the identity provider has, so its
+    // presence in a COMPLETED SSO profile is the verification. Stated as an
+    // explicit field so the caller's domain check reads identically against any
+    // broker, including one where verification is a separate claim.
+    emailVerified: Boolean(p.email),
+    externalId: p.idp_id || p.id || null,
+    name: [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
+    connectionId: p.connection_id || null,
+    idpName: p.connection_type || null,
+  };
+}
+
 function workosBroker() {
   const { apiKey, clientId, redirectUri, apiBase } = config.sso.workos;
 
@@ -58,23 +118,12 @@ function workosBroker() {
         }),
       });
       if (!res.ok) {
-        // The broker's body can echo the code. Never logged or surfaced.
-        throw Object.assign(new Error('sso token exchange failed'), { status: 502 });
+        // The broker's body can echo the authorization code. Never logged or
+        // surfaced — the status is enough to act on.
+        throw Object.assign(new Error(`sso token exchange failed (${res.status})`), { status: 502 });
       }
       const body = await res.json();
-      const p = body.profile || {};
-      return {
-        organizationId: p.organization_id,
-        email: p.email,
-        // WorkOS asserts an email only after the IdP has, so its presence in a
-        // completed SSO profile IS the verification. Kept as an explicit field
-        // so the caller's domain check reads the same against any broker.
-        emailVerified: Boolean(p.email),
-        externalId: p.idp_id || p.id,
-        name: [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
-        connectionId: p.connection_id,
-        idpName: p.connection_type || null,
-      };
+      return parseProfile(body);
     },
   };
 }
@@ -143,4 +192,4 @@ function broker() {
 /** Tests only, so each file starts from a clean broker. */
 function __reset() { instance = null; }
 
-module.exports = { broker, __reset, workosBroker, stubBroker };
+module.exports = { broker, __reset, workosBroker, stubBroker, parseProfile };

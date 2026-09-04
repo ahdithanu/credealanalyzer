@@ -129,10 +129,12 @@ signed in simultaneously with disjoint pipelines, cross-tenant reads returning
 
 Not yet verified:
 
-- **No live identity-provider handshake.** The WorkOS client is written against
-  the documented API and exercised only through a stub. A wrong parameter name
-  would not have been caught. This is the one thing to test before a real firm
-  uses it.
+- **No live identity-provider handshake.** The WorkOS client has never spoken to
+  WorkOS. It is narrowed rather than open-ended: the exact request is pinned by
+  contract tests, an unexpected response shape now fails with a diagnostic
+  naming the missing field instead of surfacing as "your identity provider did
+  not identify your organization", and `npm run sso:check` makes the real calls
+  in one command. Run it before a real firm uses this.
 - **Never deployed to AWS.** `cdk synth` plus 16 assertions catches
   misconfiguration, not what only appears against live infrastructure.
 - The market-data pipeline has made **zero network calls** — it was built in a
