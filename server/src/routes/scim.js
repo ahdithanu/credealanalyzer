@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const provisioning = require('../auth/provisioning');
+const { securityEvent, KIND } = require('../obs/securityLog');
 const { withTenant } = require('../db/pool');
 
 /**
@@ -266,14 +267,11 @@ function requireScimToken() {
         // id half is recorded because it is the part an operator may have
         // pasted somewhere and is what identifies WHICH credential is being
         // probed; the secret half never is.
-        console.error(JSON.stringify({
-          level: 'warn',
-          msg: 'scim.auth_failed',
+        securityEvent(KIND.SCIM_AUTH_FAILED, {
           tokenId: tokenIdFromHeader(req) || null,
           ip,
           path: req.originalUrl,
-          at: new Date().toISOString(),
-        }));
+        });
 
         // ONE answer for every cause: unknown token, wrong secret, revoked,
         // expired, suspended tenant. Anything finer is an oracle — and since a

@@ -19,6 +19,8 @@
  * becomes the ONLY limiter in production, replace it.
  */
 
+const { securityEvent, KIND } = require('../obs/securityLog');
+
 const buckets = new Map();
 
 /** Sweep expired windows so the map cannot grow without bound. */
@@ -61,6 +63,15 @@ function rateLimit({ limit, windowMs, name }) {
     res.setHeader('RateLimit-Reset', String(Math.ceil((b.resetAt - now) / 1000)));
 
     if (b.count > limit) {
+      // Emitted once at the moment the limit is CROSSED, not on every request
+      // above it. A caller sending ten thousand requests into a limit of thirty
+      // would otherwise write 9,970 identical lines, which turns a rate limit
+      // into a log-ingestion bill and buries the event it was meant to report.
+      if (b.count === limit + 1) {
+        securityEvent(KIND.RATE_LIMITED, {
+          limiter: name, limit, ip: req.ip, path: req.path,
+        });
+      }
       res.setHeader('Retry-After', String(Math.ceil((b.resetAt - now) / 1000)));
       // No detail about the limit's purpose or the caller's history: a limiter
       // that explains itself is a limiter that helps someone tune around it.

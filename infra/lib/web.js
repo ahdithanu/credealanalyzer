@@ -57,11 +57,45 @@ class WebStack extends Stack {
       "base-uri 'none'",
       "object-src 'none'",
       'upgrade-insecure-requests',
-    ].join('; ');
+    ];
+
+    /**
+     * Violation reporting.
+     *
+     * The policy above was enforced and silent: a browser that refused to load
+     * an injected script told its own console and nobody else, so the clearest
+     * available signal that someone is attempting injection against a client
+     * firm's analyst was discarded at the moment it was generated.
+     *
+     * The report path is RELATIVE, and the behaviour added below routes it
+     * through this distribution to the API. That is the whole reason for the
+     * extra behaviour: a report posted to the API's own hostname is a
+     * cross-origin POST with a content type that is not CORS-safelisted, so the
+     * browser preflights it — and the CSP spec has browsers send reports with a
+     * null or opaque origin, which our credentialed, exact-origin CORS
+     * middleware is built to refuse. Reports would be dropped by the browser
+     * before they ever arrived, silently, and the collector would look healthy
+     * because a collector that receives nothing looks exactly like a site with
+     * no violations. Same-origin sidesteps the entire question.
+     *
+     * BOTH directives are emitted because browsers are split across two specs
+     * and will be for years: `report-uri` is CSP Level 2 and deprecated but is
+     * what Firefox and Safari implement; `report-to` is the Reporting API and
+     * is what Chrome implements, and it requires the `Reporting-Endpoints`
+     * header below to resolve the name. Emitting only one collects from roughly
+     * half of the browsers in use.
+     */
+    const reportPath = '/csp-report';
+    const canReport = Boolean(apiOrigin);
+    if (canReport) {
+      csp.push(`report-uri ${reportPath}`, 'report-to csp-endpoint');
+    }
+
+    const cspHeader = csp.join('; ');
 
     const responseHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
       securityHeadersBehavior: {
-        contentSecurityPolicy: { contentSecurityPolicy: csp, override: true },
+        contentSecurityPolicy: { contentSecurityPolicy: cspHeader, override: true },
         strictTransportSecurity: {
           accessControlMaxAge: Duration.days(730),
           includeSubdomains: true,
@@ -85,6 +119,14 @@ class WebStack extends Stack {
             value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
             override: true,
           },
+          // Names the endpoint that `report-to csp-endpoint` refers to. Without
+          // this header the `report-to` directive resolves to nothing and
+          // Chrome sends no report at all — the failure is silent on both ends.
+          ...(canReport ? [{
+            header: 'Reporting-Endpoints',
+            value: `csp-endpoint="${reportPath}"`,
+            override: true,
+          }] : []),
         ],
       },
     });
@@ -100,6 +142,39 @@ class WebStack extends Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
       },
+      /**
+       * The one non-S3 behaviour: violation reports, forwarded to the API.
+       *
+       * Everything else on this distribution is a static object out of the
+       * bucket. This path alone is a POST to the application, and it exists
+       * only so the report is SAME-ORIGIN with the page that generates it —
+       * see the note on the policy above for why a cross-origin collector
+       * receives nothing.
+       *
+       * Nothing is cached, and no cookie is forwarded. The collector is
+       * unauthenticated by design (a browser sends reports with no
+       * credentials), so forwarding the session cookie to it would hand a
+       * live credential to the one route in the system that does not need it
+       * and cannot use it.
+       */
+      additionalBehaviors: canReport ? {
+        [reportPath]: {
+          origin: new origins.HttpOrigin(new URL(apiOrigin).hostname, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          // Content-Type must reach the origin or the router's parser will not
+          // claim the body; the report arrives as application/csp-report or
+          // application/reports+json, never as a type express assumes.
+          originRequestPolicy: new cloudfront.OriginRequestPolicy(this, 'CspReportOrigin', {
+            headerBehavior: cloudfront.OriginRequestHeaderBehavior.allowList('content-type'),
+            cookieBehavior: cloudfront.OriginRequestCookieBehavior.none(),
+            queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.none(),
+          }),
+        },
+      } : undefined,
       defaultRootObject: 'index.html',
       // Client-side routing: a deep link to /pipeline is not an object in the
       // bucket. 200, not 302, so the URL the analyst shared stays intact.

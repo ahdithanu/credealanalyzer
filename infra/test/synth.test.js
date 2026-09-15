@@ -22,6 +22,7 @@ const platform = new PlatformStack(app, 'TestPlatform', {
   domainName: 'api.test.example',
   certificateArn: 'arn:aws:acm:us-east-1:111111111111:certificate/test',
   appOrigin: 'https://app.test.example',
+  alertEmail: 'ops@test.example',
 });
 const web = new WebStack(app, 'TestWeb', {
   env: { account: '111111111111', region: 'us-east-1' },
@@ -223,4 +224,193 @@ test('the stack refuses to deploy without a TLS certificate', () => {
     }),
     /certificateArn is required/,
   );
+});
+
+
+// ─── Monitoring ──────────────────────────────────────────────────────────────
+/**
+ * These tests are the infrastructure half of a contract whose other half lives
+ * in server/src/obs/securityLog.js.
+ *
+ * A CloudWatch metric filter matches a LITERAL field name in a log line. If the
+ * server renames `kind`, or renames one of its values, every alarm keyed on it
+ * keeps deploying, keeps evaluating, and never fires again. Nothing goes red.
+ * The console shows a healthy row of alarms in OK, and the first anyone learns
+ * of it is the incident the alarm existed to catch.
+ *
+ * So the names are pinned on both sides: server/test/observability.test.js
+ * asserts what is emitted, and these assert what is matched. Renaming either
+ * without the other turns one suite red.
+ */
+
+/** Pull the filter patterns out of the rendered template, keyed by metric. */
+function metricFilters(template) {
+  const out = {};
+  for (const r of Object.values(template.findResources('AWS::Logs::MetricFilter'))) {
+    for (const t of r.Properties.MetricTransformations) {
+      out[t.MetricName] = { pattern: r.Properties.FilterPattern, transform: t };
+    }
+  }
+  return out;
+}
+
+test('the security metric filters match the events the server actually emits', () => {
+  const filters = metricFilters(pt);
+  // The right-hand side is the string server/src/obs/securityLog.js writes into
+  // the `kind` field. Both are spelled out rather than imported, because a
+  // shared constant would let a rename satisfy both sides at once and defeat
+  // the entire point of pinning them.
+  const expected = {
+    CsrfRejected: 'csrf_rejected',
+    OriginRejected: 'origin_rejected',
+    LoginFailed: 'login_failed',
+    ScimAuthFailed: 'scim_auth_failed',
+    RoleDenied: 'role_denied',
+    RateLimited: 'rate_limited',
+    CspViolation: 'csp_violation',
+    ServerError: 'server_error',
+    AuditChainBroken: 'audit_chain_broken',
+  };
+  for (const [metric, kind] of Object.entries(expected)) {
+    const f = filters[metric];
+    assert.ok(f, `no metric filter produces ${metric}`);
+    assert.ok(f.pattern.includes('$.evt = "security"'),
+      `${metric} does not require the evt discriminator: ${f.pattern}`);
+    assert.ok(f.pattern.includes(`$.kind = "${kind}"`),
+      `${metric} matches the wrong kind: ${f.pattern}`);
+  }
+});
+
+test('a quiet security metric reports zero rather than nothing', () => {
+  // Without an explicit default, a period with no matching line produces NO
+  // datapoint, and the alarm on it sits in INSUFFICIENT_DATA instead of OK. On
+  // a console of grey alarms, "nothing is attacking us" and "this alarm has
+  // been broken for a month" look identical.
+  const filters = metricFilters(pt);
+  for (const metric of ['CsrfRejected', 'LoginFailed', 'AuditChainBroken']) {
+    assert.equal(filters[metric].transform.DefaultValue, 0,
+      `${metric} has no default value`);
+  }
+});
+
+test('the audit-verification heartbeat has NO default value', () => {
+  // The exact opposite of the rule above, and deliberately so. This metric is
+  // watched for ABSENCE — the alarm fires when the daily job stops reporting.
+  // A default of zero would emit a datapoint every period, the alarm would
+  // always have data, and the one thing it exists to detect would never happen.
+  const filters = metricFilters(pt);
+  assert.ok(filters.AuditVerifyRan, 'no heartbeat filter');
+  assert.equal(filters.AuditVerifyRan.transform.DefaultValue, undefined);
+});
+
+test('every alarm notifies on recovery as well as on failure', () => {
+  // An alarm with no OK action tells you an incident began and never that it
+  // ended. Teams stop trusting alarms they are never told the end of.
+  const alarms = pt.findResources('AWS::CloudWatch::Alarm');
+  assert.ok(Object.keys(alarms).length >= 15, 'suspiciously few alarms');
+  for (const [id, a] of Object.entries(alarms)) {
+    assert.ok(a.Properties.AlarmActions?.length, `${id} has no alarm action`);
+    assert.ok(a.Properties.OKActions?.length, `${id} has no OK action`);
+    assert.ok(a.Properties.AlarmDescription,
+      `${id} has no description — an operator paged at 03:00 gets a metric name and nothing else`);
+  }
+});
+
+test('a broken audit chain alarms on a single occurrence', () => {
+  const alarm = Object.values(pt.findResources('AWS::CloudWatch::Alarm'))
+    .find((a) => a.Properties.MetricName === 'AuditChainBroken');
+  assert.ok(alarm);
+  // There is no acceptable rate of audit-log tampering. Any threshold above
+  // zero, or any requirement for a second occurrence, is a tolerance for it.
+  assert.equal(alarm.Properties.Threshold, 0);
+  assert.equal(alarm.Properties.EvaluationPeriods, 1);
+  assert.equal(alarm.Properties.ComparisonOperator, 'GreaterThanThreshold');
+});
+
+test('the audit chain is verified on a schedule, not on request', () => {
+  // Tamper evidence nobody checks is not tamper evidence. Before this, the
+  // chain was verified only when an admin happened to open the integrity screen.
+  const rules = Object.values(pt.findResources('AWS::Events::Rule'))
+    .filter((r) => r.Properties.ScheduleExpression);
+  assert.equal(rules.length, 1, 'expected exactly one scheduled job');
+  const rule = rules[0];
+  assert.match(rule.Properties.ScheduleExpression, /^cron\(/);
+  assert.equal(rule.Properties.State, 'ENABLED');
+  const override = JSON.stringify(rule.Properties.Targets[0].InputTransformer
+    || rule.Properties.Targets[0].Input
+    || rule.Properties.Targets[0].EcsParameters);
+  // The command override travels in the target's Input, as a JSON document.
+  const input = JSON.stringify(rule.Properties.Targets[0]);
+  assert.ok(input.includes('verifyAudit.js'),
+    `the scheduled task does not run the verifier: ${override}`);
+});
+
+test('alarms have somewhere to go', () => {
+  pt.resourceCountIs('AWS::SNS::Topic', 1);
+  pt.hasResourceProperties('AWS::SNS::Subscription', {
+    Protocol: 'email', Endpoint: 'ops@test.example',
+  });
+});
+
+test('the API log group is retained and kept for a year', () => {
+  // The security events are the evidence. A `cdk destroy` must not take them,
+  // and a 30-day default would mean an intrusion discovered in month two has no
+  // record of month one.
+  const groups = Object.values(pt.findResources('AWS::Logs::LogGroup'));
+  assert.ok(groups.length >= 1);
+  for (const g of groups) {
+    assert.equal(g.Properties.RetentionInDays, 365);
+    assert.equal(g.DeletionPolicy, 'Retain');
+  }
+});
+
+test('the WAF alarm names dimensions that will actually resolve', () => {
+  // AWS documents the WebACL and Rule dimensions as the VisibilityConfig metric
+  // names; plenty of example code treats them as resource names. An alarm on
+  // the wrong one deploys, evaluates, and sits in INSUFFICIENT_DATA forever.
+  // Making both spellings identical means it binds under either reading.
+  const acl = Object.values(pt.findResources('AWS::WAFv2::WebACL'))[0].Properties;
+  assert.equal(acl.Name, acl.VisibilityConfig.MetricName);
+  for (const rule of acl.Rules) {
+    assert.equal(rule.Name, rule.VisibilityConfig.MetricName,
+      `rule ${rule.Name} has a metric name that differs from its name`);
+  }
+  const alarm = Object.values(pt.findResources('AWS::CloudWatch::Alarm'))
+    .find((a) => a.Properties.MetricName === 'BlockedRequests');
+  const dims = Object.fromEntries(alarm.Properties.Dimensions.map((d) => [d.Name, d.Value]));
+  assert.equal(dims.WebACL, acl.Name);
+  const authRule = acl.Rules.find((r) => r.Name === dims.Rule);
+  assert.ok(authRule, `the alarm names rule "${dims.Rule}", which is not on the ACL`);
+  assert.ok(authRule.Statement.RateBasedStatement, 'the alarmed rule is not the rate limiter');
+});
+
+test('violation reports reach the API rather than the bucket', () => {
+  // The whole reason the report path is relative: a cross-origin collector
+  // receives nothing, silently, and looks healthy while doing it. That only
+  // works if this behaviour actually targets the API origin.
+  const d = Object.values(wt.findResources('AWS::CloudFront::Distribution'))[0]
+    .Properties.DistributionConfig;
+  const behaviour = (d.CacheBehaviors || []).find((b) => b.PathPattern === '/csp-report');
+  assert.ok(behaviour, 'no behaviour routes /csp-report');
+  const target = d.Origins.find((o) => o.Id === behaviour.TargetOriginId);
+  assert.equal(target.DomainName, 'api.test.example',
+    'reports are being sent to the static bucket, which cannot collect them');
+  assert.ok(behaviour.AllowedMethods.includes('POST'), 'a report is a POST');
+  // The collector is unauthenticated by design and cannot use a session cookie.
+  // Forwarding one hands a live credential to the one route that has no use for it.
+  const policy = Object.values(wt.findResources('AWS::CloudFront::OriginRequestPolicy'))[0];
+  assert.equal(policy.Properties.OriginRequestPolicyConfig.CookiesConfig.CookieBehavior, 'none');
+});
+
+test('the policy asks browsers of both generations to report', () => {
+  const p = Object.values(wt.findResources('AWS::CloudFront::ResponseHeadersPolicy'))[0]
+    .Properties.ResponseHeadersPolicyConfig;
+  const csp = p.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy;
+  // report-uri is what Firefox and Safari implement; report-to is what Chrome
+  // implements. Emitting one collects from about half the browsers in use.
+  assert.ok(csp.includes('report-uri /csp-report'), csp);
+  assert.ok(csp.includes('report-to csp-endpoint'), csp);
+  const reporting = p.CustomHeadersConfig.Items.find((h) => h.Header === 'Reporting-Endpoints');
+  assert.ok(reporting, 'report-to names an endpoint that no header defines, so Chrome sends nothing');
+  assert.equal(reporting.Value, 'csp-endpoint="/csp-report"');
 });

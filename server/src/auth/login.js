@@ -5,6 +5,7 @@ const config = require('../config');
 const { authPool, withTenant } = require('../db/pool');
 const { broker } = require('./broker');
 const session = require('./session');
+const { emailDomain } = require('../obs/securityLog');
 
 /**
  * The login handshake: where a tenant is DECIDED.
@@ -64,10 +65,25 @@ async function begin({ tenantHint, redirectTo, ip }) {
 }
 
 class LoginError extends Error {
-  constructor(code, message, status = 401) {
+  /**
+   * @param {string} code    what the SPA renders, and what the security log and
+   *                         its CloudWatch alarm key on
+   * @param {string} message human-readable, never returned to the browser
+   * @param {number} status
+   * @param {object} context non-identifying detail for the security log ONLY —
+   *                         the organization id the provider asserted and the
+   *                         email DOMAIN. Attached to the error rather than
+   *                         logged here so there is exactly one emission point
+   *                         (routes/auth.js), which is what keeps a single
+   *                         refused login from producing two alarm-bearing
+   *                         lines and doubling every rate an operator reads.
+   */
+  constructor(code, message, status = 401, context = {}) {
     super(message);
     this.code = code;
     this.status = status;
+    this.orgId = context.orgId ?? null;
+    this.domain = context.domain ?? null;
   }
 }
 
@@ -109,18 +125,21 @@ async function complete({ state, code, ip, userAgent }) {
   const profile = await broker().exchange(code);
 
   if (!profile?.organizationId) {
-    throw new LoginError('no_org', 'Your identity provider did not identify your organization.');
+    throw new LoginError('no_org', 'Your identity provider did not identify your organization.',
+      401, { orgId: null, domain: emailDomain(profile?.email) });
   }
   if (!profile.email || !profile.emailVerified) {
     // An unverified address is a claim, not an identity. Admitting one lets
     // anyone who can set a display name in a loose directory claim a colleague.
-    throw new LoginError('unverified_email', 'Your identity provider did not supply a verified email address.');
+    throw new LoginError('unverified_email', 'Your identity provider did not supply a verified email address.',
+      401, { orgId: profile.organizationId, domain: emailDomain(profile.email) });
   }
 
   const email = String(profile.email).trim().toLowerCase();
   const at = email.lastIndexOf('@');
   if (at < 1 || at === email.length - 1) {
-    throw new LoginError('bad_email', 'Your identity provider supplied an unusable email address.');
+    throw new LoginError('bad_email', 'Your identity provider supplied an unusable email address.',
+      401, { orgId: profile.organizationId });
   }
   const domain = email.slice(at + 1);
 
@@ -134,10 +153,12 @@ async function complete({ state, code, ip, userAgent }) {
     // No auto-created tenants. A firm exists because someone onboarded it; a
     // login that conjures one would let an unknown organization become a tenant
     // of a product sold on the promise that firms are separated.
-    throw new LoginError('unknown_org', 'Your organization is not provisioned. Contact your administrator.', 403);
+    throw new LoginError('unknown_org', 'Your organization is not provisioned. Contact your administrator.',
+      403, { orgId: profile.organizationId, domain });
   }
   if (tenant.status !== 'active') {
-    throw new LoginError('tenant_suspended', 'Access for your organization is suspended.', 403);
+    throw new LoginError('tenant_suspended', 'Access for your organization is suspended.',
+      403, { orgId: profile.organizationId, domain });
   }
 
   // The email domain must be VERIFIED for this tenant. This is the backstop
@@ -151,7 +172,8 @@ async function complete({ state, code, ip, userAgent }) {
   );
   if (!domainRows.length) {
     throw new LoginError('domain_not_verified',
-      'Your email domain is not verified for this organization.', 403);
+      'Your email domain is not verified for this organization.', 403,
+      { orgId: profile.organizationId, domain });
   }
 
   // A tenant may require that the identity provider asserted a second factor.
@@ -161,7 +183,8 @@ async function complete({ state, code, ip, userAgent }) {
   if (tenant.require_mfa === true && profile.mfaAsserted !== true) {
     throw new LoginError('mfa_required',
       'Your organization requires multi-factor authentication, and your identity '
-      + 'provider did not confirm it was used.', 403);
+      + 'provider did not confirm it was used.', 403,
+      { orgId: profile.organizationId, domain });
   }
 
   // Just-in-time provisioning, inside the tenant context so the INSERT is

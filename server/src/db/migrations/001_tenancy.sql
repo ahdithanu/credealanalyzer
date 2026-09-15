@@ -38,11 +38,43 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
     CREATE ROLE app_user LOGIN;
   END IF;
-  -- Never let it accumulate privileges that would defeat the policies.
-  -- Stated unconditionally rather than only at creation: roles are CLUSTER-wide,
-  -- so an app_user left over from an earlier deploy with different flags would
-  -- otherwise survive the IF NOT EXISTS guard above and keep them.
-  EXECUTE 'ALTER ROLE app_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS';
+
+  -- SET the attributes if we can, then VERIFY them regardless.
+  --
+  -- The ALTER alone was not enough, and the way it failed is the point: setting
+  -- NOSUPERUSER or NOBYPASSRLS requires superuser, which the migration role is
+  -- deliberately not. On RDS it runs as `cre_owner`, an ordinary role, and the
+  -- statement can be refused outright.
+  --
+  -- Either half alone is wrong. Only setting leaves a migration that fails on
+  -- the platform it is written for. Only skipping on failure leaves the far
+  -- worse outcome: a app_user left over from an earlier cluster with BYPASSRLS
+  -- set, admitted silently, and every tenant policy in this schema quietly
+  -- inert while every test and every review still reads as if they bind.
+  --
+  -- So the check below is the actual guarantee and the ALTER is a convenience.
+  -- A cluster where the attributes are wrong and cannot be corrected refuses to
+  -- migrate, and says which attribute and how to fix it.
+  BEGIN
+    EXECUTE 'ALTER ROLE app_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;   -- the verification below decides whether this mattered
+  END;
+
+  PERFORM 1 FROM pg_roles
+   WHERE rolname = 'app_user'
+     AND rolcanlogin
+     AND NOT rolsuper
+     AND NOT rolbypassrls
+     AND NOT rolcreaterole
+     AND NOT rolcreatedb;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION
+      'app_user must be LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS. It is not, '
+      'and this migration could not correct it. Row level security does not bind to a '
+      'superuser or a BYPASSRLS role, so tenant isolation would be silently absent. '
+      'Fix it as a superuser: ALTER ROLE app_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;';
+  END IF;
 END $$;
 
 -- ─── Tenant registry ─────────────────────────────────────────────────────────

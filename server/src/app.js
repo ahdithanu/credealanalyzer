@@ -9,6 +9,8 @@ const { exportRoutes } = require('./routes/export');
 const { scimRoutes } = require('./routes/scim');
 const { requireSession } = require('./middleware/requireSession');
 const { rateLimit } = require('./middleware/rateLimit');
+const { cspReportRoutes } = require('./routes/cspReport');
+const { securityEvent, KIND } = require('./obs/securityLog');
 
 /**
  * The API.
@@ -67,6 +69,20 @@ function createApp() {
    */
   app.use('/scim/v2', scimRoutes());
 
+  /**
+   * CSP violation reports, mounted ahead of the body parser for the same class
+   * of reason as SCIM: the global `express.json({ limit: '1mb' })` below claims
+   * `application/json`, and a browser that posts a report with that content
+   * type would have an 8KB-worth of attacker-chosen text parsed under a 1MB
+   * ceiling before this router ever saw it. Mounted here, the router's own 8KB
+   * parser is the first and only one to touch the body.
+   *
+   * It sits outside the global limiter too, and carries its own tighter one.
+   * See routes/cspReport.js for why an unauthenticated collector gets the
+   * narrowest treatment in the application.
+   */
+  app.use('/csp-report', cspReportRoutes());
+
   app.use(express.json({ limit: '1mb' }));
 
   // A broad ceiling across everything, so a single client cannot saturate the
@@ -121,6 +137,16 @@ function createApp() {
       level: 'error', msg: err.message, status,
       path: req.path, tenant: req.session?.tenantId || null,
     }));
+    // A second, narrower line for the 5xx case only, so the alarm counts
+    // genuine faults rather than every 4xx a client earns for itself. The two
+    // lines are not redundant: the one above carries the driver's message and
+    // is for a human reading logs; this one carries no free text at all and is
+    // what a metric filter counts.
+    if (status >= 500) {
+      securityEvent(KIND.SERVER_ERROR, {
+        status, path: req.path, tenant: req.session?.tenantId || null,
+      });
+    }
     res.status(status).json({ error: status >= 500 ? 'internal' : (err.code || 'error') });
   });
 

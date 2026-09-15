@@ -37,8 +37,13 @@ const url = (user, db) => (isSocket
 
 const ADMIN = url(SUPERUSER, 'postgres');
 
-/** A throwaway database per test file, so tests cannot see each other's rows. */
-async function freshDatabase(name) {
+/**
+ * A throwaway database per test file, so tests cannot see each other's rows.
+ *
+ * `applyMigrations: false` hands back a bootstrapped but EMPTY database, for
+ * the tests that need to watch the migrations themselves succeed or refuse.
+ */
+async function freshDatabase(name, { applyMigrations = true } = {}) {
   const db = `cre_test_${name}_${process.pid}`;
   const admin = new Client({ connectionString: ADMIN });
   await admin.connect();
@@ -47,7 +52,71 @@ async function freshDatabase(name) {
   await admin.end();
 
   const ownerUrl = url(SUPERUSER, db);
-  await migrate(ownerUrl, { log: () => {} });
+
+  /**
+   * MIGRATIONS RUN AS A NON-SUPERUSER, and this is load-bearing rather than
+   * tidy-minded.
+   *
+   * They used to run as the fixture's superuser, which meant every table and
+   * function in the test schema was owned by a role that BYPASSES ROW LEVEL
+   * SECURITY unconditionally — FORCE ROW LEVEL SECURITY included, since a
+   * superuser is exempt from that too. The tests then exercised the one access
+   * path no deployed caller ever takes.
+   *
+   * It hid a real bug for as long as the audit chain has existed:
+   * audit_log_verify() read audit_log under the tenant_isolation policy, so
+   * from the application's own pool it matched no rows, never entered its loop,
+   * and returned its "intact" signal on a log it had not looked at. Over the
+   * superuser connection the tests used, it saw everything and passed.
+   *
+   * In AWS the owner is `cre_owner` — an ordinary role that Postgres holds to
+   * its own policies. Mirroring that here is what makes the owner-facing policy
+   * in migration 008 mean something in a test rather than being decoration that
+   * a superuser renders unnecessary.
+   *
+   * The fixtures' own setup and teardown stay on the superuser connection. They
+   * are standing in for an operator with the keys to the box — simulating
+   * tampering, inspecting rows across tenants — and that is exactly the actor
+   * they should be.
+   */
+  const bootstrap = new Client({ connectionString: ownerUrl });
+  await bootstrap.connect();
+  // CREATEROLE because the migrations create app_user and auth_user themselves;
+  // a schema that cannot be applied to an empty cluster is not a schema.
+  await bootstrap.query(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cre_owner') THEN
+      CREATE ROLE cre_owner LOGIN NOSUPERUSER CREATEROLE NOBYPASSRLS;
+    END IF;
+  END $$`);
+  // Stated unconditionally: roles are cluster-wide, so an existing cre_owner
+  // from an earlier run keeps whatever attributes it had and the IF NOT EXISTS
+  // above quietly skips it. The same trap that left app_user NOLOGIN once.
+  await bootstrap.query('ALTER ROLE cre_owner LOGIN NOSUPERUSER CREATEROLE NOBYPASSRLS');
+  // pgcrypto is an operator-installed extension, not an application one: on RDS
+  // it takes rds_superuser, and a role that could install arbitrary extensions
+  // is a role that could install one containing a C function. Creating it here
+  // mirrors that division rather than handing the migration role the privilege.
+  await bootstrap.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  // The application roles are cluster-wide and outlive any one test database,
+  // so on the second run they already exist and were created by the superuser.
+  // Since Postgres 16 a CREATEROLE role may only alter roles it holds ADMIN
+  // OPTION on, so without this the migrations fail with "permission denied to
+  // alter role" — on a cluster where the very same migration succeeded once.
+  await bootstrap.query(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+      CREATE ROLE app_user NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth_user') THEN
+      CREATE ROLE auth_user NOLOGIN;
+    END IF;
+  END $$`);
+  await bootstrap.query('GRANT app_user, auth_user TO cre_owner WITH ADMIN OPTION');
+  await bootstrap.query(`GRANT ALL ON SCHEMA public TO cre_owner`);
+  await bootstrap.query(`ALTER SCHEMA public OWNER TO cre_owner`);
+  await bootstrap.end();
+
+  const migrationUrl = url('cre_owner', db);
+  if (applyMigrations) await migrate(migrationUrl, { log: () => {} });
 
   // The application role. Note it is NOT the owner: `postgres` created the
   // tables, `app_user` only uses them. That difference is the reason RLS binds
@@ -57,7 +126,7 @@ async function freshDatabase(name) {
   // are granted rds_iam and hold no password at all.
   const appUrl = url('app_user', db);
   const authUrl = url('auth_user', db);
-  return { db, ownerUrl, appUrl, authUrl, drop: async () => {
+  return { db, ownerUrl, migrationUrl, appUrl, authUrl, drop: async () => {
     const a = new Client({ connectionString: ADMIN });
     await a.connect();
     await a.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);

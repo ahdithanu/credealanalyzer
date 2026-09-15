@@ -6,6 +6,7 @@ const login = require('../auth/login');
 const session = require('../auth/session');
 const { requireSession } = require('../middleware/requireSession');
 const { broker } = require('../auth/broker');
+const { securityEvent, KIND } = require('../obs/securityLog');
 
 /**
  * Authentication routes.
@@ -44,6 +45,16 @@ function authRoutes() {
       res.redirect(302, new URL(result.redirectTo, config.appOrigin).toString());
     } catch (err) {
       if (err instanceof login.LoginError) {
+        // Every refused handshake, in one place. `code` is the whole point:
+        // a rise in `domain_not_verified` is a misconfigured SSO connection or
+        // someone pointed at the wrong organization, and a rise in `bad_state`
+        // is a replay attempt. Both are alarmed in infra/lib/platform.js.
+        securityEvent(KIND.LOGIN_FAILED, {
+          code: err.code,
+          orgId: err.orgId,
+          domain: err.domain,
+          ip: req.ip,
+        });
         // The reason reaches the user as a code the SPA renders, never as a
         // stack trace and never echoing anything from the provider's response.
         const u = new URL('/signin', config.appOrigin);

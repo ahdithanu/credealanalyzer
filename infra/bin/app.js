@@ -13,7 +13,8 @@ const { WebStack } = require('../lib/web');
  *
  *   npx cdk deploy --all \
  *     -c apiDomain=api.cre.example.com  -c apiCertArn=arn:aws:acm:us-east-1:... \
- *     -c webDomain=app.cre.example.com  -c webCertArn=arn:aws:acm:us-east-1:...
+ *     -c webDomain=app.cre.example.com  -c webCertArn=arn:aws:acm:us-east-1:... \
+ *     -c alertEmail=ops@yourfirm.com
  *
  * `apiCertArn` is REQUIRED. Without a certificate the load balancer serves the
  * API over plaintext HTTP and its session cookies with it, so the platform
@@ -34,6 +35,12 @@ const apiDomain = app.node.tryGetContext('apiDomain');
 const webDomain = app.node.tryGetContext('webDomain');
 const apiCertArn = app.node.tryGetContext('apiCertArn');
 const webCertArn = app.node.tryGetContext('webCertArn');
+// Where alarms go. Optional, and its absence is NOT harmless: the alarms all
+// deploy and all evaluate, and nobody is told when one fires. The SNS topic is
+// created regardless, so a real destination — PagerDuty, Opsgenie, a Slack
+// webhook via Chatbot — is a subscription on an existing topic rather than a
+// change to this stack.
+const alertEmail = app.node.tryGetContext('alertEmail');
 
 const web = new WebStack(app, 'CreWeb', {
   env,
@@ -50,6 +57,7 @@ const platform = new PlatformStack(app, 'CrePlatform', {
   // string, and credentialed CORS cannot use a wildcard — so a mismatch shows
   // up as every request failing, not as a silent security hole.
   appOrigin: webDomain ? `https://${webDomain}` : 'http://localhost:3000',
+  alertEmail,
 });
 
 // Deliberately NOT ordered against each other. Web's connect-src names the
