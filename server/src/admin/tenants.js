@@ -56,6 +56,38 @@ async function withOwner(fn) {
   try { return await fn(client); } finally { await client.end(); }
 }
 
+
+/**
+ * Record a platform-level administrative action.
+ *
+ * These were not audited at all, which was the single worst gap in the system:
+ * verifying a domain is what admits a person to a firm's data, and it left no
+ * trace. The actor is an OPERATOR, not an end user — whoever holds the owner
+ * credential — so it is recorded by reference rather than by user id.
+ *
+ * Best effort by design. An audit write that fails must not roll back the
+ * operation an administrator just performed and believes succeeded; a silent
+ * operation is bad, a half-applied one is worse. The failure is surfaced on
+ * stderr so it is visible in the terminal the operator is watching.
+ */
+async function recordAdmin(db, { tenantId, action, subjectType, subjectId, detail }) {
+  const actorRef = process.env.ADMIN_ACTOR
+    || process.env.SUDO_USER
+    || process.env.USER
+    || 'unknown';
+  try {
+    await db.query(
+      `INSERT INTO audit_log
+         (tenant_id, actor_kind, actor_ref, action, subject_type, subject_id, detail)
+       VALUES ($1, 'operator', $2, $3, $4, $5, $6)`,
+      [tenantId || null, actorRef, action, subjectType || null,
+        subjectId || null, detail ? JSON.stringify(detail) : null],
+    );
+  } catch (err) {
+    console.error(`WARNING: the action succeeded but was not audited: ${err.message}`);
+  }
+}
+
 async function create({ slug, name, org }) {
   if (!SLUG.test(String(slug || ''))) {
     throw new Error('--slug must be lowercase letters, digits and hyphens (2-63 chars)');
@@ -72,6 +104,13 @@ async function create({ slug, name, org }) {
        RETURNING id, slug, name, broker_org_id, status`,
       [slug, name, org],
     );
+    await recordAdmin(db, {
+      tenantId: rows[0].id,
+      action: 'tenant.created',
+      subjectType: 'tenant',
+      subjectId: rows[0].id,
+      detail: { slug, name, brokerOrgId: org },
+    });
     return rows[0];
   });
 }
@@ -107,6 +146,15 @@ async function verifyDomain({ slug, domain }) {
        RETURNING tenant_id, domain, verified_at`,
       [t.rows[0].id, d],
     );
+    // The most consequential administrative action there is: from here, anyone
+    // the identity provider asserts at this domain reaches this firm's deals.
+    await recordAdmin(db, {
+      tenantId: t.rows[0].id,
+      action: 'tenant.domain_verified',
+      subjectType: 'domain',
+      subjectId: d,
+      detail: { slug, domain: d },
+    });
     return rows[0];
   });
 }
@@ -132,6 +180,13 @@ async function setStatus({ slug, status }) {
       [slug, status],
     );
     if (!rows[0]) throw new Error(`no tenant with slug ${slug}`);
+    await recordAdmin(db, {
+      tenantId: null,
+      action: status === 'suspended' ? 'tenant.suspended' : 'tenant.activated',
+      subjectType: 'tenant',
+      subjectId: slug,
+      detail: { slug, status },
+    });
     return rows[0];
   });
 }
@@ -151,11 +206,21 @@ async function revokeSessions({ slug }) {
           AND tenant_id = (SELECT id FROM tenants WHERE slug = $1)`,
       [slug],
     );
+    await recordAdmin(db, {
+      tenantId: null,
+      action: 'tenant.sessions_revoked',
+      subjectType: 'tenant',
+      subjectId: slug,
+      detail: { slug, revoked: rowCount },
+    });
     return { slug, revoked: rowCount };
   });
 }
 
-module.exports = { create, verifyDomain, list, setStatus, revokeSessions, __internals: { SLUG, DOMAIN } };
+module.exports = {
+  create, verifyDomain, list, setStatus, revokeSessions, recordAdmin,
+  __internals: { SLUG, DOMAIN },
+};
 
 if (require.main === module) {
   const [command, ...rest] = process.argv.slice(2);

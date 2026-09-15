@@ -4,7 +4,9 @@ const express = require('express');
 const config = require('./config');
 const { authRoutes } = require('./routes/auth');
 const { dealRoutes } = require('./routes/deals');
+const { auditRoutes } = require('./routes/audit');
 const { requireSession } = require('./middleware/requireSession');
+const { rateLimit } = require('./middleware/rateLimit');
 
 /**
  * The API.
@@ -48,6 +50,11 @@ function createApp() {
 
   app.use(express.json({ limit: '1mb' }));
 
+  // A broad ceiling across everything, so a single client cannot saturate the
+  // pool even on authenticated routes. Generous enough that ordinary use — the
+  // sensitivity screen runs many models per interaction — never reaches it.
+  app.use(rateLimit({ name: 'global', limit: 600, windowMs: 60_000 }));
+
   // Minimal cookie setter, so express-cookie is not a dependency.
   app.use((req, res, next) => {
     res.cookie = (name, value, opts = {}) => {
@@ -69,8 +76,12 @@ function createApp() {
   // build, version or database state — a health endpoint is internet-facing.
   app.get('/healthz', (req, res) => res.json({ ok: true }));
 
-  app.use('/auth', authRoutes());
+  // The auth path is limited harder than the rest: it is the only
+  // unauthenticated surface that touches the database, and every call to
+  // /auth/start writes a row.
+  app.use('/auth', rateLimit({ name: 'auth', limit: 30, windowMs: 60_000 }), authRoutes());
   app.use('/api/deals', requireSession(), dealRoutes());
+  app.use('/api/audit', requireSession(), auditRoutes());
 
   app.use((req, res) => res.status(404).json({ error: 'not_found' }));
 

@@ -59,6 +59,16 @@ const config = {
 
   session: {
     signingSecret: secret('SESSION_SIGNING_SECRET'),
+    // PREVIOUS signing key, accepted for verification but never used to issue.
+    //
+    // Without this, rotating the signing secret invalidates every CSRF token in
+    // flight: every user's next save fails until they reload. The rotation you
+    // perform under breach pressure would be the one that interrupts every firm
+    // mid-underwriting, which is how rotations get postponed.
+    //
+    // Set it to the outgoing key, deploy, wait out one session lifetime, then
+    // clear it. See docs/runbooks/secret-rotation.md.
+    previousSigningSecret: process.env.SESSION_SIGNING_SECRET_PREVIOUS || null,
     cookieName: 'cre_session',
     // Eight hours: a working day, so an analyst is not re-authenticating
     // mid-model, and a shared machine does not stay logged in overnight.
@@ -66,6 +76,13 @@ const config = {
     // Rotated well before expiry so a stolen cookie has a short useful life
     // without the user ever seeing a session end mid-task.
     rotateAfterMs: Number(process.env.SESSION_ROTATE_MS || 30 * 60 * 1000),
+    // Idle expiry, distinct from the absolute lifetime above. A deal screen left
+    // open on a shared workstation must not stay authenticated all afternoon.
+    idleMs: Number(process.env.SESSION_IDLE_MS || 60 * 60 * 1000),
+    // How often the idle clock is written back. Updating on every request makes
+    // sessions the hottest table in the system for no security gain; a minute of
+    // imprecision on an hour-long window costs nothing.
+    touchIntervalMs: Number(process.env.SESSION_TOUCH_INTERVAL_MS || 60 * 1000),
   },
 
   sso: {

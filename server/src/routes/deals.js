@@ -40,6 +40,9 @@ function validateDeal(body) {
   return { errors, name, stage, payload: body?.payload };
 }
 
+// Column-level INSERT only: migration 003 revoked table-wide INSERT so the
+// application cannot set `entry_hash` itself. A database trigger computes the
+// digest, which is what makes the chain evidence rather than decoration.
 const audit = (db, req, action, subjectId, detail) => db.query(
   `INSERT INTO audit_log (tenant_id, actor_user_id, action, subject_type, subject_id, detail, ip)
    VALUES ($1,$2,$3,'deal',$4,$5,$6)`,

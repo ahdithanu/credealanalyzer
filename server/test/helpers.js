@@ -14,9 +14,28 @@ const { Client } = require('pg');
  */
 const { migrate } = require('../src/db/migrate');
 
+/**
+ * Connection details, environment-driven so the same suite runs in two places:
+ *
+ *   locally  a unix socket in /tmp, superuser `postgres`, no password
+ *   in CI    a TCP service container, superuser `cre_owner`, a password
+ *
+ * Hard-coding the socket form meant the suite could not run in CI at all, which
+ * is how a repository ends up with 1,162 tests and no merge gate.
+ */
 const HOST = process.env.PGHOST_DIR || '/tmp';
 const PORT = process.env.PGPORT || 5433;
-const ADMIN = `postgres://postgres@localhost:${PORT}/postgres?host=${HOST}`;
+const SUPERUSER = process.env.TEST_PG_USER || 'postgres';
+const PASSWORD = process.env.PGPASSWORD || '';
+
+/** A socket directory starts with '/'; anything else is a TCP host. */
+const isSocket = String(HOST).startsWith('/');
+const auth = (user) => (PASSWORD ? `${user}:${encodeURIComponent(PASSWORD)}` : user);
+const url = (user, db) => (isSocket
+  ? `postgres://${auth(user)}@localhost:${PORT}/${db}?host=${HOST}`
+  : `postgres://${auth(user)}@${HOST}:${PORT}/${db}`);
+
+const ADMIN = url(SUPERUSER, 'postgres');
 
 /** A throwaway database per test file, so tests cannot see each other's rows. */
 async function freshDatabase(name) {
@@ -27,14 +46,17 @@ async function freshDatabase(name) {
   await admin.query(`CREATE DATABASE ${db}`);
   await admin.end();
 
-  const ownerUrl = `postgres://postgres@localhost:${PORT}/${db}?host=${HOST}`;
+  const ownerUrl = url(SUPERUSER, db);
   await migrate(ownerUrl, { log: () => {} });
 
   // The application role. Note it is NOT the owner: `postgres` created the
   // tables, `app_user` only uses them. That difference is the reason RLS binds
   // at all, and the tests below prove it rather than trusting it.
-  const appUrl = `postgres://app_user@localhost:${PORT}/${db}?host=${HOST}`;
-  const authUrl = `postgres://auth_user@localhost:${PORT}/${db}?host=${HOST}`;
+  // app_user and auth_user are created by the migrations with no password. In
+  // CI, Postgres is configured to trust local connections for them; in AWS both
+  // are granted rds_iam and hold no password at all.
+  const appUrl = url('app_user', db);
+  const authUrl = url('auth_user', db);
   return { db, ownerUrl, appUrl, authUrl, drop: async () => {
     const a = new Client({ connectionString: ADMIN });
     await a.connect();

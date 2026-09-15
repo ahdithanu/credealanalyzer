@@ -42,7 +42,7 @@ function safeEqual(a, b) {
  * `tenantId` must be the one resolved from the identity provider's assertion,
  * not one the browser asked for.
  */
-async function issue(_unusedDb, { userId, tenantId, ip, userAgent }) {
+async function issue(_unusedDb, { userId, tenantId, ip, userAgent, authMethod, mfaAsserted }) {
   const token = crypto.randomBytes(TOKEN_BYTES).toString('base64url');
   const expiresAt = new Date(Date.now() + config.session.ttlMs);
   // On the AUTH pool, not the caller's tenant transaction: app_user has no
@@ -52,9 +52,15 @@ async function issue(_unusedDb, { userId, tenantId, ip, userAgent }) {
   // again. That is the right way round: the alternative is giving the
   // tenant-data role the power to mint sessions.
   await authPool.query(
-    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, ip, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [hashToken(token), userId, tenantId, expiresAt, ip || null, (userAgent || '').slice(0, 500)],
+    `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, ip, user_agent,
+                           auth_method, mfa_asserted)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [hashToken(token), userId, tenantId, expiresAt, ip || null, (userAgent || '').slice(0, 500),
+      authMethod || null,
+      // Tri-state on purpose. `false` means the provider told us there was no
+      // second factor; NULL means it said nothing, which is not the same claim
+      // and must not be recorded as one.
+      mfaAsserted === undefined ? null : mfaAsserted],
   );
   return { token, expiresAt };
 }
@@ -71,6 +77,7 @@ async function resolve(token) {
   if (!token) return null;
   const { rows } = await authPool.query(
     `SELECT s.id, s.user_id, s.tenant_id, s.issued_at, s.expires_at, s.revoked_at,
+            s.last_seen_at, s.auth_method, s.mfa_asserted,
             u.email, u.name, u.role,
             t.slug AS tenant_slug, t.name AS tenant_name, t.status AS tenant_status
        FROM sessions s
@@ -83,6 +90,25 @@ async function resolve(token) {
   if (!s) return null;
   if (s.revoked_at) return null;
   if (new Date(s.expires_at) <= new Date()) return null;
+
+  // Idle expiry. Distinct from the absolute lifetime above: this asks how long
+  // the session has sat UNUSED. Revoked rather than merely refused, so a stolen
+  // cookie for an abandoned session is dead rather than dormant.
+  const idleFor = Date.now() - new Date(s.last_seen_at).getTime();
+  if (idleFor > config.session.idleMs) {
+    await authPool.query(
+      'UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [s.id],
+    ).catch(() => { /* expiry already enforced by the return below */ });
+    return null;
+  }
+
+  // Write the idle clock back at most once an interval. Every request would
+  // make this the hottest table in the system to buy a minute of precision on
+  // an hour-long window.
+  if (idleFor > config.session.touchIntervalMs) {
+    authPool.query('UPDATE sessions SET last_seen_at = now() WHERE id = $1', [s.id])
+      .catch(() => { /* a missed touch costs precision, never correctness */ });
+  }
   // A suspended tenant (non-payment, offboarding, a security hold) must lose
   // access immediately, without needing every session revoked one by one.
   if (s.tenant_status !== 'active') return null;
@@ -97,6 +123,9 @@ async function resolve(token) {
     tenant: { id: s.tenant_id, slug: s.tenant_slug, name: s.tenant_name },
     issuedAt: new Date(s.issued_at),
     expiresAt: new Date(s.expires_at),
+    lastSeenAt: new Date(s.last_seen_at),
+    authMethod: s.auth_method,
+    mfaAsserted: s.mfa_asserted,
   };
 }
 
@@ -157,7 +186,23 @@ function csrfToken(sessionId) {
     .digest('base64url');
 }
 
-const csrfValid = (sessionId, presented) => safeEqual(csrfToken(sessionId), presented);
+/**
+ * Accept a token signed with the CURRENT key, or with the outgoing one during a
+ * rotation window. New tokens are always issued under the current key, so the
+ * old key's reach shrinks to one session lifetime and then stops mattering.
+ *
+ * Without this, rotating the signing secret makes every in-flight CSRF token
+ * invalid at once: every user's next save fails until they reload the page.
+ */
+function csrfValid(sessionId, presented) {
+  if (safeEqual(csrfToken(sessionId), presented)) return true;
+  const previous = config.session.previousSigningSecret;
+  if (!previous) return false;
+  const underPrevious = crypto.createHmac('sha256', previous)
+    .update(`csrf:${sessionId}`)
+    .digest('base64url');
+  return safeEqual(underPrevious, presented);
+}
 
 /** True when the session is old enough to be worth replacing. */
 const shouldRotate = (session) =>

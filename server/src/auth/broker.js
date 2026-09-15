@@ -82,7 +82,25 @@ function parseProfile(body) {
     name: [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
     connectionId: p.connection_id || null,
     idpName: p.connection_type || null,
+    // How the person authenticated, as the provider stated it. WorkOS surfaces
+    // SAML AuthnContext / OIDC `amr` under `authentication_method` on
+    // connections that pass it through; many do not.
+    authMethod: p.authentication_method || null,
+    // Tri-state, and the distinction matters: `false` means the provider told us
+    // there was no second factor, NULL means it said nothing. Recording silence
+    // as "no MFA" would lock out every tenant whose IdP omits the claim, and
+    // recording it as "MFA" would be a lie in a security questionnaire.
+    mfaAsserted: mfaFromClaim(p.authentication_method),
   };
+}
+
+/** Read a second factor out of the provider's authentication-method claim. */
+function mfaFromClaim(claim) {
+  if (!claim || typeof claim !== 'string') return null;
+  const c = claim.toLowerCase();
+  if (/mfa|multi.?factor|otp|webauthn|fido|u2f|smartcard|x509/.test(c)) return true;
+  if (/password|unspecified|passwordprotectedtransport/.test(c)) return false;
+  return null;
 }
 
 function workosBroker() {
@@ -175,7 +193,17 @@ function stubBroker() {
       // Single-use, as a real authorization code is.
       codes.delete(code);
       if (!entry.profile) throw Object.assign(new Error('no profile staged'), { status: 400 });
-      return entry.profile;
+
+      // Derive `mfaAsserted` from the claim exactly as the WorkOS parser does,
+      // unless the caller stated it explicitly. A stub that behaves differently
+      // from the thing it stands in for is how a bug reaches production through
+      // a green test suite — here it would have meant the MFA policy was
+      // exercised only against a value no real provider sends.
+      const p = entry.profile;
+      return {
+        ...p,
+        mfaAsserted: p.mfaAsserted !== undefined ? p.mfaAsserted : mfaFromClaim(p.authMethod),
+      };
     },
   };
 }
@@ -192,4 +220,4 @@ function broker() {
 /** Tests only, so each file starts from a clean broker. */
 function __reset() { instance = null; }
 
-module.exports = { broker, __reset, workosBroker, stubBroker, parseProfile };
+module.exports = { broker, __reset, workosBroker, stubBroker, parseProfile, mfaFromClaim };

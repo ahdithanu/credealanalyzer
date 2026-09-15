@@ -103,6 +103,10 @@ test('a documented success body maps onto the profile the system uses', async ()
     name: 'An Analyst',
     connectionId: 'conn_01E',
     idpName: 'OktaSAML',
+    // The fixture's connection does not pass an authentication-method claim,
+    // which is the common case. Silence is recorded as NULL, never as "no MFA".
+    authMethod: null,
+    mfaAsserted: null,
   });
 });
 
@@ -181,6 +185,46 @@ function describe_shape_failures() {
       assert.ok(!/secret_token_value/.test(e.message), 'the access token reached the message');
       assert.ok(!/someone@firm\.com/.test(e.message), 'an email reached the message');
       assert.ok(/access_token, user/.test(e.message), 'the key names should be listed');
+    }
+  });
+}
+
+describe_mfa_claims();
+
+function describe_mfa_claims() {
+  const { mfaFromClaim } = require('../src/auth/broker');
+
+  /**
+   * Reading a second factor out of the provider's claim.
+   *
+   * The tri-state is the point. Recording silence as "no MFA" locks out every
+   * tenant whose identity provider omits the claim — most of them. Recording it
+   * as "MFA" is a lie told to a security questionnaire. Neither is acceptable,
+   * so unknown stays unknown.
+   */
+  test('a claim naming a second factor reads as MFA', () => {
+    for (const claim of [
+      'urn:oasis:names:tc:SAML:2.0:ac:classes:MultiFactorAuthentication',
+      'mfa', 'OTP', 'urn:okta:loginContext:webauthn', 'FIDO2', 'SmartcardPKI',
+    ]) {
+      assert.equal(mfaFromClaim(claim), true, `${claim} should read as MFA`);
+    }
+  });
+
+  test('a claim naming only a password reads as no second factor', () => {
+    for (const claim of [
+      'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
+      'urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport',
+      'unspecified',
+    ]) {
+      assert.equal(mfaFromClaim(claim), false, `${claim} should read as no MFA`);
+    }
+  });
+
+  test('silence stays unknown, never false', () => {
+    for (const claim of [null, undefined, '', 0, {}, 'something-we-have-never-seen']) {
+      assert.equal(mfaFromClaim(claim), null,
+        `${JSON.stringify(claim)} must be unknown, not a claim about MFA`);
     }
   });
 }

@@ -126,7 +126,7 @@ async function complete({ state, code, ip, userAgent }) {
 
   // Resolve the tenant by the BROKER's organization id.
   const { rows: tenantRows } = await authPool.query(
-    `SELECT id, slug, name, status FROM tenants WHERE broker_org_id = $1`,
+    `SELECT id, slug, name, status, require_mfa FROM tenants WHERE broker_org_id = $1`,
     [profile.organizationId],
   );
   const tenant = tenantRows[0];
@@ -152,6 +152,16 @@ async function complete({ state, code, ip, userAgent }) {
   if (!domainRows.length) {
     throw new LoginError('domain_not_verified',
       'Your email domain is not verified for this organization.', 403);
+  }
+
+  // A tenant may require that the identity provider asserted a second factor.
+  // NULL means no policy — not "off" — so a tenant is never silently opted in.
+  // Enforced HERE rather than at the screen, because a policy checked after a
+  // session exists is a policy an attacker can skip by not loading the screen.
+  if (tenant.require_mfa === true && profile.mfaAsserted !== true) {
+    throw new LoginError('mfa_required',
+      'Your organization requires multi-factor authentication, and your identity '
+      + 'provider did not confirm it was used.', 403);
   }
 
   // Just-in-time provisioning, inside the tenant context so the INSERT is
@@ -185,6 +195,10 @@ async function complete({ state, code, ip, userAgent }) {
           // decision was reached without duplicating personal data into a table
           // with a long retention.
           domain,
+          // How they authenticated, as the provider stated it. An empty value
+          // means the provider said nothing, which is itself worth recording.
+          authMethod: profile.authMethod || null,
+          mfaAsserted: profile.mfaAsserted ?? null,
         }), ip || null],
     );
 
@@ -196,6 +210,8 @@ async function complete({ state, code, ip, userAgent }) {
   // session.issue() for why that ordering is the right trade.
   const issued = await session.issue(null, {
     userId: result.user.id, tenantId: tenant.id, ip, userAgent,
+    authMethod: profile.authMethod || null,
+    mfaAsserted: profile.mfaAsserted,
   });
 
   return {

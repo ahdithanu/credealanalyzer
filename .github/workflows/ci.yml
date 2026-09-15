@@ -1,0 +1,159 @@
+name: CI
+
+# The merge gate. Before this existed the repository had 1,162 tests and nothing
+# that ran them — the tenant isolation suite, which is the only thing standing
+# between two client firms' data, could be broken by a commit and merged
+# silently. Mutation-verified tests that nothing enforces are documentation.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  # Dependency advisories appear without anyone pushing.
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [test, build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - if: matrix.suite == 'test'
+        run: npm test -- --watchAll=false
+        env:
+          CI: true
+      - if: matrix.suite == 'build'
+        # INLINE_RUNTIME_CHUNK=false lives in the build script. The deployed CSP
+        # has no 'unsafe-inline' on script-src, so an inlined runtime chunk ships
+        # a blank page with a console error.
+        run: npm run build
+      - if: matrix.suite == 'build'
+        name: Assert the bundle carries no inline script
+        run: |
+          COUNT=$(grep -c '<script>' build/index.html || true)
+          if [ "$COUNT" != "0" ]; then
+            echo "::error::build/index.html has $COUNT inline script tag(s); the CSP will block them"
+            exit 1
+          fi
+
+  server:
+    name: Server and tenant isolation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cre_owner
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cre_owner"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - name: Tests
+        working-directory: server
+        # Serial by necessity: each file gets its own database, but Postgres
+        # ROLES are cluster-wide, so the role statements in the migrations
+        # collide across parallel files.
+        run: npm test
+        env:
+          PGHOST_DIR: localhost
+          PGPORT: 5432
+          PGPASSWORD: ci_only
+          TEST_PG_USER: cre_owner
+
+  infra:
+    name: Infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - run: npm ci
+        working-directory: infra
+      - name: Assertions against the synthesized template
+        working-directory: infra
+        run: node --test test/*.test.js
+
+  supply-chain:
+    name: Dependencies and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+
+      - name: Server advisories
+        working-directory: server
+        # The server's RUNTIME tree ships to production and is held to a high
+        # bar. It has no dev dependencies to speak of, so this is honest.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Frontend runtime advisories
+        # Deliberately --omit=dev. The frontend's high-severity findings are all
+        # transitive through react-scripts and are BUILD-time only: they never
+        # reach a browser. Failing the build on them would either block every
+        # merge or train everyone to ignore a red check. The next step reports
+        # them without gating, and P2-01 (migrate off Create React App) removes
+        # them permanently.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build-chain advisories (reported, not gated)
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      - name: Generate SBOM
+        run: |
+          npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON \
+            --output-file sbom-frontend.json || echo "frontend SBOM skipped"
+          (cd server && npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON \
+            --output-file ../sbom-server.json) || echo "server SBOM skipped"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-*.json
+          if-no-files-found: warn
+
+  container:
+    name: Container image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the API image
+        run: docker build -t cre-api:ci ./server
+      - name: Scan for OS and library vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cre-api:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
