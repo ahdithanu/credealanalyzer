@@ -5,6 +5,8 @@ const config = require('./config');
 const { authRoutes } = require('./routes/auth');
 const { dealRoutes } = require('./routes/deals');
 const { auditRoutes } = require('./routes/audit');
+const { exportRoutes } = require('./routes/export');
+const { scimRoutes } = require('./routes/scim');
 const { requireSession } = require('./middleware/requireSession');
 const { rateLimit } = require('./middleware/rateLimit');
 
@@ -48,6 +50,23 @@ function createApp() {
     next();
   });
 
+  /**
+   * SCIM, mounted AHEAD of the body parser, the global limiter and the cookie
+   * shim — every one of which is built for a browser talking to the SPA.
+   *
+   * A directory is not a browser. It sends `application/scim+json`, which the
+   * parser below does not claim; it holds a bearer token rather than a cookie;
+   * and it calls from an egress address SHARED WITH EVERY OTHER CUSTOMER of
+   * that directory, which is what makes the global limiter wrong here rather
+   * than merely redundant — keyed by address, one firm's bulk import would
+   * throttle an unrelated firm's deprovisioning. The router brings its own
+   * parser and its own limiter keyed on the token; see routes/scim.js.
+   *
+   * The trade is stated rather than hidden: these routes sit outside the broad
+   * ceiling, so their own limiter is the only one in front of them.
+   */
+  app.use('/scim/v2', scimRoutes());
+
   app.use(express.json({ limit: '1mb' }));
 
   // A broad ceiling across everything, so a single client cannot saturate the
@@ -82,6 +101,14 @@ function createApp() {
   app.use('/auth', rateLimit({ name: 'auth', limit: 30, windowMs: 60_000 }), authRoutes());
   app.use('/api/deals', requireSession(), dealRoutes());
   app.use('/api/audit', requireSession(), auditRoutes());
+  // Limited far harder than the rest, and limited BEFORE the session lookup so
+  // a flood costs no database work. One call reads every row the tenant owns
+  // and holds a pooled connection for the length of the transfer; the ordinary
+  // use is a handful of times a year, when a firm asks for its archive or an
+  // auditor asks for evidence. Anything approaching this ceiling is not that.
+  app.use('/api/export',
+    rateLimit({ name: 'export', limit: 5, windowMs: 60_000 }),
+    requireSession(), exportRoutes());
 
   app.use((req, res) => res.status(404).json({ error: 'not_found' }));
 

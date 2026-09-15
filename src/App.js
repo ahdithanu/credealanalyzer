@@ -209,7 +209,18 @@ export default function App() {
     [deals],
   );
 
-  const notices = statusNotices({ ...storageState, rejectedWaterfalls });
+  // Deals whose stored terms could not be read back. NOT the same as a deal
+  // nobody has filled in: the data exists and is unreadable, which is a key
+  // failure or a destroyed key, and the firm needs to be told rather than shown
+  // a screen of blanks with no explanation.
+  const unreadableDeals = useMemo(
+    () => deals.filter((d) => d.payloadError).map((d) => ({
+      id: d.id, name: d.name ?? null, reason: d.payloadError,
+    })),
+    [deals],
+  );
+
+  const notices = statusNotices({ ...storageState, rejectedWaterfalls, unreadableDeals });
   const needsDeal = view !== 'pipeline' && !selected;
 
   // ── The gate ─────────────────────────────────────────────────────────────
@@ -340,7 +351,7 @@ export default function App() {
  * quota failed the probe and every caller was told the facility was missing —
  * and a notice nobody can reach is not a notice.
  */
-export function statusNotices({ available, loadError, writeError, rejectedWaterfalls }) {
+export function statusNotices({ available, loadError, writeError, rejectedWaterfalls, unreadableDeals }) {
   const out = [];
   if (loadError === 'corrupt') {
     out.push('Saved deals could not be read and have been set aside for recovery. Starting from the sample portfolio.');
@@ -371,5 +382,24 @@ export function statusNotices({ available, loadError, writeError, rejectedWaterf
       ` and its returns are shown before promote: ${named}. Open the Waterfall screen to correct the structure.`
     );
   }
+
+  // A deal whose stored terms could not be decrypted. Deliberately worded to
+  // separate it from an empty deal: the figures are not missing, they are
+  // unreadable, and the difference is the difference between "nobody has
+  // underwritten this yet" and "call someone".
+  const unreadable = unreadableDeals ?? [];
+  if (unreadable.length) {
+    const named = unreadable.map((d) => d.name ?? 'an untitled deal').join('; ');
+    const destroyed = unreadable.some((d) => d.reason === 'key_destroyed');
+    out.push(
+      `The stored terms for ${unreadable.length === 1 ? 'a deal' : `${unreadable.length} deals`}` +
+      ` could not be read back, so ${unreadable.length === 1 ? 'it is' : 'they are'} shown blank: ${named}.` +
+      ` The figures are not missing, they are unreadable\u2014${destroyed
+        ? 'the encryption key for this organization has been destroyed.'
+        : 'this is an encryption failure, not an empty deal.'}` +
+      ' Contact your administrator before entering anything over the top of it.'
+    );
+  }
+
   return out;
 }

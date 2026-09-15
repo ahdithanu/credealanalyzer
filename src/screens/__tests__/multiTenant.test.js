@@ -249,3 +249,75 @@ describe('remote persistence', () => {
     expect(dealStore.mode).toBe('local');
   });
 });
+
+describe('an unreadable deal is not shown as an empty one', () => {
+  // A deal whose stored terms cannot be decrypted means the data EXISTS and is
+  // unreadable — a key failure, or a destroyed key. Shown as blanks with no
+  // explanation, an analyst reasonably concludes nobody has filled it in yet
+  // and starts typing over it. The server distinguishes the two cases; the
+  // client used to drop the distinction at the dealStore seam.
+  it('carries payloadError through to the client deal', () => {
+    jest.resetModules();
+    process.env.REACT_APP_API_URL = API;
+    // eslint-disable-next-line global-require
+    const { __internals } = require('../../lib/dealStore');
+    const deal = __internals.toClient({
+      id: 'd1', name: 'Probe Tower', stage: 'Screening',
+      payload: null, payloadError: 'decrypt_failed',
+      updated_at: '2026-09-15T00:00:00Z',
+    });
+    expect(deal.payloadError).toBe('decrypt_failed');
+  });
+
+  it('a readable deal carries no error', () => {
+    jest.resetModules();
+    process.env.REACT_APP_API_URL = API;
+    // eslint-disable-next-line global-require
+    const { __internals } = require('../../lib/dealStore');
+    const deal = __internals.toClient({
+      id: 'd1', name: 'Fine', stage: 'Screening',
+      payload: { purchasePrice: 1 }, updated_at: '2026-09-15T00:00:00Z',
+    });
+    expect(deal.payloadError).toBeNull();
+    expect(deal.purchasePrice).toBe(1);
+  });
+
+  it('says the figures are unreadable, not missing', () => {
+    jest.resetModules();
+    // eslint-disable-next-line global-require
+    const { statusNotices } = require('../../App');
+    const notices = statusNotices({
+      available: true, loadError: null, writeError: null,
+      unreadableDeals: [{ id: 'd1', name: 'Probe Tower', reason: 'decrypt_failed' }],
+    });
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatch(/Probe Tower/);
+    expect(notices[0]).toMatch(/unreadable/);
+    // It must not ASSERT that the deal is empty. "not an empty deal" is the
+    // correction, so a bare substring check would flag the very wording that
+    // fixes the misreading — which is what this assertion did at first.
+    expect(notices[0]).not.toMatch(/(?<!not an )empty deal\b/);
+    expect(notices[0]).not.toMatch(/not yet underwritten/);
+    expect(notices[0]).toMatch(/not missing/);
+  });
+
+  it('names a destroyed key as such, since the remedy is different', () => {
+    jest.resetModules();
+    // eslint-disable-next-line global-require
+    const { statusNotices } = require('../../App');
+    const notices = statusNotices({
+      available: true, loadError: null, writeError: null,
+      unreadableDeals: [{ id: 'd1', name: 'Gone', reason: 'key_destroyed' }],
+    });
+    expect(notices[0]).toMatch(/key for this organization has been destroyed/);
+  });
+
+  it('is silent when every deal is readable', () => {
+    jest.resetModules();
+    // eslint-disable-next-line global-require
+    const { statusNotices } = require('../../App');
+    expect(statusNotices({
+      available: true, loadError: null, writeError: null, unreadableDeals: [],
+    })).toEqual([]);
+  });
+});

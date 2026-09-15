@@ -40,6 +40,14 @@ const toClient = (row) => ({
   name: row.name,
   stage: row.stage ?? undefined,
   updatedAt: row.updated_at,
+  // WHY the payload is absent, when it is. The server distinguishes a deal that
+  // was never filled in from one whose stored terms cannot be decrypted — the
+  // second means the data exists and is unreadable, which is an incident, not an
+  // empty form. Dropping this field at the seam collapsed the two, so a firm
+  // whose key had failed saw a screen full of blanks and no reason to call
+  // anyone. The engine correctly refuses to invent figures either way; this is
+  // what lets a surface say which case it is looking at.
+  payloadError: row.payloadError ?? null,
 });
 
 const toServer = (deal) => {
