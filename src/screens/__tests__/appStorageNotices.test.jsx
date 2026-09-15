@@ -25,7 +25,7 @@ const quotaError = () => {
 };
 
 beforeEach(() => window.localStorage.clear());
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => vi.restoreAllMocks());
 
 describe('statusNotices', () => {
   const only = (state) => statusNotices({ available: true, loadError: null, writeError: null, ...state });
@@ -68,7 +68,7 @@ describe('App renders the notice a real browser state produces', () => {
   it('reaches the full-store notice when the store has content and refuses more', () => {
     // Seed real content first, so the store HAS quota and has run out of it.
     window.localStorage.setItem('anything', 'x');
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw quotaError(); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw quotaError(); });
     withScreen(<App />, (c) => {
       expect(text(c)).toMatch(/storage is full/i);
       expect(text(c)).toMatch(/delete deals/i);
@@ -78,7 +78,7 @@ describe('App renders the notice a real browser state produces', () => {
   it('reaches the unavailable notice when an empty store refuses its first byte', () => {
     // Safari private browsing: the API is present, the quota is zero, and there
     // is nothing stored to delete.
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw quotaError(); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw quotaError(); });
     withScreen(<App />, (c) => {
       expect(text(c)).toMatch(/storage is unavailable/i);
       expect(text(c)).not.toMatch(/storage is full/i);
@@ -95,7 +95,7 @@ describe('App renders the notice a real browser state produces', () => {
     // The read still works, so a full disk must not look like a first visit —
     // which App answers by seeding the sample portfolio over the user's work.
     saveDeals([{ id: 42, name: 'A deal the user typed', propertyType: 'multifamily', holdPeriod: 5 }]);
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw quotaError(); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw quotaError(); });
     withScreen(<App />, (c) => {
       expect(text(c)).toContain('A deal the user typed');
     });

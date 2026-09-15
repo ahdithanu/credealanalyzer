@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const config = require('../config');
 const { rateLimit } = require('../middleware/rateLimit');
 const { securityEvent, KIND } = require('../obs/securityLog');
 
@@ -129,7 +130,7 @@ function cspReportRoutes() {
   // 60 a minute per address. A legitimate browser on a page with a genuine
   // policy problem sends a handful; a page under active attack sends more, and
   // the suppression above means we do not need every copy to raise the alarm.
-  r.use(rateLimit({ name: 'csp', limit: 60, windowMs: 60_000 }));
+  r.use(rateLimit({ name: 'csp', limit: config.rateLimits.csp, windowMs: 60_000 }));
 
   // Claim every content type a browser uses for this, and nothing else. The
   // global express.json() in app.js does not claim these, which is why this

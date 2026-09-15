@@ -60,6 +60,83 @@ CREATE POLICY audit_log_owner_read ON audit_log
   FOR SELECT TO CURRENT_USER
   USING (true);
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- And the operator must be able to WRITE the operator's audit trail.
+--
+-- The same superuser fixture hid a second bug here, in the control the code
+-- above recordAdmin() calls "the single worst gap in the system": administrative
+-- actions — creating a tenant, verifying the email domain that admits an entire
+-- firm to its data — were made auditable, through a code path that cannot write
+-- an audit row on the platform it deploys to.
+--
+-- The admin tools connect with the OWNER credential and set no tenant context,
+-- so tenant_isolation's WITH CHECK (tenant_id = current_tenant_id()) rejects
+-- every row they try to write. Against a superuser it never came up. Against
+-- `cre_owner` on RDS, every administrative action would have printed
+-- "WARNING: the action succeeded but was not audited" and carried on — a
+-- best-effort audit write, degrading to no audit at all, for exactly the
+-- actions with no other record.
+--
+-- INSERT only. There is deliberately NO owner policy for UPDATE or DELETE, and
+-- that absence is the point: the hash chain's promise is that altering history
+-- is detectable, and a policy letting the owner edit rows would be a blessed
+-- path to doing it. The owner can still `ALTER TABLE ... NO FORCE` and reach
+-- the table anyway — but that is a deliberate, visible act of schema surgery,
+-- not a thing an ordinary statement does by accident.
+DROP POLICY IF EXISTS audit_log_owner_write ON audit_log;
+CREATE POLICY audit_log_owner_write ON audit_log
+  FOR INSERT TO CURRENT_USER
+  WITH CHECK (true);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- The operator tooling, likewise.
+--
+-- Retention purges, tenant offboarding and the encryption backfill all run on
+-- the owner credential and all work ACROSS tenants by definition — "delete
+-- every soft-deleted deal past its firm's window" is not a question that can be
+-- asked from inside one tenant. Under a superuser owner they read everything
+-- and nobody noticed they depended on that. Under `cre_owner` on RDS they set
+-- no tenant context, tenant_isolation matches nothing, and every one of them
+-- reports success over an empty set:
+--
+--     purge: 0 deals removed
+--
+-- which is indistinguishable from a clean system and would have been read as
+-- one. A retention policy that quietly deletes nothing is a compliance claim
+-- with nothing behind it.
+--
+-- These policies do NOT widen what the application can see. `app_user` — the
+-- role every internet-facing request runs as — keeps tenant_isolation exactly
+-- as it was, and that is the boundary the product is sold on. This admits the
+-- OPERATOR's credential, which already owns these tables and can drop FORCE
+-- from any of them at will. The gain is that the capability is now declared, in
+-- pg_policies, where a reviewer can see it, instead of resting on whether
+-- whoever provisioned the database happened to make the owner a superuser.
+--
+-- audit_log is excluded and keeps its two narrow policies above: SELECT for the
+-- verifier, INSERT for the operator's own trail, and nothing for UPDATE or
+-- DELETE.
+DO $$
+DECLARE t text;
+BEGIN
+  -- Every tenant-scoped table under row level security EXCEPT audit_log, which
+  -- is handled narrowly above. tenant_keys is on this list deliberately: the
+  -- crypto-shredding that offboarding depends on destroys a row here, and
+  -- without access the offboarding reports keyDestroyed and destroys nothing —
+  -- an erasure claim, made to a departing client firm, with a readable payload
+  -- still sitting behind it.
+  FOREACH t IN ARRAY ARRAY['users', 'deals', 'firm_defaults', 'sessions',
+                           'tenant_keys', 'scim_tokens']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS owner_access ON %I', t);
+    EXECUTE format($f$
+      CREATE POLICY owner_access ON %I
+        FOR ALL TO CURRENT_USER
+        USING (true) WITH CHECK (true)
+    $f$, t);
+  END LOOP;
+END $$;
+
 -- SECURITY DEFINER, with search_path pinned. An unpinned search_path on a
 -- definer function is the classic escalation: a caller who can create objects
 -- prepends a schema and the function resolves `audit_log` to a table of their

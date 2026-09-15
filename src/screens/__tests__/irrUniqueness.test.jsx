@@ -28,8 +28,14 @@ import React from 'react';
 
 let mockIrrOverride = null;
 
-jest.mock('../../lib/finance', () => {
-  const actual = jest.requireActual('../../lib/finance');
+// vi.mock is hoisted above the imports below, exactly as jest.mock was, so the
+// screens under test see the stub the first time they resolve finance.js. The
+// factory is async only because vi.importActual is — jest.requireActual was
+// synchronous and has no Vitest counterpart. `mockIrrOverride` is safe to close
+// over despite the hoist because it is read when runModel is CALLED, inside a
+// test, not while the factory body runs.
+vi.mock('../../lib/finance', async () => {
+  const actual = await vi.importActual('../../lib/finance');
   const stamp = (model) =>
     mockIrrOverride && model && model.returns
       ? { ...model, returns: { ...model.returns, irrDiagnostics: mockIrrOverride } }

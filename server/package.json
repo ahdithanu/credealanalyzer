@@ -11,7 +11,9 @@
     "seed": "node src/admin/seedDemo.js",
     "tenants": "node src/admin/tenants.js",
     "sso:check": "node src/admin/ssoCheck.js",
-    "audit:verify": "node src/admin/verifyAudit.js"
+    "audit:verify": "node src/admin/verifyAudit.js",
+    "loadtest": "node src/admin/loadtest.js",
+    "sbom": "npm sbom --sbom-format cyclonedx --omit=dev"
   },
   "dependencies": {
     "express": "^4.21.2",

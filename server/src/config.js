@@ -85,6 +85,28 @@ const config = {
     touchIntervalMs: Number(process.env.SESSION_TOUCH_INTERVAL_MS || 60 * 1000),
   },
 
+  /**
+   * Rate limit ceilings.
+   *
+   * Tunable because they have to be. They were literals in app.js, which meant
+   * the only way to measure this service's actual capacity was to edit the
+   * source: a load test from one host is one client address, so it hits the
+   * global ceiling within a second and every number after that describes the
+   * limiter rather than the server. The first run of src/admin/loadtest.js did
+   * exactly that — 62,000 requests, 62,124 of them 429 — and reported a pass.
+   *
+   * Defaults are the values that were hardcoded, so nothing changes by leaving
+   * them alone. Raising them for a measurement run is a deliberate act with an
+   * obvious name, and production still has the WAF in front doing the precise
+   * counting per address.
+   */
+  rateLimits: {
+    global: Number(process.env.RATE_LIMIT_GLOBAL || 600),
+    auth: Number(process.env.RATE_LIMIT_AUTH || 30),
+    export: Number(process.env.RATE_LIMIT_EXPORT || 5),
+    csp: Number(process.env.RATE_LIMIT_CSP || 60),
+  },
+
   sso: {
     // 'workos' in every real environment. 'stub' exists so the entire login
     // flow is testable with no network and no vendor account — see auth/stub.js

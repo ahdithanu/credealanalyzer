@@ -88,7 +88,7 @@ function createApp() {
   // A broad ceiling across everything, so a single client cannot saturate the
   // pool even on authenticated routes. Generous enough that ordinary use — the
   // sensitivity screen runs many models per interaction — never reaches it.
-  app.use(rateLimit({ name: 'global', limit: 600, windowMs: 60_000 }));
+  app.use(rateLimit({ name: 'global', limit: config.rateLimits.global, windowMs: 60_000 }));
 
   // Minimal cookie setter, so express-cookie is not a dependency.
   app.use((req, res, next) => {
@@ -114,7 +114,7 @@ function createApp() {
   // The auth path is limited harder than the rest: it is the only
   // unauthenticated surface that touches the database, and every call to
   // /auth/start writes a row.
-  app.use('/auth', rateLimit({ name: 'auth', limit: 30, windowMs: 60_000 }), authRoutes());
+  app.use('/auth', rateLimit({ name: 'auth', limit: config.rateLimits.auth, windowMs: 60_000 }), authRoutes());
   app.use('/api/deals', requireSession(), dealRoutes());
   app.use('/api/audit', requireSession(), auditRoutes());
   // Limited far harder than the rest, and limited BEFORE the session lookup so
@@ -123,7 +123,7 @@ function createApp() {
   // use is a handful of times a year, when a firm asks for its archive or an
   // auditor asks for evidence. Anything approaching this ceiling is not that.
   app.use('/api/export',
-    rateLimit({ name: 'export', limit: 5, windowMs: 60_000 }),
+    rateLimit({ name: 'export', limit: config.rateLimits.export, windowMs: 60_000 }),
     requireSession(), exportRoutes());
 
   app.use((req, res) => res.status(404).json({ error: 'not_found' }));

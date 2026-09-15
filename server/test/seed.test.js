@@ -8,7 +8,7 @@ let env, seedDemo, list;
 
 test.before(async () => {
   env = await freshDatabase('seed');
-  process.env.DATABASE_MIGRATION_URL = env.ownerUrl;
+  process.env.DATABASE_MIGRATION_URL = env.migrationUrl;
   ({ seedDemo } = require('../src/admin/seedDemo'));
   ({ list } = require('../src/admin/tenants'));
 });

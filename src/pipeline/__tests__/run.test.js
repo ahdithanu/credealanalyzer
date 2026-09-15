@@ -1,4 +1,8 @@
 import { runPipeline, applyMarketData, defaultPlan, transportFor } from '../run';
+// Imported at the top rather than inside collectHashes(): that was a require(),
+// and this file is now an ES module where require is not defined. The point of
+// reaching for land() at all is unchanged — see collectHashes below.
+import { land } from '../stages';
 import { censusACS, blsCES, hcadZipBytes, txdotAADT, CBSA_TO_MARKET, fixtureFetch, fakeUnpackArchive } from '../fixtures';
 import { markets as seedMarkets } from '../../lib/markets';
 
@@ -90,7 +94,6 @@ describe('runPipeline', () => {
 function collectHashes(run) {
   // The run does not expose landed hashes directly; re-deriving them is enough
   // to prove the dedupe path, since land() is deterministic on content.
-  const { land } = require('../stages');
   return [
     land(censusACS, { sourceId: 'census.acs5', fetchedAt: RECORDED }).hash,
     land(blsCES, { sourceId: 'bls.ces', fetchedAt: RECORDED }).hash,

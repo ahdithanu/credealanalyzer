@@ -3,16 +3,30 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --silent || npm install --silent
-COPY public ./public
+# index.html is the Vite entry and lives at the repository root, not in public/:
+# Vite reads it as a module-graph root and rewrites its <script src> at build
+# time. vite.config.js carries base, outDir and the REACT_APP_API_URL mapping,
+# so a build without it emits absolute /assets/ paths into dist/ and this image
+# ends up empty.
+COPY index.html vite.config.js ./
 COPY src ./src
 ARG REACT_APP_API_URL=""
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
-# INLINE_RUNTIME_CHUNK=false comes from the build script in package.json: the
-# CloudFront CSP has no 'unsafe-inline' on script-src, so an inlined runtime
-# chunk is a blank page with a console error.
+# The variable keeps its Create React App name deliberately; vite.config.js maps
+# it onto what src/lib/api.js reads. Under Vite's own convention it would be
+# VITE_API_URL, and renaming it would not fail the build — it would ship a
+# single-user app talking to localStorage while the operator believed it was
+# talking to their tenant's database. docker-compose.yml passes this same name.
+#
+# There is no INLINE_RUNTIME_CHUNK here and none is needed: CRA emitted a
+# separate runtime chunk and inlined it into index.html by default, which the
+# CloudFront CSP (no 'unsafe-inline' on script-src) turns into a blank page.
+# Vite has no runtime chunk to inline. CI asserts the built HTML rather than
+# trusting that.
 RUN npm run build
 
 FROM nginx:alpine
+# build/, not Vite's dist/ default — vite.config.js pins build.outDir to match.
 COPY --from=build /app/build /usr/share/nginx/html
 # Client-side routing: a deep link to /pipeline is not a file on disk.
 RUN printf 'server {\n\

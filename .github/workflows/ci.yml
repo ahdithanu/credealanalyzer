@@ -35,20 +35,34 @@ jobs:
           cache: npm
       - run: npm ci
       - if: matrix.suite == 'test'
-        run: npm test -- --watchAll=false
+        # `vitest run` is already single-pass; the old `-- --watchAll=false` was
+        # a jest flag and vitest rejects it.
+        run: npm test
         env:
           CI: true
       - if: matrix.suite == 'build'
-        # INLINE_RUNTIME_CHUNK=false lives in the build script. The deployed CSP
-        # has no 'unsafe-inline' on script-src, so an inlined runtime chunk ships
-        # a blank page with a console error.
+        # No INLINE_RUNTIME_CHUNK=false any more. That flag existed because CRA
+        # emitted a separate webpack runtime chunk and inlined it into the HTML
+        # by default; Vite has no runtime chunk, so there is nothing to inline.
+        # The assertion below is what actually holds the line.
         run: npm run build
       - if: matrix.suite == 'build'
         name: Assert the bundle carries no inline script
+        # The deployed CloudFront CSP has no 'unsafe-inline' on script-src, so a
+        # single inline <script> ships a blank page with a console error and
+        # nothing else fails first.
+        #
+        # This matches any <script> that carries no src=, not the literal
+        # '<script>' the CRA-era version looked for. Vite writes its tags with
+        # attributes (`<script type="module" crossorigin src=...>`), so the old
+        # pattern would have gone on passing while an inline
+        # `<script type="module">…</script>` — which is exactly what
+        # @vitejs/plugin-legacy injects — sailed through.
         run: |
-          COUNT=$(grep -c '<script>' build/index.html || true)
-          if [ "$COUNT" != "0" ]; then
-            echo "::error::build/index.html has $COUNT inline script tag(s); the CSP will block them"
+          BAD=$(grep -o '<script[^>]*>' build/index.html | grep -v 'src=' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::build/index.html carries an inline script; the CSP will block it"
+            printf '%s\n' "$BAD"
             exit 1
           fi
 
@@ -117,30 +131,65 @@ jobs:
         # bar. It has no dev dependencies to speak of, so this is honest.
         run: npm audit --omit=dev --audit-level=high
 
-      - name: Frontend runtime advisories
-        # Deliberately --omit=dev. The frontend's high-severity findings are all
-        # transitive through react-scripts and are BUILD-time only: they never
-        # reach a browser. Failing the build on them would either block every
-        # merge or train everyone to ignore a red check. The next step reports
-        # them without gating, and P2-01 (migrate off Create React App) removes
-        # them permanently.
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: Build-chain advisories (reported, not gated)
-        continue-on-error: true
+      - name: Frontend advisories
+        # One gate over the WHOLE tree, dev dependencies included — no --omit=dev
+        # and no ungated companion step.
+        #
+        # Those two steps existed because every high-severity finding here was
+        # transitive through react-scripts and build-time only, so gating on them
+        # would have blocked every merge over something that never reached a
+        # browser, and a client's security questionnaire could not tell the
+        # difference. Vite removed the findings instead of explaining them: the
+        # tree audits clean at every severity, so the distinction has nothing
+        # left to describe and a real regression now turns this job red.
         run: npm audit --audit-level=high
 
-      - name: Generate SBOM
+      # Both trees' dependencies must be resolved before an SBOM can describe
+      # them. `npm audit` above does not install.
+      - name: Install
         run: |
-          npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON \
-            --output-file sbom-frontend.json || echo "frontend SBOM skipped"
-          (cd server && npx --yes @cyclonedx/cyclonedx-npm@latest --output-format JSON \
-            --output-file ../sbom-server.json) || echo "server SBOM skipped"
+          npm ci
+          (cd server && npm ci)
+
+      - name: Generate SBOM
+        # `npm sbom`, built into npm 10, not `npx @cyclonedx/cyclonedx-npm@latest`
+        # — which downloads and executes an unpinned package from the registry
+        # inside the job whose entire purpose is supply-chain assurance.
+        #
+        # This is the CI copy, for the audit trail of what each commit resolved
+        # to. The one that MATTERS for a running system is generated inside
+        # server/Dockerfile and ships in the image, because that is the tree
+        # actually deployed; an SBOM produced by a separate install in a separate
+        # job describes a tree that resolved at a different moment.
+        run: |
+          npm sbom --sbom-format cyclonedx > sbom-frontend.json
+          (cd server && npm sbom --sbom-format cyclonedx --omit=dev > ../sbom-server.json)
+
+      - name: Assert the SBOMs describe something
+        # The previous version ended every generation with `|| echo "skipped"`
+        # and uploaded with `if-no-files-found: warn`, so a failure produced a
+        # green job, no artifact, and a supply-chain claim with nothing behind
+        # it. An SBOM that is absent or empty is worse than one that is missing
+        # loudly: the first is mistaken for evidence.
+        run: |
+          for f in sbom-frontend.json sbom-server.json; do
+            n=$(node -e "process.stdout.write(String((require('./$f').components||[]).length))")
+            echo "$f: $n components"
+            if [ "$n" -lt 1 ]; then
+              echo "::error::$f lists no components"
+              exit 1
+            fi
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: sbom-*.json
-          if-no-files-found: warn
+          # error, not warn. See above.
+          if-no-files-found: error
+          # Long enough to answer "was the build we shipped in March affected by
+          # this advisory" when the advisory lands in September.
+          retention-days: 90
 
   container:
     name: Container image scan

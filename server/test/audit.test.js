@@ -19,7 +19,7 @@ let env, seed, admin, pool;
 test.before(async () => {
   env = await freshDatabase('audit');
   seed = await seedTwoTenants(env.ownerUrl);
-  process.env.DATABASE_MIGRATION_URL = env.ownerUrl;
+  process.env.DATABASE_MIGRATION_URL = env.migrationUrl;
   process.env.DATABASE_URL = env.appUrl;
   process.env.AUTH_DATABASE_URL = env.authUrl;
   process.env.ADMIN_ACTOR = 'operator@uaconsulting.co';
@@ -394,16 +394,62 @@ test('the verifier does not become a hole in tenant isolation', async () => {
     'a tenant can read the whole audit log — the definer function has leaked the table');
 });
 
-test('the owner policy grants reads and nothing more', async () => {
-  // The definer function needs SELECT and only SELECT. Widening this to FOR ALL
-  // would hand the owner a policy-blessed path to UPDATE and DELETE audit rows
-  // — which is the exact operation the hash chain exists to make evident.
+test('no policy gives anyone a path to UPDATE or DELETE an audit row', async () => {
+  /**
+   * The hash chain's whole promise is that altering history is detectable, and
+   * the grants in migration 003 are what keep the application from writing a
+   * digest. Migration 008 had to admit the owner to audit_log for two specific
+   * things — SELECT so the verifier can walk the chain, INSERT so the operator
+   * can record their own administrative actions — and the shape of what it
+   * admitted is what this pins.
+   *
+   * Widening either to FOR ALL, or adding a third policy, would create a
+   * policy-blessed route to editing the log. The owner can still reach the
+   * table by dropping FORCE, and that is fine: it is deliberate schema surgery,
+   * not something an ordinary UPDATE does on its way past.
+   */
   const { rows } = await ownerQuery(`
-    SELECT polcmd FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
-     WHERE c.relname = 'audit_log' AND p.polname = 'audit_log_owner_read'`);
-  assert.equal(rows.length, 1, 'the owner read policy is missing');
-  // 'r' is SELECT. '*' would be ALL.
-  assert.equal(rows[0].polcmd, 'r', `the policy covers ${rows[0].polcmd}, not just SELECT`);
+    SELECT polname, polcmd, polroles::regrole[]::text[] AS roles
+      FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+     WHERE c.relname = 'audit_log' ORDER BY polname`);
+  const byName = Object.fromEntries(rows.map((r) => [r.polname, r]));
+  assert.equal(byName.audit_log_owner_read?.polcmd, 'r', 'the verifier needs SELECT');
+  assert.equal(byName.audit_log_owner_write?.polcmd, 'a', "the operator's trail needs INSERT");
+
+  // The owner's two policies must stay narrow. 'w' is UPDATE, 'd' is DELETE,
+  // '*' is ALL — none of those may be attached to a named role here.
+  for (const r of rows.filter((x) => !x.roles.includes('-'))) {
+    assert.ok(!['w', 'd', '*'].includes(r.polcmd),
+      `policy ${r.polname} covers ${r.polcmd}, which lets ${r.roles} rewrite the audit log`);
+  }
+
+  // tenant_isolation IS `FOR ALL` and always has been, applying to PUBLIC. The
+  // control that stops the application rewriting history is not that policy but
+  // the GRANT beneath it: migration 003 revoked table-wide INSERT and re-granted
+  // it column by column, and UPDATE and DELETE were never granted at all. A
+  // policy cannot admit what no grant permits, so that is what is asserted here
+  // — pinning the policy instead would be pinning the wrong control.
+  const grants = await ownerQuery(`
+    SELECT privilege_type FROM information_schema.table_privileges
+     WHERE table_name = 'audit_log' AND grantee = 'app_user'`);
+  const held = grants.rows.map((r) => r.privilege_type);
+  assert.ok(!held.includes('UPDATE'), 'app_user can UPDATE the audit log');
+  assert.ok(!held.includes('DELETE'), 'app_user can DELETE from the audit log');
+  assert.ok(held.includes('SELECT'), 'app_user must still be able to read its own trail');
+});
+
+test('an administrative action is audited on the credential production uses', async () => {
+  // recordAdmin is best-effort by design: it warns and carries on rather than
+  // rolling back an action the operator believes succeeded. That made it able
+  // to fail silently forever — and it did, on any cluster whose owner is not a
+  // superuser, which is every RDS deployment. The tests pointed the admin tools
+  // at the superuser and so never saw it.
+  await admin.create({ slug: 'firm-audited', name: 'Audited', org: 'org_audited' });
+  const { rows } = await ownerQuery(
+    "SELECT actor_kind, detail FROM audit_log WHERE action = 'tenant.created' "
+    + "AND detail->>'slug' = 'firm-audited'");
+  assert.equal(rows.length, 1, 'the administrative action left no audit row');
+  assert.equal(rows[0].actor_kind, 'operator');
 });
 
 test('the migration REFUSES a cluster where app_user can bypass RLS', async () => {

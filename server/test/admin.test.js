@@ -17,7 +17,7 @@ let env, admin;
 
 test.before(async () => {
   env = await freshDatabase('admin');
-  process.env.DATABASE_MIGRATION_URL = env.ownerUrl;
+  process.env.DATABASE_MIGRATION_URL = env.migrationUrl;
   admin = require('../src/admin/tenants');
 });
 

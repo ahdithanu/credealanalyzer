@@ -24,7 +24,7 @@ test.before(async () => {
   seed = await seedTwoTenants(env.ownerUrl);
   process.env.DATABASE_URL = env.appUrl;
   process.env.AUTH_DATABASE_URL = env.authUrl;
-  process.env.DATABASE_MIGRATION_URL = env.ownerUrl;
+  process.env.DATABASE_MIGRATION_URL = env.migrationUrl;
   process.env.APP_ORIGIN = 'http://localhost:3000';
 
   pool = require('../src/db/pool');

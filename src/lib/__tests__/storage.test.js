@@ -68,7 +68,7 @@ describe('storage', () => {
   });
 
   it('reports a failure rather than throwing when writes are blocked', () => {
-    const spy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('disk on fire');
     });
     // Not a quota signal, so it is not reported as one.
@@ -111,7 +111,7 @@ describe('a full quota is distinguishable from an absent localStorage', () => {
 
   /** Throw on the real payload write, but let anything already stored stay. */
   const blockWrites = (error) =>
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw error; });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw error; });
 
   // Every signal a browser in the wild actually uses. The MESSAGE is never one
   // of them: it is prose, it differs per engine, and it is localised.

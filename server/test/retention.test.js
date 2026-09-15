@@ -31,7 +31,7 @@ const T = {};
 
 test.before(async () => {
   env = await freshDatabase('retention');
-  process.env.DATABASE_MIGRATION_URL = env.ownerUrl;
+  process.env.DATABASE_MIGRATION_URL = env.migrationUrl;
   process.env.DATABASE_URL = env.appUrl;
   process.env.AUTH_DATABASE_URL = env.authUrl;
   process.env.ADMIN_ACTOR = 'operator@uaconsulting.co';

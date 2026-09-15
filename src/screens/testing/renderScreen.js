@@ -6,14 +6,20 @@
  * the suite actually needs: mount a component into a detached node inside act(),
  * hand back the container, tear it down.
  *
- * It lives OUTSIDE `__tests__/` on purpose — CRA's jest testMatch collects every
- * file under a `__tests__` directory as a suite, and a helper module collected
- * that way fails with "must contain at least one test".
+ * It lives OUTSIDE `__tests__/` and it uses no test-runner globals. Both of
+ * those were forced by Create React App — its jest testMatch collected every
+ * file under a `__tests__` directory as a suite, so a helper there failed with
+ * "must contain at least one test", and eslint-config-react-app only gave the
+ * jest env to files inside it, so a bare `expect` was a no-undef build error.
  *
- * For the same reason it uses no jest globals: files outside `__tests__` do not
- * get the jest env from eslint-config-react-app, and `expect` would be a
- * no-undef error at build time. `assertNoImpossibleNumbers` therefore throws its
- * own Error, which jest reports as a failure exactly as an expect() would.
+ * Neither constraint survives the move to Vitest: the run is scoped by filename
+ * (see `test.include` in vite.config.js), so a helper is collected only if it is
+ * named like a test, and `expect` is a global under `globals: true`. The shape
+ * is kept anyway, because it is the better one — a helper that throws its own
+ * Error carries the message the reader needs and works when called from
+ * anything, and the runner reports it as a failure exactly as expect() would.
+ * Do not "simplify" this to expect(); the excerpt-building below is the whole
+ * value of the assertion.
  */
 
 import React from 'react';

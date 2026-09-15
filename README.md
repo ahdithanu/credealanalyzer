@@ -6,7 +6,7 @@ LP/GP promote waterfall, an IC memorandum, and a multi-tenant backend that lets
 separate firms use it without seeing each other's deals.
 
 ```
-1,068 frontend tests · 58 server tests · 16 infrastructure tests
+1,073 frontend tests · 58 server tests · 16 infrastructure tests
 ```
 
 **Run it:** [`DEPLOY.md`](DEPLOY.md) — static demo in ~5 minutes, or the full
@@ -114,10 +114,14 @@ has several documented ways to silently not apply, and a mock would confirm
 whatever the implementation believes.
 
 ```sh
-npm test                      # frontend
+npm test                      # frontend — Vitest, jsdom, 1,073 tests in 25 files
 cd server && npm test         # API + isolation (needs Postgres; see server/README.md)
 cd infra  && npm test         # asserts against synthesized CloudFormation
 ```
+
+The frontend suite renders real components through `src/screens/testing/renderScreen.js`,
+a small harness over `react-dom/client` and `React.act`. React Testing Library is
+not a dependency and the harness is the reason it does not need to be.
 
 ---
 

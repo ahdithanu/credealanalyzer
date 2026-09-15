@@ -22,7 +22,7 @@ Every screen, the whole engine, the sample portfolio.
 
 ```sh
 npm ci
-npm run build          # emits ./build
+npm run build          # Vite; emits ./build
 ```
 
 `build/` is plain static files with **relative** asset paths, so the same output
@@ -34,6 +34,37 @@ npx vercel deploy --prod build      # or: npx netlify deploy --prod --dir=build
 
 For GitHub Pages, push `build/` to a `gh-pages` branch — the relative paths are
 why it works under `/credealanalyzer/`.
+
+### Three things about this build that are load-bearing
+
+All three live in `vite.config.js`, not in `package.json`. The frontend used to
+be Create React App, where the first two were a `homepage` field and an
+environment variable; if you go looking for those, this is where they went.
+
+- **Relative asset paths** come from `base: './'`. Absolute `/assets/…` paths
+  404 under a repo subpath, which is the GitHub Pages case above.
+- **No inline `<script>` in the built HTML.** The CloudFront distribution's CSP
+  has no `'unsafe-inline'` on `script-src`, so one inlined script is a blank
+  page and a console error — not a degraded page, a blank one. CRA needed
+  `INLINE_RUNTIME_CHUNK=false` to avoid this; Vite emits no runtime chunk, so
+  nothing has to be switched off. The thing that would reintroduce it is
+  `@vitejs/plugin-legacy`, which injects two inline scripts of its own. CI
+  asserts the built HTML on every push rather than trusting any of this.
+- **`build/`, not Vite's default `dist/`,** because `Dockerfile.web` copies
+  `./build` and the CI assertion greps `build/index.html`.
+
+### The API URL keeps its old name
+
+`REACT_APP_API_URL`, not Vite's `VITE_API_URL`. `vite.config.js` maps the
+historical name onto what `src/lib/api.js` reads, so nothing about deploying
+this changed when the build system did.
+
+That is deliberate rather than lazy. The variable is already set in
+`docker-compose.yml`, in `Dockerfile.web`'s build arg and in whatever pipeline a
+deployment has wired up, and an **unset** value is not an error here — it is
+single-user mode. A rename would therefore not fail anything. It would build
+cleanly, deploy cleanly, and serve an app writing deals to `localStorage` while
+the operator believed it was talking to their tenant's database.
 
 ---
 

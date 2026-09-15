@@ -17,19 +17,35 @@ const API = 'https://api.test.example';
 /**
  * Load the app fresh with the API configured, and a scripted fetch.
  *
- * React, the render harness AND the app all come from the module registry
- * created by this resetModules() call. Importing the harness at the top of the
- * file instead gives it the ORIGINAL React while the app gets a fresh one, and
- * two React copies means every hook reads a null dispatcher — "Cannot read
- * properties of null (reading 'useState')", which looks like a broken component
- * and is really a broken test setup.
+ * WHAT IS LOAD-BEARING: importing App *after* resetModules() and after the env
+ * var is set. api.js reads REACT_APP_API_URL once, at module scope, so a static
+ * import — which is hoisted above every statement here — would pin every test in
+ * this file to single-user mode and quietly make them a second copy of the suite
+ * next door. Under jest these were require() calls; a Vitest test file is a real
+ * ES module where require is not defined, so they are dynamic import(), which is
+ * why this function and all eight of its callers are async.
+ *
+ * WHAT IS NOT, ANY MORE: React and the harness being fetched from the same fresh
+ * registry. Under jest, importing the harness at the top of the file handed it
+ * the ORIGINAL React while App got a fresh one, and two React copies means every
+ * hook reads a null dispatcher — "Cannot read properties of null (reading
+ * 'useState')", which presents as a broken component and is really a broken test
+ * setup. That does not reproduce under Vitest: react is externalized from
+ * node_modules, so vi.resetModules() does not re-evaluate it and there is only
+ * ever one copy. This was checked by actually hoisting both to the top of the
+ * file and re-running — all 16 tests still passed.
+ *
+ * They are still fetched here rather than hoisted, because that guarantee is
+ * Vitest's externalization policy and not anything this file controls: a future
+ * server.deps.inline covering react would bring the hazard straight back, and
+ * the failure it produces points at the component, not at this decision.
  */
-function loadMultiTenant(handlers) {
-  jest.resetModules();
+async function loadMultiTenant(handlers) {
+  vi.resetModules();
   process.env.REACT_APP_API_URL = API;
 
   const calls = [];
-  global.fetch = jest.fn(async (url, init = {}) => {
+  global.fetch = vi.fn(async (url, init = {}) => {
     const u = new URL(url);
     calls.push({ path: u.pathname, method: init.method || 'GET', init });
     const handler = handlers[`${init.method || 'GET'} ${u.pathname}`]
@@ -38,11 +54,9 @@ function loadMultiTenant(handlers) {
     return handler(init, u);
   });
 
-  /* eslint-disable global-require */
-  const React = require('react');
-  const harness = require('../testing/renderScreen');
-  const mod = require('../../App');
-  /* eslint-enable global-require */
+  const React = (await import('react')).default;
+  const harness = await import('../testing/renderScreen');
+  const mod = await import('../../App');
   return { App: mod.default, calls, React, ...harness };
 }
 
@@ -72,13 +86,13 @@ const settle = async () => {
 
 afterEach(() => {
   delete process.env.REACT_APP_API_URL;
-  jest.resetModules();
+  vi.resetModules();
   delete global.fetch;
 });
 
 describe('the sign-in gate', () => {
   it('shows the sign-in screen, and NO deal data, when not authenticated', async () => {
-    const { App, React, renderScreen, text } = loadMultiTenant({ '/auth/me': unauthorized });
+    const { App, React, renderScreen, text } = await loadMultiTenant({ '/auth/me': unauthorized });
     const r = renderScreen(React.createElement(App));
     await settle();
     try {
@@ -94,7 +108,7 @@ describe('the sign-in gate', () => {
   it('never seeds the sample portfolio into a signed-in firm', async () => {
     // Nine fictional deals dropped into a client firm's audited pipeline is a
     // support call at best, and at worst a memo citing a deal that never was.
-    const { App, React, renderScreen, text } = loadMultiTenant({
+    const { App, React, renderScreen, text } = await loadMultiTenant({
       '/auth/me': ok(SESSION),
       '/api/deals': ok({ deals: [] }),
     });
@@ -110,7 +124,7 @@ describe('the sign-in gate', () => {
     // A login prompt flashed at someone already signed in, on every page load,
     // is what resolving `loading` into `anonymous` would produce.
     let release;
-    const { App, React, renderScreen, text } = loadMultiTenant({
+    const { App, React, renderScreen, text } = await loadMultiTenant({
       '/auth/me': () => new Promise((res) => { release = () => res({ ok: true, status: 200, json: async () => SESSION }); }),
     });
     const r = renderScreen(React.createElement(App));
@@ -125,8 +139,8 @@ describe('the sign-in gate', () => {
   it('distinguishes an unreachable API from being signed out', async () => {
     // Reporting "signed out" for an outage shows a sign-in button that cannot
     // work, and clicking it navigates away from an app about to recover.
-    const { App, React, renderScreen, text } = loadMultiTenant({});
-    global.fetch = jest.fn(async () => { throw new TypeError('Failed to fetch'); });
+    const { App, React, renderScreen, text } = await loadMultiTenant({});
+    global.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
     const r = renderScreen(React.createElement(App));
     await settle();
     try {
@@ -139,7 +153,7 @@ describe('the signed-in shell', () => {
   it('names the firm whose data is on screen', async () => {
     // On a shared machine, or for a consultant with two clients, "whose
     // pipeline is this" must never be a guess.
-    const { App, React, renderScreen, text } = loadMultiTenant({
+    const { App, React, renderScreen, text } = await loadMultiTenant({
       '/auth/me': ok(SESSION),
       '/api/deals': ok({ deals: [] }),
     });
@@ -152,7 +166,7 @@ describe('the signed-in shell', () => {
   });
 
   it('renders the firm\'s own deals', async () => {
-    const { App, React, renderScreen, text } = loadMultiTenant({
+    const { App, React, renderScreen, text } = await loadMultiTenant({
       '/auth/me': ok(SESSION),
       '/api/deals': ok({
         deals: [{
@@ -176,7 +190,7 @@ describe('the signed-in shell', () => {
 
 describe('the API client', () => {
   it('sends credentials on every request and the CSRF token only on writes', async () => {
-    const { App, calls, React, renderScreen, text } = loadMultiTenant({
+    const { App, calls, React, renderScreen, text } = await loadMultiTenant({
       '/auth/me': ok(SESSION),
       '/api/deals': ok({ deals: [] }),
     });
@@ -197,7 +211,7 @@ describe('the API client', () => {
   it('never writes a session token into browser storage', async () => {
     // The session is an httpOnly cookie precisely so script cannot read it. Any
     // copy of a credential in localStorage would trade that protection away.
-    const { App, React, renderScreen, text } = loadMultiTenant({
+    const { App, React, renderScreen, text } = await loadMultiTenant({
       '/auth/me': ok(SESSION),
       '/api/deals': ok({ deals: [] }),
     });
@@ -215,10 +229,9 @@ describe('remote persistence', () => {
   it('refuses to save the whole collection remotely', async () => {
     // Writing every deal on every keystroke would overwrite a colleague's
     // concurrent edit to a DIFFERENT deal with whatever this tab last read.
-    jest.resetModules();
+    vi.resetModules();
     process.env.REACT_APP_API_URL = API;
-    // eslint-disable-next-line global-require
-    const { dealStore } = require('../../lib/dealStore');
+    const { dealStore } = await import('../../lib/dealStore');
     expect(dealStore.mode).toBe('remote');
     await expect(dealStore.saveAll([])).rejects.toThrow(/per deal/);
   });
@@ -226,10 +239,9 @@ describe('remote persistence', () => {
   it('strips derived values before sending a deal', async () => {
     // A stored metric survives an engine correction and becomes a stale number
     // that looks measured. Same rule storage.js applies locally.
-    jest.resetModules();
+    vi.resetModules();
     process.env.REACT_APP_API_URL = API;
-    // eslint-disable-next-line global-require
-    const { __internals } = require('../../lib/dealStore');
+    const { __internals } = await import('../../lib/dealStore');
     const sent = __internals.toServer({
       id: 'd1', name: 'X', stage: 'Screening',
       purchasePrice: 1, metrics: { model: {} }, model: {}, updatedAt: 'x',
@@ -242,10 +254,9 @@ describe('remote persistence', () => {
   });
 
   it('single-user mode is unaffected and still uses localStorage', async () => {
-    jest.resetModules();
+    vi.resetModules();
     delete process.env.REACT_APP_API_URL;
-    // eslint-disable-next-line global-require
-    const { dealStore } = require('../../lib/dealStore');
+    const { dealStore } = await import('../../lib/dealStore');
     expect(dealStore.mode).toBe('local');
   });
 });
@@ -256,11 +267,10 @@ describe('an unreadable deal is not shown as an empty one', () => {
   // explanation, an analyst reasonably concludes nobody has filled it in yet
   // and starts typing over it. The server distinguishes the two cases; the
   // client used to drop the distinction at the dealStore seam.
-  it('carries payloadError through to the client deal', () => {
-    jest.resetModules();
+  it('carries payloadError through to the client deal', async () => {
+    vi.resetModules();
     process.env.REACT_APP_API_URL = API;
-    // eslint-disable-next-line global-require
-    const { __internals } = require('../../lib/dealStore');
+    const { __internals } = await import('../../lib/dealStore');
     const deal = __internals.toClient({
       id: 'd1', name: 'Probe Tower', stage: 'Screening',
       payload: null, payloadError: 'decrypt_failed',
@@ -269,11 +279,10 @@ describe('an unreadable deal is not shown as an empty one', () => {
     expect(deal.payloadError).toBe('decrypt_failed');
   });
 
-  it('a readable deal carries no error', () => {
-    jest.resetModules();
+  it('a readable deal carries no error', async () => {
+    vi.resetModules();
     process.env.REACT_APP_API_URL = API;
-    // eslint-disable-next-line global-require
-    const { __internals } = require('../../lib/dealStore');
+    const { __internals } = await import('../../lib/dealStore');
     const deal = __internals.toClient({
       id: 'd1', name: 'Fine', stage: 'Screening',
       payload: { purchasePrice: 1 }, updated_at: '2026-09-15T00:00:00Z',
@@ -282,10 +291,9 @@ describe('an unreadable deal is not shown as an empty one', () => {
     expect(deal.purchasePrice).toBe(1);
   });
 
-  it('says the figures are unreadable, not missing', () => {
-    jest.resetModules();
-    // eslint-disable-next-line global-require
-    const { statusNotices } = require('../../App');
+  it('says the figures are unreadable, not missing', async () => {
+    vi.resetModules();
+    const { statusNotices } = await import('../../App');
     const notices = statusNotices({
       available: true, loadError: null, writeError: null,
       unreadableDeals: [{ id: 'd1', name: 'Probe Tower', reason: 'decrypt_failed' }],
@@ -301,10 +309,9 @@ describe('an unreadable deal is not shown as an empty one', () => {
     expect(notices[0]).toMatch(/not missing/);
   });
 
-  it('names a destroyed key as such, since the remedy is different', () => {
-    jest.resetModules();
-    // eslint-disable-next-line global-require
-    const { statusNotices } = require('../../App');
+  it('names a destroyed key as such, since the remedy is different', async () => {
+    vi.resetModules();
+    const { statusNotices } = await import('../../App');
     const notices = statusNotices({
       available: true, loadError: null, writeError: null,
       unreadableDeals: [{ id: 'd1', name: 'Gone', reason: 'key_destroyed' }],
@@ -312,10 +319,9 @@ describe('an unreadable deal is not shown as an empty one', () => {
     expect(notices[0]).toMatch(/key for this organization has been destroyed/);
   });
 
-  it('is silent when every deal is readable', () => {
-    jest.resetModules();
-    // eslint-disable-next-line global-require
-    const { statusNotices } = require('../../App');
+  it('is silent when every deal is readable', async () => {
+    vi.resetModules();
+    const { statusNotices } = await import('../../App');
     expect(statusNotices({
       available: true, loadError: null, writeError: null, unreadableDeals: [],
     })).toEqual([]);
