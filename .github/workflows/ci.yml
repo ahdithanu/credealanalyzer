@@ -166,14 +166,33 @@ jobs:
           (cd server && npm sbom --sbom-format cyclonedx --omit=dev > ../sbom-server.json)
 
       - name: Assert the SBOMs describe something
-        # The previous version ended every generation with `|| echo "skipped"`
-        # and uploaded with `if-no-files-found: warn`, so a failure produced a
-        # green job, no artifact, and a supply-chain claim with nothing behind
-        # it. An SBOM that is absent or empty is worse than one that is missing
-        # loudly: the first is mistaken for evidence.
+        # The version before this ended every generation with `|| echo
+        # "skipped"` and uploaded with `if-no-files-found: warn`, so a failure
+        # produced a green job, no artifact, and a supply-chain claim with
+        # nothing behind it. An SBOM that is absent or empty is worse than one
+        # missing loudly: the first is mistaken for evidence.
+        #
+        # `set -euo pipefail` is not decoration here. The first version of THIS
+        # step reproduced the same bug it was written to fix: when the file was
+        # truncated, the `node -e` threw, `n` came back empty, and `[ "" -lt 1 ]`
+        # exits 2 — but a non-zero exit in an `if` condition is not an error to
+        # the shell, so the loop printed a parse error and the step passed. Found
+        # by running the job against a clean checkout rather than reading it.
+        # The count is now validated as a number before it is compared.
+        shell: bash
         run: |
+          set -euo pipefail
           for f in sbom-frontend.json sbom-server.json; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing or empty"
+              exit 1
+            fi
             n=$(node -e "process.stdout.write(String((require('./$f').components||[]).length))")
+            case "$n" in
+              ''|*[!0-9]*)
+                echo "::error::$f could not be parsed as an SBOM"
+                exit 1 ;;
+            esac
             echo "$f: $n components"
             if [ "$n" -lt 1 ]; then
               echo "::error::$f lists no components"
