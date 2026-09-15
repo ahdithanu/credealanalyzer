@@ -93,6 +93,49 @@ GRANT INSERT (tenant_id, actor_user_id, actor_kind, actor_ref,
 -- tenant. Platform rows (tenant_id NULL) are deliberately NOT visible to any
 -- tenant: "a different firm was suspended" is not their business.
 
+-- ─── Backfill ────────────────────────────────────────────────────────────────
+--
+-- Rows written BEFORE this migration have no digest, and without this the chain
+-- reports itself broken forever — which a restore drill found immediately, and
+-- which would have read as evidence of tampering on a healthy system. An
+-- integrity check that cries wolf on day one is an integrity check nobody
+-- consults on day ninety.
+--
+-- WHAT THIS DOES AND DOES NOT PROVE, stated because the distinction is the whole
+-- value of the chain: a digest computed now over a historical row proves nothing
+-- about whether that row was altered BEFORE this migration ran. It establishes a
+-- baseline. Tampering after this point is detectable; tampering before it is
+-- not, and no amount of hashing afterwards can change that.
+DO $$
+DECLARE
+  r record;
+  running bytea;
+BEGIN
+  SELECT entry_hash INTO running FROM audit_log
+   WHERE entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1;
+
+  FOR r IN SELECT * FROM audit_log WHERE entry_hash IS NULL ORDER BY id LOOP
+    running := digest(
+      coalesce(encode(running, 'hex'), '')
+        || '|' || coalesce(r.tenant_id::text, '')
+        || '|' || coalesce(r.actor_user_id::text, '')
+        || '|' || coalesce(r.actor_kind, 'user')
+        || '|' || coalesce(r.actor_ref, '')
+        || '|' || r.action
+        || '|' || coalesce(r.subject_type, '')
+        || '|' || coalesce(r.subject_id, '')
+        || '|' || coalesce(r.detail::text, '')
+        || '|' || coalesce(r.ip::text, '')
+        || '|' || r.at::text,
+      'sha256');
+    UPDATE audit_log
+       SET prev_hash = (SELECT entry_hash FROM audit_log p
+                         WHERE p.id < r.id ORDER BY p.id DESC LIMIT 1),
+           entry_hash = running
+     WHERE id = r.id;
+  END LOOP;
+END $$;
+
 -- ─── Verification helper ─────────────────────────────────────────────────────
 /**
  * Recompute the chain and return the first row where it breaks.
@@ -111,6 +154,16 @@ DECLARE
   first boolean := true;
 BEGIN
   FOR r IN SELECT * FROM audit_log WHERE id > from_id ORDER BY id LOOP
+    -- An un-chained row after the backfill means someone inserted around the
+    -- trigger. Named distinctly, because "no digest" and "wrong digest" are
+    -- different events and collapsing them loses the more alarming one.
+    IF r.entry_hash IS NULL THEN
+      broken_at := r.id;
+      reason := 'entry has no digest — inserted without the chain trigger';
+      RETURN NEXT;
+      RETURN;
+    END IF;
+
     IF first THEN
       running := r.prev_hash;   -- trust the starting point; verify onward
       first := false;

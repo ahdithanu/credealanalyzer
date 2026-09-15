@@ -172,3 +172,62 @@ test('the application CAN still write an ordinary entry', async () => {
       .then((q) => q.rows[0]));
   assert.ok(seen.entry_hash, 'the trigger did not attach a digest');
 });
+
+test('migrating a database that ALREADY has audit rows leaves the chain verifying', async () => {
+  // The bug a restore drill found, and the reason the backfill in migration 003
+  // exists. The chain was added to a table that already held rows; those rows
+  // had no digest, so audit_log_verify() reported the log broken on a perfectly
+  // healthy system — from the first day, forever. An integrity check that cries
+  // wolf immediately is an integrity check nobody consults later.
+  const { Client } = require('pg');
+  const { migrate } = require('../src/db/migrate');
+  const { freshDatabase: fresh } = require('./helpers');
+
+  // Build a database at migration 002 only, write audit rows into it, then
+  // migrate forward — exactly the upgrade path a running system takes.
+  const staged = await fresh('auditbackfill');
+  const c = new Client({ connectionString: staged.ownerUrl });
+  await c.connect();
+  try {
+    await c.query('DELETE FROM schema_migrations WHERE version >= $1', ['003_audit_integrity.sql']);
+    await c.query('ALTER TABLE audit_log DROP COLUMN IF EXISTS prev_hash');
+    await c.query('ALTER TABLE audit_log DROP COLUMN IF EXISTS entry_hash');
+    await c.query('DROP FUNCTION IF EXISTS audit_log_verify(bigint)');
+    await c.query('DROP TRIGGER IF EXISTS audit_log_chain_trg ON audit_log');
+
+    const t = await c.query(
+      "INSERT INTO tenants (slug, name, broker_org_id) VALUES ('legacy','Legacy','org_l') RETURNING id");
+    for (const action of ['deal.created', 'deal.updated', 'deal.deleted']) {
+      await c.query(
+        'INSERT INTO audit_log (tenant_id, action, subject_type) VALUES ($1,$2,$3)',
+        [t.rows[0].id, action, 'deal']);
+    }
+    const before = await c.query('SELECT count(*)::int AS n FROM audit_log');
+    assert.equal(before.rows[0].n, 3);
+  } finally {
+    await c.end();
+  }
+
+  await migrate(staged.ownerUrl, { log: () => {} });
+
+  const after = new Client({ connectionString: staged.ownerUrl });
+  await after.connect();
+  try {
+    const unchained = await after.query(
+      'SELECT count(*)::int AS n FROM audit_log WHERE entry_hash IS NULL');
+    assert.equal(unchained.rows[0].n, 0, 'the backfill left rows without a digest');
+
+    const broken = await after.query('SELECT broken_at, reason FROM audit_log_verify()');
+    assert.deepEqual(broken.rows, [], `chain broken after upgrade: ${JSON.stringify(broken.rows)}`);
+
+    // And the baseline is still real evidence going forward: edit a backfilled
+    // row and the chain must notice.
+    const target = await after.query('SELECT id FROM audit_log ORDER BY id LIMIT 1');
+    await after.query("UPDATE audit_log SET action = 'tampered' WHERE id = $1", [target.rows[0].id]);
+    const now = await after.query('SELECT broken_at FROM audit_log_verify()');
+    assert.equal(now.rows.length, 1, 'a backfilled row could be edited undetected');
+  } finally {
+    await after.end();
+    await staged.drop();
+  }
+});
