@@ -118,12 +118,24 @@ npm ci
 npx cdk bootstrap                      # once per account/region
 npx cdk deploy --all \
   -c apiDomain=api.your-domain.com -c apiCertArn=arn:aws:acm:us-east-1:…:certificate/… \
-  -c webDomain=app.your-domain.com -c webCertArn=arn:aws:acm:us-east-1:…:certificate/…
+  -c webDomain=app.your-domain.com -c webCertArn=arn:aws:acm:us-east-1:…:certificate/… \
+  -c alertEmail=ops@your-domain.com
 ```
 
 DNS is yours: point CNAMEs at the load balancer and CloudFront hostnames from
 the stack outputs. CDK deliberately does not create Route53 records, because
 that would assume it owns the zone.
+
+`alertEmail` is where the 18 alarms go, and leaving it out is not harmless: the
+alarms still deploy and still evaluate, and nobody is told when one fires. AWS
+sends a confirmation email that must be clicked before the subscription is
+live — an unconfirmed subscription is the same as none. The SNS topic is created
+either way, so pointing PagerDuty or Opsgenie at it later is a subscription
+rather than a change to the stack.
+
+Email is stated plainly as inadequate for anything real: nobody is woken by it,
+and an alarm at 02:00 is discovered at 09:00. See
+`docs/runbooks/incident-response.md` for what each alarm means.
 
 ### Then, once
 
@@ -141,7 +153,11 @@ aws secretsmanager put-secret-value --secret-id <SsoSecretName from outputs> \
 npm run tenants -- create --slug acme --name "Acme Capital" --org org_…
 npm run tenants -- verify-domain --slug acme --domain acme.com
 
-# 4. The SPA
+# 4. Confirm the audit chain verifies on the real database before anyone
+#    relies on it. The daily scheduled task does this from here on.
+npm run audit:verify
+
+# 5. The SPA
 npm run build
 aws s3 sync build/ s3://<SpaBucketName from outputs>/ --delete
 aws cloudfront create-invalidation --distribution-id <id> --paths '/*'

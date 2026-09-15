@@ -29,9 +29,47 @@ is an hour. The cost of investigating for a day first is the notification clock.
    - Only then consider scaling the service to zero. That is an outage for every
      firm and is rarely the right first move.
 4. **Verify the audit chain** before relying on anything it says:
-   `SELECT * FROM audit_log_verify();` — zero rows means intact.
+   `npm run audit:verify` in `server/` — exit 0 intact, 1 broken, 2 could not
+   check. A break names the first entry that fails and everything after it is
+   unproven; entries before it are still evidence. The same check runs daily on
+   a schedule, so `AuditVerifyStalledAlarm` firing means the chain is
+   **unverified**, which is not the same as broken and must not be reported as
+   if it were.
 5. **Open a log.** One file, append-only, timestamped. What you observed, what
    you did, what you concluded, in that order and kept separate.
+
+## What the alarms mean
+
+Defined in `infra/lib/platform.js`, delivered to the SNS topic named by
+`-c alertEmail`. The security ones are metric filters over structured events the
+API emits (`server/src/obs/securityLog.js`); the log line always carries more
+than the alarm does, and reading it is the first step for every one of them.
+
+**Thresholds are reasoned, not measured.** Nothing has been deployed and no real
+traffic has passed through this system. Expect to tune everything except the
+first two in the first fortnight of real use.
+
+| Alarm | What it means | First move |
+|---|---|---|
+| `AuditChainBroken` | An audit entry was altered, deleted, or inserted around the trigger. **SEV1.** | Preserve first: snapshot RDS before anything else. The alarm names the entry. |
+| `AuditVerifyStalled` | The daily verification has not reported in 26 hours. The chain is unverified — not proven broken. | Check the scheduled ECS task ran. Run `npm run audit:verify` by hand. |
+| `ScimAuthFailed` | Repeated failures against a provisioning token, which can enumerate and deactivate every user in a tenant. | `tokenId` is in the log. Revoke it (`npm run scim-tokens -- revoke --token-id <id>`) and ask the customer whether it was them. |
+| `CsrfRejected` | Sessions arriving without a valid CSRF token. A real browser that has one has the other. | Read `presented`: `absent` suggests a broken client, `invalid` suggests forgery. |
+| `OriginRejected` | State-changing requests from a site that is not the app. | The rejected origin is in the log and names the site. |
+| `LoginFailed` | Sustained SSO refusals. Two evaluation periods, because this is the noisiest metric here. | Read `code`. `domain_not_verified` in volume = an SSO connection pointed at the wrong organization. `bad_state` = replay. |
+| `RoleDenied` | A known user repeatedly reaching past their role. | The user and tenant ids are in the log. One is a mis-click; a stream is someone mapping their permissions. |
+| `CspViolation` | Browsers are reporting blocked resources. | Read `blockedURI`. An external host is attempted injection or exfiltration. A `chrome-extension://` URL is noise. |
+| `RateLimited` | Sustained throttling. | `limiter` names which ceiling. Cross-check the WAF. |
+| `WafAuthBlocked` | The WAF is blocking sustained traffic to `/auth/`. The control is working. | Not an outage. Check whether one address or many. |
+| `ServerError`, `Alb5xx` | The API is failing. `Alb5xx` fires when there is no healthy target at all. | Ordinary availability incident; `Alb5xx` without `ServerError` means nothing is running to log it. |
+| `UnhealthyHosts` | A task is failing its health check. Below two, there is no redundancy. | Check the deploy and the task logs. |
+| `DbCpu`, `DbStorage`, `DbMemory`, `DbConnections` | The database. `DbStorage` firing means autoscaling has failed and writes stop when it reaches zero. | Capacity, not security — unless it is a symptom of the export endpoint being abused. |
+
+One thing the alarms cannot tell you: **`SessionRejected` is not alarmed on.**
+Every anonymous page load produces one, so a threshold that caught an attack
+would also catch a Monday morning. The events are in the log and `hadCookie`
+distinguishes "not signed in yet" from "presented a token that did not work" —
+use it during an investigation, do not expect to be paged on it.
 
 ## Notification
 
