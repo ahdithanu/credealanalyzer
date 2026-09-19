@@ -29,6 +29,25 @@ const web = new WebStack(app, 'TestWeb', {
   apiOrigin: 'https://api.test.example',
 });
 const pt = Template.fromStack(platform);
+
+/**
+ * The lean tier, synthesized so every claim below can be checked against BOTH
+ * shapes. A cost tier that quietly relaxes a security control is the failure
+ * this second stack exists to prevent.
+ *
+ * Its OWN App: adding a stack to an app that has already been synthesized —
+ * which Template.fromStack does — is a modification after synthesis, and CDK
+ * refuses it.
+ */
+const leanApp = new cdk.App();
+const leanStack = new PlatformStack(leanApp, 'TestLean', {
+  env: { account: '111111111111', region: 'us-east-1' },
+  domainName: 'api.test.example',
+  certificateArn: 'arn:aws:acm:us-east-1:111111111111:certificate/test',
+  appOrigin: 'https://app.test.example',
+  tier: 'lean',
+});
+const lt = Template.fromStack(leanStack);
 const wt = Template.fromStack(web);
 
 test('the database is encrypted, multi-AZ, and not publicly accessible', () => {
@@ -464,4 +483,140 @@ test('the Duo client secret never reaches the task as plaintext', () => {
   assert.ok(!/DUO_CONFIG_KEY/.test(plain), 'the Duo key is in plaintext environment');
   const names = (td.Secrets || []).map((x) => x.Name);
   assert.ok(names.includes('DUO_CONFIG_KEY'), 'the Duo key does not reach the task at all');
+});
+
+
+// ─── The lean tier ───────────────────────────────────────────────────────────
+/**
+ * Lean removes about $250 a month of NAT gateways and Multi-AZ database. These
+ * tests are the boundary around what that is allowed to cost: the list of
+ * relaxations is written down here, and anything NOT on it must hold in both
+ * tiers. A cost tier becomes a security tier by accident otherwise, one
+ * plausible-looking `lean ? … : …` at a time.
+ */
+
+test('lean removes the NAT gateways, which is the point of it', () => {
+  assert.equal(Object.keys(lt.findResources('AWS::EC2::NatGateway')).length, 0);
+  assert.equal(Object.keys(pt.findResources('AWS::EC2::NatGateway')).length, 2);
+});
+
+test('the database has no route to anywhere in EITHER tier', () => {
+  // The egress-less data subnet is the claim the security register makes, and
+  // it survives the cost tier. An attacker who lands in the database's network
+  // still cannot exfiltrate to a host of their own.
+  for (const [name, template] of [['production', pt], ['lean', lt]]) {
+    const tables = template.findResources('AWS::EC2::RouteTable');
+    const dataTableIds = Object.entries(tables)
+      .filter(([, r]) => JSON.stringify(r.Properties?.Tags || []).includes('data'))
+      .map(([id]) => id);
+    assert.ok(dataTableIds.length >= 1, `${name}: no isolated route table`);
+    for (const [, route] of Object.entries(template.findResources('AWS::EC2::Route'))) {
+      const rt = route.Properties.RouteTableId?.Ref;
+      if (!dataTableIds.includes(rt)) continue;
+      assert.ok(!route.Properties.NatGatewayId && !route.Properties.GatewayId,
+        `${name}: the data subnet has a route out`);
+    }
+  }
+});
+
+test('a public IP is not a public service', () => {
+  /**
+   * The one security property lean actually relaxes: the API task sits in a
+   * public subnet with an address of its own, because that is what removes the
+   * NAT. It must still be unreachable from the internet — protected by its
+   * security group rather than by having no route, which is weaker and is the
+   * trade being made.
+   *
+   * If this ever fails, lean is not a cost tier, it is an exposed API.
+   */
+  const svc = Object.values(lt.findResources('AWS::ECS::Service'))[0].Properties;
+  assert.equal(svc.NetworkConfiguration.AwsvpcConfiguration.AssignPublicIp, 'ENABLED');
+
+  // Every ingress rule reaching the task's port must come from a security
+  // group, never from a CIDR — an open CIDR here is the whole internet.
+  const ingress = Object.values(lt.findResources('AWS::EC2::SecurityGroupIngress'))
+    .map((r) => r.Properties)
+    .filter((r) => r.ToPort === 8080 || r.FromPort === 8080);
+  assert.ok(ingress.length >= 1, 'no ingress rule to the task at all');
+  for (const rule of ingress) {
+    assert.ok(rule.SourceSecurityGroupId,
+      `task ingress from ${rule.CidrIp || 'an unnamed source'} rather than a security group`);
+    assert.ok(!rule.CidrIp, `task ingress allows ${rule.CidrIp}`);
+  }
+
+  // And in production it stays off.
+  const prodSvc = Object.values(pt.findResources('AWS::ECS::Service'))[0].Properties;
+  assert.equal(prodSvc.NetworkConfiguration.AwsvpcConfiguration.AssignPublicIp, 'DISABLED');
+});
+
+test('lean keeps every control that is not about redundancy', () => {
+  // The explicit list. Each of these is a security property, and none of them
+  // is something a cheaper bill is allowed to buy.
+  lt.hasResourceProperties('AWS::RDS::DBInstance', {
+    StorageEncrypted: true,
+    PubliclyAccessible: false,
+    EnableIAMDatabaseAuthentication: true,
+    DeletionProtection: true,
+  });
+  lt.hasResource('AWS::RDS::DBInstance', { DeletionPolicy: 'Retain' });
+
+  // The WAF, all five rules, still associated.
+  const acl = Object.values(lt.findResources('AWS::WAFv2::WebACL'))[0];
+  assert.equal(acl.Properties.Rules.length, 5);
+  assert.equal(Object.keys(lt.findResources('AWS::WAFv2::WebACLAssociation')).length, 1);
+
+  // Every alarm, and the scheduled audit verification.
+  assert.equal(
+    Object.keys(lt.findResources('AWS::CloudWatch::Alarm')).length,
+    Object.keys(pt.findResources('AWS::CloudWatch::Alarm')).length,
+    'lean has fewer alarms than production',
+  );
+  assert.equal(
+    Object.keys(lt.findResources('AWS::Logs::MetricFilter')).length,
+    Object.keys(pt.findResources('AWS::Logs::MetricFilter')).length,
+  );
+  assert.equal(Object.keys(lt.findResources('AWS::Events::Rule')).length, 1);
+
+  // Still no database password anywhere in the task definition.
+  const td = Object.values(lt.findResources('AWS::ECS::TaskDefinition'))[0]
+    .Properties.ContainerDefinitions[0];
+  assert.ok(!JSON.stringify(td.Environment).toLowerCase().includes('password'));
+  assert.ok((td.Secrets || []).map((x) => x.Name).includes('DUO_CONFIG_KEY'));
+
+  // HTTPS only, in both tiers.
+  for (const [, l] of Object.entries(lt.findResources('AWS::ElasticLoadBalancingV2::Listener'))) {
+    assert.equal(l.Properties.Protocol, 'HTTPS');
+  }
+});
+
+test('lean still refuses to deploy without a certificate', () => {
+  // The cheap tier is not a place where session cookies travel in the clear.
+  const throwaway = new cdk.App();
+  assert.throws(() => new PlatformStack(throwaway, 'LeanNoCert', {
+    env: { account: '111111111111', region: 'us-east-1' },
+    appOrigin: 'https://app.test.example',
+    tier: 'lean',
+  }), /certificateArn is required/);
+});
+
+test('an unknown tier is refused rather than silently treated as lean', () => {
+  const throwaway = new cdk.App();
+  assert.throws(() => new PlatformStack(throwaway, 'BadTier', {
+    env: { account: '111111111111', region: 'us-east-1' },
+    certificateArn: 'arn:aws:acm:us-east-1:111111111111:certificate/test',
+    appOrigin: 'https://app.test.example',
+    tier: 'cheap',
+  }), /tier must be/);
+});
+
+test('what lean gives up is exactly what is documented', () => {
+  // Redundancy and size. Nothing else.
+  const leanDb = Object.values(lt.findResources('AWS::RDS::DBInstance'))[0].Properties;
+  const prodDb = Object.values(pt.findResources('AWS::RDS::DBInstance'))[0].Properties;
+  assert.equal(leanDb.MultiAZ, false);
+  assert.equal(prodDb.MultiAZ, true);
+  assert.equal(Object.values(lt.findResources('AWS::ECS::Service'))[0].Properties.DesiredCount, 1);
+  // Backups are shorter but not token: a single-AZ instance has nothing else.
+  assert.ok(leanDb.BackupRetentionPeriod >= 7,
+    `lean keeps ${leanDb.BackupRetentionPeriod} days of backups`);
 });

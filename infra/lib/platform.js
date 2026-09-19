@@ -44,22 +44,81 @@ const eventTargets = require('aws-cdk-lib/aws-events-targets');
 class PlatformStack extends Stack {
   constructor(scope, id, props) {
     super(scope, id, props);
-    const { domainName, certificateArn, appOrigin, alertEmail } = props;
+    const { domainName, certificateArn, appOrigin, alertEmail, tier = 'production' } = props;
 
+    /**
+     * TWO SHAPES OF THE SAME SYSTEM.
+     *
+     * `production` is the default and is what everything below was written for.
+     * `lean` exists because roughly $250 a month of that is NAT gateways and a
+     * Multi-AZ database, and a system nobody can afford to leave running is not
+     * more secure than one that is deployed — it is just not deployed.
+     *
+     * WHAT LEAN DOES NOT GIVE UP, because this is where a cost tier usually
+     * turns into a security tier by accident:
+     *
+     *   - row level security, and the two-role privilege split
+     *   - envelope encryption of deal payloads, and per-tenant keys
+     *   - the WAF, all five rules
+     *   - IAM database authentication; still no password in the task
+     *   - every alarm, the audit chain, and its daily verification
+     *   - TLS-only, deletion protection, RETAIN on the database
+     *   - AND the egress-less data subnet: the database still has no route to
+     *     anywhere, which is the claim the security register actually makes
+     *
+     * WHAT IT GIVES UP, stated plainly and asserted in test/synth.test.js so
+     * the list cannot quietly grow:
+     *
+     *   1. The API task runs in a PUBLIC subnet with a public IP, because that
+     *      is what removes the NAT gateway. It is not reachable from the
+     *      internet — its security group admits the load balancer and nothing
+     *      else — but it is protected by a security group rather than by having
+     *      no route. That is a weaker position and a real one.
+     *   2. Single-AZ database. A failover becomes a restore: minutes, not
+     *      seconds, and the RPO is whatever the last backup holds.
+     *   3. One task. A deploy is a brief interruption and a crash is an outage
+     *      until ECS replaces it.
+     *   4. Smaller instance and 7-day backups instead of 30.
+     *
+     * If a client firm's data is going in it, deploy `production`. Lean is for
+     * a demonstration, a staging environment, or a first customer who knows.
+     */
+    const lean = tier === 'lean';
+    if (!['production', 'lean'].includes(tier)) {
+      throw new Error(`tier must be "production" or "lean"; got ${JSON.stringify(tier)}`);
+    }
+    this.tier = tier;
 
     this.vpc = new ec2.Vpc(this, 'Vpc', {
       maxAzs: 2,
-      // Two NATs, one per AZ. A single NAT is cheaper and is a single point of
-      // failure for every outbound call the API makes — including the SSO token
-      // exchange, which means one AZ's NAT dying logs out every firm.
-      natGateways: 2,
+      // Production: two NATs, one per AZ. A single NAT is cheaper and is a
+      // single point of failure for every outbound call the API makes —
+      // including the SSO token exchange and the Duo handshake, which means one
+      // AZ's NAT dying logs out every firm.
+      //
+      // Lean: none at all. The NAT gateways are the single largest line on the
+      // bill and the task reaches the internet directly from a public subnet
+      // instead. There is no middle option here with one NAT, because one NAT
+      // is the worst of both: it still costs, and it is still a single point of
+      // failure for every login.
+      natGateways: lean ? 0 : 2,
       subnetConfiguration: [
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
-        { name: 'app', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
-        // No egress. The database cannot initiate a connection to anywhere.
+        // A PRIVATE_WITH_EGRESS subnet with no NAT to egress through is not a
+        // thing, so lean does not declare one; the task moves to `public`.
+        ...(lean ? [] : [
+          { name: 'app', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
+        ]),
+        // No egress, in BOTH tiers. The database cannot initiate a connection
+        // to anywhere.
         { name: 'data', subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
       ],
     });
+
+    /** Where the API task runs, and whether it needs an address of its own. */
+    const taskPlacement = lean
+      ? { subnetType: ec2.SubnetType.PUBLIC }
+      : { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS };
 
     // VPC flow logs. When a client firm asks "can you prove nothing left your
     // network", an answer without packet-level records is an opinion.
@@ -107,13 +166,14 @@ class PlatformStack extends Stack {
       // Multi-AZ: a failover is a few seconds of errors rather than a restore
       // from backup, which for a tool an IC meeting depends on is the
       // difference between an inconvenience and a missed committee.
-      multiAz: true,
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MEDIUM),
+      multiAz: !lean,
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G,
+        lean ? ec2.InstanceSize.MICRO : ec2.InstanceSize.MEDIUM),
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [this.dbSecurityGroup],
-      allocatedStorage: 100,
-      maxAllocatedStorage: 500,
+      allocatedStorage: lean ? 20 : 100,
+      maxAllocatedStorage: lean ? 100 : 500,
       storageEncrypted: true,
       // IAM database authentication. This is why no database password exists in
       // the task definition, the image, or Secrets Manager for the app roles:
@@ -123,7 +183,9 @@ class PlatformStack extends Stack {
       // The master credential still exists — migrations and role management
       // need it — and is generated and rotated by Secrets Manager, never typed.
       credentials: rds.Credentials.fromGeneratedSecret('cre_owner'),
-      backupRetention: Duration.days(30),
+      // Still measured in weeks, not days: the backup is the only recovery
+      // a single-AZ instance has.
+      backupRetention: Duration.days(lean ? 7 : 30),
       deletionProtection: true,
       // Retained on stack deletion: a `cdk destroy` that silently drops client
       // firms' deal history is not an acceptable failure mode.
@@ -262,10 +324,15 @@ class PlatformStack extends Stack {
       cluster,
       cpu: 512,
       memoryLimitMiB: 1024,
-      desiredCount: 2,
+      desiredCount: lean ? 1 : 2,
       publicLoadBalancer: true,
       // The tasks themselves are NOT public. Only the load balancer is.
-      taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      taskSubnets: taskPlacement,
+      // Only in lean, and only because there is no NAT: the task needs a route
+      // to the internet for the SSO token exchange and the Duo handshake. Its
+      // security group still admits the load balancer and nothing else, so a
+      // public address is not a public service.
+      assignPublicIp: lean,
       // Created in the network stack; see the note there on the dependency
       // cycle that arises from doing it the other way round.
       securityGroups: [this.appSecurityGroup],
@@ -335,7 +402,7 @@ class PlatformStack extends Stack {
     // deploy is not slow. server/src/index.js drains on SIGTERM.
     service.targetGroup.setAttribute('deregistration_delay.timeout_seconds', '20');
 
-    service.service.autoScaleTaskCount({ minCapacity: 2, maxCapacity: 10 })
+    service.service.autoScaleTaskCount({ minCapacity: lean ? 1 : 2, maxCapacity: lean ? 4 : 10 })
       .scaleOnCpuUtilization('Cpu', {
         targetUtilizationPercent: 60,
         scaleInCooldown: Duration.minutes(5),
@@ -894,7 +961,8 @@ class PlatformStack extends Stack {
       targets: [new eventTargets.EcsTask({
         cluster,
         taskDefinition: service.taskDefinition,
-        subnetSelection: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        subnetSelection: taskPlacement,
+        assignPublicIp: lean,
         securityGroups: [this.appSecurityGroup],
         containerOverrides: [{
           containerName: service.taskDefinition.defaultContainer.containerName,

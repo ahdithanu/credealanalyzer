@@ -42,6 +42,18 @@ const webCertArn = app.node.tryGetContext('webCertArn');
 // change to this stack.
 const alertEmail = app.node.tryGetContext('alertEmail');
 
+/**
+ * `production` (default) or `lean`.
+ *
+ * Lean removes the NAT gateways and the Multi-AZ database — roughly $250 a
+ * month — by putting the API task in a public subnet behind its security group
+ * and running one of it. See the note at the top of lib/platform.js for the
+ * full list of what that gives up; nothing on it is a security control except
+ * the task's subnet placement, and test/synth.test.js asserts that list so it
+ * cannot quietly grow.
+ */
+const tier = app.node.tryGetContext('tier') || 'production';
+
 const web = new WebStack(app, 'CreWeb', {
   env,
   domainName: webDomain,
@@ -58,6 +70,7 @@ const platform = new PlatformStack(app, 'CrePlatform', {
   // up as every request failing, not as a silent security hole.
   appOrigin: webDomain ? `https://${webDomain}` : 'http://localhost:3000',
   alertEmail,
+  tier,
 });
 
 // Deliberately NOT ordered against each other. Web's connect-src names the

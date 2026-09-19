@@ -119,7 +119,8 @@ npx cdk bootstrap                      # once per account/region
 npx cdk deploy --all \
   -c apiDomain=api.your-domain.com -c apiCertArn=arn:aws:acm:us-east-1:…:certificate/… \
   -c webDomain=app.your-domain.com -c webCertArn=arn:aws:acm:us-east-1:…:certificate/… \
-  -c alertEmail=ops@your-domain.com
+  -c alertEmail=ops@your-domain.com \
+  -c tier=lean            # optional; see Cost below. Default is production.
 ```
 
 DNS is yours: point CNAMEs at the load balancer and CloudFront hostnames from
@@ -243,12 +244,53 @@ That does the full exchange and prints the parsed profile field by field, so a
 renamed field is visible immediately. Codes are single-use and expire in
 minutes; run it straight away.
 
-### Cost
+### Cost, and the two tiers
 
-Two NAT gateways and a Multi-AZ `t4g.medium` RDS instance are the bulk of it.
-The second NAT is not redundancy theatre — one NAT is a single point of failure
-for every outbound call the API makes, including the SSO token exchange, so
-losing it logs out every firm. Drop to one only knowing that.
+Two NAT gateways and a Multi-AZ `t4g.medium` RDS instance are the bulk of the
+production bill — roughly **$250–300/month** before traffic.
+
+```sh
+npx cdk deploy --all -c tier=lean   …        # roughly $50–60/month
+```
+
+| | production (default) | lean |
+|---|---|---|
+| NAT gateways | 2 | **0** |
+| API task placement | private subnet, no public IP | **public subnet, public IP** |
+| Tasks | 2, autoscaling to 10 | 1, autoscaling to 4 |
+| Database | Multi-AZ `t4g.medium`, 100 GB | single-AZ `t4g.micro`, 20 GB |
+| Backups | 30 days | 7 days |
+
+**What lean does not give up.** Row level security and the two-role split,
+envelope encryption of deal payloads, the WAF and all five rules, IAM database
+authentication, every alarm, the audit chain and its daily verification,
+TLS-only, deletion protection, `RETAIN` on the database — and the egress-less
+data subnet. The database still has no route to anywhere in either tier, which
+is the claim the security register actually makes.
+
+**What it gives up**, in full:
+
+1. **The API task runs in a public subnet with a public IP.** That is what
+   removes the NAT gateway. It is not reachable from the internet — its security
+   group admits the load balancer and nothing else, and `synth.test.js` asserts
+   every ingress rule to it comes from a security group rather than a CIDR — but
+   it is protected by a security group instead of by having no route. That is a
+   weaker position and it is the real trade.
+2. **Single-AZ database.** A failover becomes a restore: minutes rather than
+   seconds, and the RPO is whatever the last backup holds rather than five
+   minutes.
+3. **One task.** A deploy is a brief interruption; a crash is an outage until
+   ECS replaces it.
+4. Smaller instance, less storage headroom, 7-day backups.
+
+Nothing on that list except the first is a security control, and the list is
+asserted in `infra/test/synth.test.js` so it cannot quietly grow — the tests
+synthesize both tiers and check every other property against both.
+
+**Use lean for a demonstration, a staging environment, or a first customer who
+has been told.** If a client firm's deal data is going into it, deploy
+`production`: single-AZ means an availability-zone failure is a restore from
+backup, and a public task is one security-group mistake from being reachable.
 
 `cdk destroy` will **not** delete the database or the SPA bucket: both are
 `RETAIN`, deliberately. Empty and delete them by hand when you actually mean it.
