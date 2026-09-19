@@ -123,6 +123,11 @@ npx cdk deploy --all \
   -c tier=lean            # optional; see Cost below. Default is production.
 ```
 
+**`webCertArn` must be issued in `us-east-1`**, whatever region you deploy to.
+CloudFront reads certificates only from there, and a certificate in the wrong
+region fails at deploy with a message that does not say so. `apiCertArn` is the
+opposite: it must be in the region the load balancer is in.
+
 DNS is yours: point CNAMEs at the load balancer and CloudFront hostnames from
 the stack outputs. CDK deliberately does not create Route53 records, because
 that would assume it owns the zone.
