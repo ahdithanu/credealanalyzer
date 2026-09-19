@@ -82,6 +82,8 @@ test('the kind strings are exactly what the alarms match', () => {
     LOGIN_FAILED: 'login_failed',
     SCIM_AUTH_FAILED: 'scim_auth_failed',
     RATE_LIMITED: 'rate_limited',
+    MFA_FAILED: 'mfa_failed',
+    MFA_FAILOPEN: 'mfa_failopen',
     CSP_VIOLATION: 'csp_violation',
     SERVER_ERROR: 'server_error',
   });

@@ -14,7 +14,8 @@
     "audit:verify": "node src/admin/verifyAudit.js",
     "loadtest": "node src/admin/loadtest.js",
     "sbom": "npm sbom --sbom-format cyclonedx --omit=dev",
-    "scim-tokens": "node src/auth/provisioning.js"
+    "scim-tokens": "node src/auth/provisioning.js",
+    "duo": "node src/admin/duo.js"
   },
   "dependencies": {
     "express": "^4.21.2",

@@ -137,6 +137,54 @@ Email is stated plainly as inadequate for anything real: nobody is woken by it,
 and an alarm at 02:00 is discovered at 09:00. See
 `docs/runbooks/incident-response.md` for what each alarm means.
 
+### Duo, per customer
+
+Optional and per firm. A firm running Duo SSO — Duo as the SAML identity
+provider behind the broker — needs none of this: Duo authenticates them before
+the assertion ever reaches us, and enabling the step below would prompt them
+twice. This is for the other case, which is the common one: a firm whose
+directory is Entra ID or Okta with Duo layered on it, whose assertion does not
+reliably carry an MFA claim, and who wants the second factor enforced at our
+door rather than taken on trust.
+
+In the customer's Duo Admin Panel they create a **Web SDK** application and give
+you three values. The redirect URL they must register is in the stack outputs as
+`DuoRedirectUri` — Duo compares it on both the authorize call and the token
+exchange, so a mismatch is a login that fails at the last step with an opaque
+error.
+
+```sh
+cd server
+npm run duo -- set --slug acme \
+  --api-host api-xxxxxxxx.duosecurity.com \
+  --client-id <20 chars> --client-secret <40 chars>
+
+npm run duo -- check  --slug acme     # a real health call to their Duo
+npm run duo -- enable --slug acme
+```
+
+`set` deliberately does not enable it, and `enable` refuses a configuration that
+has never passed `check`. Enabling puts a second factor in front of every user
+at that firm; doing it on an unproven credential locks them all out.
+
+The client secret is sealed with `DUO_CONFIG_KEY` (AES-256-GCM, the firm's
+tenant id as additional authenticated data) before it touches the database, and
+is never printed — `status` reports whether a secret is stored, never what it is.
+
+**Fail mode** is `closed` by default: if Duo cannot be reached, the login does
+not happen. Some firms ask for the opposite, because a Duo outage during an
+investment committee meeting is a churn event:
+
+```sh
+npm run duo -- failmode --slug acme --mode open
+```
+
+Understand what that buys and costs. It admits users **only** when Duo is
+unreachable — never when Duo was asked and refused — and every such login is
+written to the customer's own audit log as `auth.mfa_failopen`, stamped
+`duo_failopen` in `sessions.mfa_factor`, and raises the `MfaFailopen` alarm on
+the first occurrence.
+
 ### Then, once
 
 ```sh

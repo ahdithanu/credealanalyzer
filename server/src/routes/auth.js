@@ -4,7 +4,7 @@ const express = require('express');
 const config = require('../config');
 const login = require('../auth/login');
 const session = require('../auth/session');
-const { requireSession } = require('../middleware/requireSession');
+const { requireSession, readCookie } = require('../middleware/requireSession');
 const { broker } = require('../auth/broker');
 const { securityEvent, KIND } = require('../obs/securityLog');
 
@@ -16,14 +16,60 @@ const { securityEvent, KIND } = require('../obs/securityLog');
  * SSO: there is no credential here to leak, and offboarding in the firm's
  * directory offboards them here.
  */
+/**
+ * The handle that survives the Duo round trip.
+ *
+ * Named distinctly from the session cookie so nothing can confuse one for the
+ * other, and it is NOT a session: it names no user, carries no claim, and is
+ * worthless without the matching row.
+ *
+ * SameSite=Lax, like the session cookie and for the same reason — Duo returns
+ * the browser here by a top-level navigation, and Strict would withhold the
+ * cookie on exactly that request, which would make every Duo login fail.
+ */
+const PENDING_COOKIE = 'cre_mfa_pending';
+
+function pendingCookieOptions(maxAge = config.duo.pendingTtlMs) {
+  return {
+    httpOnly: true,
+    secure: config.isProd,
+    sameSite: 'lax',
+    path: '/auth',
+    maxAge,
+  };
+}
+
 function authRoutes() {
   const r = express.Router();
 
-  // Start a login. GET, because it is a plain navigation from a link or form.
+  /**
+   * Start a login. GET, because it is a plain navigation from a link or form.
+   *
+   * Accepts `?email=` as well as `?org=`, which is what makes the sign-in page
+   * a portal rather than a form asking people to know their own tenant slug.
+   * The resolution is HOME REALM DISCOVERY: the domain half of the address
+   * decides which identity provider to redirect to.
+   *
+   * What it is not, and the distinction matters: the email is a ROUTING hint
+   * and nothing more. It does not put anyone in a tenant. The tenant still
+   * comes from the provider's assertion, and the verified-domain check in
+   * login.complete() is still the thing standing between an address and a
+   * firm's data. Typing a competitor's address here sends you to a directory
+   * that will refuse to authenticate you.
+   *
+   * A domain that maps to no tenant is NOT told so. It is sent down the same
+   * path as an unhinted login, where the provider asks which organization —
+   * because answering "we have never heard of that firm" turns this into a
+   * customer list anyone can read one domain at a time.
+   */
   r.get('/start', async (req, res, next) => {
     try {
+      let tenantHint = req.query.org;
+      if (!tenantHint && req.query.email) {
+        tenantHint = await login.discoverTenant(req.query.email);
+      }
       const { url } = await login.begin({
-        tenantHint: req.query.org,
+        tenantHint,
         redirectTo: req.query.next,
         ip: req.ip,
       });
@@ -38,6 +84,15 @@ function authRoutes() {
       const result = await login.complete({
         state, code, ip: req.ip, userAgent: req.headers['user-agent'],
       });
+
+      // The firm requires a second factor we enforce. No session exists yet and
+      // none will until Duo answers; the browser carries only an opaque handle.
+      if (result.kind === 'mfa') {
+        res.cookie(PENDING_COOKIE, result.nonce, pendingCookieOptions());
+        res.redirect(302, result.url);
+        return;
+      }
+
       res.cookie(config.session.cookieName, result.token,
         session.cookieOptions(config.session.ttlMs));
       // Back into the SPA. `redirectTo` was constrained to a relative path when
@@ -57,6 +112,45 @@ function authRoutes() {
         });
         // The reason reaches the user as a code the SPA renders, never as a
         // stack trace and never echoing anything from the provider's response.
+        const u = new URL('/signin', config.appOrigin);
+        u.searchParams.set('error', err.code);
+        res.redirect(302, u.toString());
+        return;
+      }
+      next(err);
+    }
+  });
+
+  /**
+   * Duo returns the browser here.
+   *
+   * Everything this handler trusts comes from the `mfa_pending` row it claims.
+   * The request supplies three opaque values — a state, a cookie and an
+   * authorization code — and nothing else it says is read. There is no user id
+   * in the URL to tamper with because there is no user id in the URL.
+   */
+  r.get('/duo/callback', async (req, res, next) => {
+    const nonce = readCookie(req, PENDING_COOKIE);
+    // Cleared on every outcome. A pending handle that outlives its single use
+    // is a handle sitting in a browser for no reason.
+    res.clearCookie(PENDING_COOKIE, pendingCookieOptions(0));
+    try {
+      const result = await login.completeDuo({
+        state: req.query.state,
+        nonce,
+        code: req.query.duo_code,
+        // Duo reports a denied push or a timeout as an error parameter rather
+        // than a code.
+        error: req.query.error || req.query.error_description || null,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      res.cookie(config.session.cookieName, result.token,
+        session.cookieOptions(config.session.ttlMs));
+      res.redirect(302, new URL(result.redirectTo, config.appOrigin).toString());
+    } catch (err) {
+      if (err instanceof login.LoginError) {
+        securityEvent(KIND.LOGIN_FAILED, { code: err.code, ip: req.ip });
         const u = new URL('/signin', config.appOrigin);
         u.searchParams.set('error', err.code);
         res.redirect(302, u.toString());

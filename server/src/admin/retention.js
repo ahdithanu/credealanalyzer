@@ -3,6 +3,7 @@
 const { Client } = require('pg');
 const { recordAdmin } = require('./tenants');
 const { keyProvider } = require('../crypto/keyProvider');
+const mfa = require('../auth/mfa');
 
 /**
  * Retention, purging and tenant offboarding.
@@ -360,7 +361,29 @@ async function purge({ apply = false, tenant = null, log = console.log } = {}) {
     log(apply
       ? `purged ${total} deal${total === 1 ? '' : 's'}`
       : `DRY RUN — ${eligible} deal(s) are past their retention window; pass --apply to purge`);
-    return { apply, tenants: report };
+    /**
+     * Spent second-factor challenges.
+     *
+     * Not tenant-scoped and not governed by a firm's retention window, because
+     * a consumed `mfa_pending` row is not deal data — it is authentication
+     * exhaust. Nothing reads one after it is claimed, so keeping them is a pure
+     * retention liability: each carries an ip address and a user agent for a
+     * named person at a client firm.
+     *
+     * A day's grace rather than immediate deletion, so a support question about
+     * a login that failed this morning can still be answered.
+     */
+    let pendingRemoved = 0;
+    if (apply) {
+      pendingRemoved = await mfa.purgeExpired({ olderThanHours: 24 });
+      if (pendingRemoved) log(`removed ${pendingRemoved} expired second-factor challenges`);
+    } else {
+      const { rows } = await db.query(
+        "SELECT count(*)::int AS n FROM mfa_pending WHERE expires_at < now() - interval '24 hours'");
+      pendingRemoved = rows[0].n;
+    }
+
+    return { apply, tenants: report, expiredMfaChallenges: pendingRemoved };
   });
 }
 

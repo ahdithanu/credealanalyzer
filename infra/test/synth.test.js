@@ -267,6 +267,8 @@ test('the security metric filters match the events the server actually emits', (
     ScimAuthFailed: 'scim_auth_failed',
     RoleDenied: 'role_denied',
     RateLimited: 'rate_limited',
+    MfaFailed: 'mfa_failed',
+    MfaFailopen: 'mfa_failopen',
     CspViolation: 'csp_violation',
     ServerError: 'server_error',
     AuditChainBroken: 'audit_chain_broken',
@@ -413,4 +415,53 @@ test('the policy asks browsers of both generations to report', () => {
   const reporting = p.CustomHeadersConfig.Items.find((h) => h.Header === 'Reporting-Endpoints');
   assert.ok(reporting, 'report-to names an endpoint that no header defines, so Chrome sends nothing');
   assert.equal(reporting.Value, 'csp-endpoint="/csp-report"');
+});
+
+test('the generated Duo key decodes to an AES-256 key', () => {
+  // Base64 length maps to byte length in steps, and the plausible-looking
+  // choice is off by one: 44 characters decode to 33 bytes, not 32. Nothing
+  // would fail at synth or at deploy — the first failure would be a customer's
+  // first Duo login, with an error about key length that names nothing useful.
+  const secret = Object.values(pt.findResources('AWS::SecretsManager::Secret'))
+    .find((r) => /DUO_CONFIG_KEY/.test(r.Properties.Description || ''));
+  assert.ok(secret, 'no Duo config key secret');
+  const gen = secret.Properties.GenerateSecretString;
+  assert.equal(gen.GenerateStringKey, 'value');
+
+  // Decode a string of exactly that length from the alphabet the generator is
+  // left with, rather than asserting the number 43 against itself.
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (const ch of gen.ExcludeCharacters || '') {
+    assert.ok(!alphabet.includes(ch),
+      `the generator may still emit ${JSON.stringify(ch)}, which is not base64`);
+  }
+  const sample = alphabet.repeat(2).slice(0, gen.PasswordLength);
+  assert.equal(Buffer.from(sample, 'base64').length, 32,
+    `${gen.PasswordLength} characters decode to ${Buffer.from(sample, 'base64').length} bytes, not 32`);
+});
+
+test('the Duo key is a separate secret from the session signing key', () => {
+  // A key used to sign and a key used to encrypt must be rotatable
+  // independently. Sharing one means the secret-rotation runbook silently
+  // invalidates every stored Duo client secret on the platform.
+  const secrets = Object.values(pt.findResources('AWS::SecretsManager::Secret'));
+  const duo = secrets.filter((r) => /DUO_CONFIG_KEY/.test(r.Properties.Description || ''));
+  const session = secrets.filter((r) => /SESSION_SIGNING_SECRET/.test(r.Properties.Description || ''));
+  assert.equal(duo.length, 1);
+  assert.equal(session.length, 1);
+  assert.notDeepEqual(duo[0], session[0]);
+  // And losing it means re-collecting a credential from every customer's Duo
+  // console, so it must outlive a `cdk destroy`.
+  const retained = Object.entries(pt.findResources('AWS::SecretsManager::Secret'))
+    .filter(([, r]) => /DUO_CONFIG_KEY/.test(r.Properties.Description || ''));
+  assert.equal(retained[0][1].DeletionPolicy, 'Retain');
+});
+
+test('the Duo client secret never reaches the task as plaintext', () => {
+  const td = Object.values(pt.findResources('AWS::ECS::TaskDefinition'))[0]
+    .Properties.ContainerDefinitions[0];
+  const plain = JSON.stringify(td.Environment || []);
+  assert.ok(!/DUO_CONFIG_KEY/.test(plain), 'the Duo key is in plaintext environment');
+  const names = (td.Secrets || []).map((x) => x.Name);
+  assert.ok(names.includes('DUO_CONFIG_KEY'), 'the Duo key does not reach the task at all');
 });

@@ -42,7 +42,7 @@ function safeEqual(a, b) {
  * `tenantId` must be the one resolved from the identity provider's assertion,
  * not one the browser asked for.
  */
-async function issue(_unusedDb, { userId, tenantId, ip, userAgent, authMethod, mfaAsserted }) {
+async function issue(_unusedDb, { userId, tenantId, ip, userAgent, authMethod, mfaAsserted, mfaFactor }) {
   const token = crypto.randomBytes(TOKEN_BYTES).toString('base64url');
   const expiresAt = new Date(Date.now() + config.session.ttlMs);
   // On the AUTH pool, not the caller's tenant transaction: app_user has no
@@ -53,14 +53,19 @@ async function issue(_unusedDb, { userId, tenantId, ip, userAgent, authMethod, m
   // tenant-data role the power to mint sessions.
   await authPool.query(
     `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, ip, user_agent,
-                           auth_method, mfa_asserted)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                           auth_method, mfa_asserted, mfa_factor)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [hashToken(token), userId, tenantId, expiresAt, ip || null, (userAgent || '').slice(0, 500),
       authMethod || null,
       // Tri-state on purpose. `false` means the provider told us there was no
       // second factor; NULL means it said nothing, which is not the same claim
       // and must not be recorded as one.
-      mfaAsserted === undefined ? null : mfaAsserted],
+      mfaAsserted === undefined ? null : mfaAsserted,
+      // A DIFFERENT claim from mfa_asserted above, kept separate on purpose.
+      // That column means "the identity provider said a second factor was
+      // used"; this one means "we challenged and verified it ourselves".
+      // Collapsing them would make the stronger claim unauditable.
+      mfaFactor || null],
   );
   return { token, expiresAt };
 }

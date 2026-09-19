@@ -171,6 +171,45 @@ class PlatformStack extends Stack {
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
+    /**
+     * The key that seals every tenant's Duo client secret.
+     *
+     * Generated here and never typed, like the session signing secret — but a
+     * SEPARATE secret from it, which is the whole point. A key used to sign and
+     * a key used to encrypt must be rotatable independently, or the rotation
+     * runbook for one silently invalidates the other and nobody finds out until
+     * a firm's logins start failing.
+     *
+     * 32 bytes, base64, which is what mfa.duoKey() expects. RETAIN on delete:
+     * losing this key does not lose a session, it loses the ability to open
+     * every Duo client secret on the platform, and re-provisioning those means
+     * asking every customer for a credential from their own Duo console.
+     */
+    const duoKeySecret = new secretsmanager.Secret(this, 'DuoConfigKey', {
+      description: 'DUO_CONFIG_KEY — seals per-tenant Duo client secrets (AES-256-GCM)',
+      generateSecretString: {
+        /**
+         * 43 characters, not 44, and the difference is a production outage.
+         *
+         * The alphabet is constrained to [A-Za-z0-9] because the value has to
+         * survive base64 decoding and the generator's punctuation set does not.
+         * With no padding, base64 length maps to bytes in steps: 42 chars decode
+         * to 31 bytes, 43 to 32, 44 to 33. Only 43 gives AES-256 its key.
+         *
+         * 44 was the obvious-looking number — it is what 32 bytes encodes TO,
+         * with a pad character this alphabet cannot contain — and it would have
+         * synthesized, deployed, and thrown `DUO_CONFIG_KEY must decode to 32
+         * bytes; got 33` at the first Duo login on a customer's first day.
+         * Asserted in test/synth.test.js against a real decode.
+         */
+        passwordLength: 43,
+        excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/^-_=,.@"\\',
+        generateStringKey: 'value',
+        secretStringTemplate: JSON.stringify({}),
+      },
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
     const taskRole = new iam.Role(this, 'TaskRole', {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       description: 'The API task. Holds IAM database auth for two Postgres roles and nothing else.',
@@ -190,6 +229,7 @@ class PlatformStack extends Stack {
 
     ssoSecret.grantRead(taskRole);
     sessionSecret.grantRead(taskRole);
+    duoKeySecret.grantRead(taskRole);
 
     // A certificate is REQUIRED, and this refusal is deliberate.
     //
@@ -252,6 +292,11 @@ class PlatformStack extends Stack {
           APP_ORIGIN: appOrigin,
           SSO_PROVIDER: 'workos',
           WORKOS_REDIRECT_URI: `https://${domainName || 'api.example'}/auth/callback`,
+          // Where Duo returns the browser. Must match the redirect registered
+          // on each customer's Duo application EXACTLY — Duo compares it on
+          // both the authorize call and the token exchange, so a mismatch is a
+          // login that fails at the last step with an opaque error.
+          DUO_REDIRECT_URI: `https://${domainName || 'api.example'}/auth/duo/callback`,
           DB_HOST: this.database.dbInstanceEndpointAddress,
           DB_PORT: this.database.dbInstanceEndpointPort,
           DB_NAME: 'cre',
@@ -264,6 +309,7 @@ class PlatformStack extends Stack {
           WORKOS_API_KEY: ecs.Secret.fromSecretsManager(ssoSecret, 'WORKOS_API_KEY'),
           WORKOS_CLIENT_ID: ecs.Secret.fromSecretsManager(ssoSecret, 'WORKOS_CLIENT_ID'),
           SESSION_SIGNING_SECRET: ecs.Secret.fromSecretsManager(sessionSecret, 'value'),
+          DUO_CONFIG_KEY: ecs.Secret.fromSecretsManager(duoKeySecret, 'value'),
         },
         // The log group is created HERE rather than left to the log driver,
         // and that is what makes the security alarms below possible: a metric
@@ -507,6 +553,8 @@ class PlatformStack extends Stack {
     const scimAuthFailed = securityMetric('ScimAuthFilter', 'scim_auth_failed', 'ScimAuthFailed');
     const roleDenied = securityMetric('RoleDeniedFilter', 'role_denied', 'RoleDenied');
     const rateLimited = securityMetric('RateLimitedFilter', 'rate_limited', 'RateLimited');
+    const mfaFailed = securityMetric('MfaFailedFilter', 'mfa_failed', 'MfaFailed');
+    const mfaFailopen = securityMetric('MfaFailopenFilter', 'mfa_failopen', 'MfaFailopen');
     const cspViolation = securityMetric('CspFilter', 'csp_violation', 'CspViolation');
     const serverError = securityMetric('ServerErrorFilter', 'server_error', 'ServerError');
     const auditBroken = securityMetric('AuditChainFilter', 'audit_chain_broken', 'AuditChainBroken');
@@ -569,6 +617,45 @@ class PlatformStack extends Stack {
       alarmDescription:
         'The daily audit-chain verification has not reported an intact log in 26 hours. '
         + 'The integrity control is not running; the chain is unverified, not proven broken.',
+    });
+
+    /**
+     * A session was issued WITHOUT the second factor its tenant requires.
+     *
+     * Threshold zero, like the audit chain, and for the same reason: this is
+     * not a rate to tune, it is a control that was not applied. It happens only
+     * when Duo was unreachable AND the tenant is configured to admit on
+     * failure, so every occurrence is a login that a customer believes was
+     * protected by a second factor and was not. They are entitled to know, and
+     * the audit entry tells them; this tells us first.
+     */
+    alarm('MfaFailopenAlarm', {
+      metric: mfaFailopen.with({ period: Duration.minutes(5) }),
+      threshold: 0, evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription:
+        'Users were admitted without the second factor their firm requires, because Duo was '
+        + 'unreachable and that tenant fails open. Check Duo, then check who got in.',
+    });
+
+    /**
+     * Second factors that were asked for and did not pass.
+     *
+     * A handful is ordinary: people decline a push, or walk away from a prompt.
+     * Volume is not, and the `code` field is what separates the two — a run of
+     * `username_mismatch` in particular is someone attempting to bind their own
+     * Duo success to another person's pending login, which is the specific
+     * attack the exchange in auth/duo.js is written to refuse.
+     */
+    alarm('MfaFailedAlarm', {
+      metric: mfaFailed,
+      threshold: 15, evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription:
+        'Unusual volume of failed second factors. Read `code`: username_mismatch is an attempt '
+        + 'to bind one person\'s Duo result to another\'s login; unreachable is a Duo outage.',
     });
 
     // A SCIM token is a standing credential that can enumerate and deactivate
@@ -825,10 +912,15 @@ class PlatformStack extends Stack {
 
     this.service = service;
     this.ssoSecret = ssoSecret;
+    this.duoKeySecret = duoKeySecret;
 
     new CfnOutput(this, 'ApiUrl', { value: `https://${domainName || service.loadBalancer.loadBalancerDnsName}` });
     new CfnOutput(this, 'DbEndpoint', { value: this.database.dbInstanceEndpointAddress });
     new CfnOutput(this, 'SsoSecretName', { value: ssoSecret.secretName });
+    new CfnOutput(this, 'DuoRedirectUri', {
+      value: `https://${domainName || service.loadBalancer.loadBalancerDnsName}/auth/duo/callback`,
+      description: 'Register this exact URL on every customer Duo application',
+    });
     new CfnOutput(this, 'AlarmTopicArn', { value: alarmTopic.topicArn });
     new CfnOutput(this, 'ApiLogGroup', { value: apiLogs.logGroupName });
   }

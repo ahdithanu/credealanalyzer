@@ -96,9 +96,14 @@ export const api = {
    * back — none of which a fetch can do, and all of which the user must see to
    * know which directory is asking for their credentials.
    */
-  signIn({ org, next } = {}) {
+  signIn({ org, email, next } = {}) {
     const u = new URL(`${API_URL}/auth/start`);
     if (org) u.searchParams.set('org', org);
+    // The email is a ROUTING hint: the server resolves its domain to a firm and
+    // picks which identity provider to redirect to. It does not put anyone in a
+    // tenant — that still comes from the provider's assertion — and the server
+    // deliberately gives the same answer whether or not the domain is known.
+    if (email) u.searchParams.set('email', email);
     // Relative only. The server constrains this too, but sending an absolute
     // URL from here would be this app asking to be an open redirect.
     if (next && next.startsWith('/') && !next.startsWith('//')) {

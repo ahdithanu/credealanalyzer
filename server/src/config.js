@@ -107,6 +107,38 @@ const config = {
     csp: Number(process.env.RATE_LIMIT_CSP || 60),
   },
 
+  /**
+   * Duo, as a second factor we enforce ourselves.
+   *
+   * Per-tenant integrations live in the `tenant_duo` table; what lives here is
+   * the platform's own two settings: the key their client secrets are sealed
+   * with, and the callback Duo returns the browser to.
+   */
+  duo: {
+    /**
+     * The key that seals per-tenant Duo client secrets.
+     *
+     * 32 bytes, base64 or hex. Deliberately its OWN key rather than a reuse of
+     * SESSION_SIGNING_SECRET: a key used to sign and a key used to encrypt must
+     * be separable, or rotating either one silently rotates the other and the
+     * rotation runbook becomes wrong in a way nobody discovers until a login
+     * fails.
+     *
+     * Absent in development, which is not a hole: without it, `duoKey()` throws
+     * and no tenant can have a Duo integration at all. The failure is a refusal
+     * to configure, never a silently unencrypted secret.
+     */
+    configKey: process.env.DUO_CONFIG_KEY || null,
+    // Must match the redirect registered on the Duo application exactly. Duo
+    // compares it on both the authorize and the token call.
+    redirectUri: process.env.DUO_REDIRECT_URI
+      || 'http://localhost:8080/auth/duo/callback',
+    // How long a person has to answer the prompt. Short on purpose: a pending
+    // challenge is a resolved identity waiting for a factor, and a stolen
+    // callback URL is worth nothing once it expires.
+    pendingTtlMs: Number(process.env.DUO_PENDING_TTL_MS || 5 * 60 * 1000),
+  },
+
   sso: {
     // 'workos' in every real environment. 'stub' exists so the entire login
     // flow is testable with no network and no vendor account — see auth/stub.js
@@ -130,6 +162,10 @@ const config = {
 };
 
 if (isProd) {
+  if (config.duo.configKey && !config.duo.redirectUri.startsWith('https://')) {
+    throw new Error('DUO_REDIRECT_URI must be https in production; Duo returns an '
+      + 'authorization code to it');
+  }
   if (config.sso.provider === 'stub') {
     throw new Error('SSO_PROVIDER=stub is a test fixture and must never run in production');
   }

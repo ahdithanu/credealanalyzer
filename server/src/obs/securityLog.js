@@ -104,6 +104,16 @@ const KIND = {
   SCIM_AUTH_FAILED: 'scim_auth_failed',
   // A caller hit a rate limit. Which limiter is in `limiter`.
   RATE_LIMITED: 'rate_limited',
+  // A second factor we enforce ourselves did not pass. Covers a refused Duo
+  // credential, a failed signature, an expired token and — most importantly —
+  // a username mismatch, which is what an attempt to bind someone else's
+  // successful second factor to this login looks like.
+  MFA_FAILED: 'mfa_failed',
+  // A session was issued WITHOUT the second factor its tenant requires, because
+  // Duo could not be reached and that tenant is configured to admit on failure.
+  // Rare, deliberate, and alarmed on every occurrence: this is the event that
+  // says the control was not applied.
+  MFA_FAILOPEN: 'mfa_failopen',
   // The browser reported a Content-Security-Policy violation.
   CSP_VIOLATION: 'csp_violation',
   // An unhandled error reached the error handler with a 5xx.
