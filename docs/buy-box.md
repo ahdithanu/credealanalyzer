@@ -135,6 +135,76 @@ a merge conflict to resolve silently.
 Deduplication is by **address**, not name: the same centre is "Maple Crossing",
 "Maple Crossing Shopping Center" and "4500 Maple Ave" across three brokers.
 
+## Filling the site criteria from public data
+
+```sh
+npm run enrich -- --probe=OH      # FIRST. Confirm the endpoint before trusting it.
+npm run enrich -- deals.json      # writes deals.enriched.json
+npm run buybox  -- deals.enriched.json
+```
+
+Needs `address`, `city` and `state` on the deal. Returns `trafficCount` from
+the nearest state DOT count station, `pop3mi` from ACS tracts, and
+`popGrowth3mi`.
+
+**Probe first, and mean it.** None of the DOT endpoints in
+`src/lib/ingest/dot.js` has ever been called — they are starting points marked
+`verified: false`, and every enrichment that uses one says so. State DOT service
+URLs move, and a moved ArcGIS service answers a portal page with HTTP 200, which
+is why a JSON parse failure on a 200 is reported as `not_json` rather than as a
+property with no traffic count. `--probe` prints the endpoint's real field names
+so you can confirm the URL and map its columns in one step.
+
+Adding a state is three lines in `DOT_SOURCES`. `aadtFields` is a candidate
+list because one state calls it `AADT`, the next `ADT`, the next
+`AADT_RPT_QTY` — a near miss still works, and a total miss tells you which
+fields did come back.
+
+**The nearest station, with its distance.** ArcGIS returns intersecting
+features in no useful order, so the first one is not the closest — in the test
+fixture that is 31,000 versus 16,400, the difference between passing your
+traffic criterion and not. The distance comes back with the number because on a
+signalised corner the two approaches can differ by 40%, and how far away the
+measurement was taken is your call.
+
+### Population growth is county-level, and labelled as such
+
+`pop3mi` is a real 3-mile figure: ACS tract populations, for tracts whose
+**centroid** falls inside the ring. Intersection alone would count a large
+rural tract clipping the edge at its full population, which on a 3-mile ring can
+be most of the answer. The centroid method has its own bias — a tract is in or
+out whole — and that is the conventional trade for not doing area-weighted
+overlap.
+
+`popGrowth3mi` is **county-level**, and the report says so on every run. Two
+independent reasons a tract-level 5-year growth is not currently computable:
+
+- **Boundaries.** ACS 5-year products through 2020 are on 2010 census tracts;
+  from 2021 they are on 2020 tracts. Differencing 2019 against 2023 for "the
+  same tract" compares two different pieces of ground — and in a growing suburb
+  the tracts that changed most are exactly the ones that were split *because*
+  they grew.
+- **Overlap.** The Census Bureau advises against comparing overlapping 5-year
+  estimates. The nearest non-overlapping pair on 2020 boundaries needs the 2026
+  release. `assertNonOverlapping()` refuses a pair less than five years apart.
+
+So the level is tract-resolution and the growth is county-resolution, with the
+county named. A county is not three miles; letting a county number wear a
+three-mile label would be the quiet kind of wrong. True 3-mile growth needs the
+Census tract relationship files to crosswalk 2010 tracts onto 2020 ones — real
+work, not done here.
+
+### The flyer versus the measurement
+
+Enrichment does not overwrite what you supplied. It merges and reports:
+
+```
+! trafficCount: 16400 (Ohio DOT 2024) vs 25000 (listing/flyer as supplied) — 34% spread
+```
+
+A flyer's 25,000 VPD against a measured 16,400 moves the deal from inside your
+traffic criterion to outside it. Both numbers go in front of you.
+
 ## What gets measured
 
 Beyond the criteria themselves, the rent roll yields figures worth reading

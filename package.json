@@ -19,6 +19,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "buybox": "node scripts/buybox.mjs"
+    "buybox": "node scripts/buybox.mjs",
+    "enrich": "node scripts/enrich.mjs"
   }
 }
