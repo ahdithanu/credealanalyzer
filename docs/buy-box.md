@@ -72,6 +72,69 @@ Tenant categories: `salon`, `medical`, `urgentCare`, `fitness`, `professional`,
 seven are treated as hard-to-Amazon; `qsr` and `restaurant` both count toward
 the restaurant cap.
 
+## Getting a rent roll in
+
+Point the deal at the broker's spreadsheet instead of retyping it:
+
+```jsonc
+{ "name": "Maple Crossing", "purchasePrice": 2400000, "rentRollCsv": "./maple-rr.csv" }
+```
+
+```sh
+npm run buybox -- deals.json     # reads the CSV, screens the deal
+npm run buybox -- maple-rr.csv   # a bare rent roll, for the lease criteria only
+```
+
+Export the rent roll tab to CSV and pass it as-is. It handles what these
+actually look like: a title row before the headers, `$` and thousands
+separators, monthly or per-SF rent instead of annual, accounting negatives,
+`VACANT` rows, `MTM`, and a `TOTAL` row at the bottom — which is excluded,
+because left in it doubles the rent and invents a tenant holding half of it.
+
+Column headers are matched against a synonym list. For a file it cannot read,
+map explicitly rather than renaming the broker's file:
+
+```js
+parseRentRollCsv(text, { columns: { 'Demised Area': 'squareFeet' } })
+```
+
+**Parse problems print above the verdicts, not below.** A verdict computed from
+a roll with two unreadable rents is a verdict about a different building:
+
+```
+Rent roll did not fully parse
+  ! Maple Crossing row 4: an occupied bay with no readable rent. It will be
+    excluded from rent totals, concentration and WALT.
+```
+
+Nothing unreadable becomes a zero. A bay whose rent read as `0` would make a
+fully-let centre look like it has upside, which is the story a buyer wants to
+believe.
+
+## Sources that disagree
+
+By the time you write an LOI the same property is described four times — teaser,
+OM, rent roll, county assessor — and they do not agree. `mergeListing()` keeps
+every field's origin and **records conflicts rather than resolving them**:
+
+```
+buildingSize   11,200 (county assessor)   ← leads
+               14,000 (flyer)             ← 20% spread
+```
+
+Sources rank `measured` > `public` > `document` > `marketing` > `estimate`, and
+recency never beats trust: a flyer sent this morning does not outrank an
+assessor record from last year, because the flyer was never a measurement.
+
+The ranking decides which value *leads*. It does not decide the others were
+wrong — an assessor's gross building area and a rent roll's leasable area are
+both correct and differ by the common-area load. 11,200 against 14,000 at
+$200/SF is $560k of difference in what you are buying, which is a finding, not
+a merge conflict to resolve silently.
+
+Deduplication is by **address**, not name: the same centre is "Maple Crossing",
+"Maple Crossing Shopping Center" and "4500 Maple Ave" across three brokers.
+
 ## What gets measured
 
 Beyond the criteria themselves, the rent roll yields figures worth reading

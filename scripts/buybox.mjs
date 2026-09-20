@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { rank, BUY_BOXES, STRIP_CENTER_BOX } from '../src/lib/buyBox.js';
+import { parseRentRollCsv } from '../src/lib/ingest/rentRollCsv.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -40,9 +41,31 @@ if (!BUY_BOXES[boxKey]) {
   process.exit(2);
 }
 
+let rentRollIssues = [];
 let deals;
 try {
-  deals = JSON.parse(readFileSync(resolve(process.cwd(), file), 'utf8'));
+  const raw = readFileSync(resolve(process.cwd(), file), 'utf8');
+
+  if (/\.(csv|tsv|txt)$/i.test(file)) {
+    // A bare rent roll. One deal, and every criterion that is not about the
+    // leases comes back unknown — which is the honest answer, and the `?` line
+    // below says exactly what to add.
+    const { bays, issues } = parseRentRollCsv(raw);
+    rentRollIssues = issues;
+    deals = [{ name: file.replace(/^.*\//, ''), propertyType: 'retail', rentRoll: bays }];
+  } else {
+    deals = JSON.parse(raw);
+    // A deal may point at its rent roll rather than inlining it, which is how
+    // this is actually used: the broker's spreadsheet stays the broker's
+    // spreadsheet and nobody retypes nine rows.
+    for (const d of deals) {
+      if (typeof d.rentRollCsv !== 'string') continue;
+      const csv = readFileSync(resolve(process.cwd(), d.rentRollCsv), 'utf8');
+      const { bays, issues } = parseRentRollCsv(csv);
+      d.rentRoll = bays;
+      if (issues.length) rentRollIssues.push({ deal: d.name, issues });
+    }
+  }
 } catch (err) {
   process.stderr.write(`could not read ${file}: ${err.message}\n`);
   process.exit(2);
@@ -70,6 +93,30 @@ const VERDICT = {
 
 const ranked = rank(deals, boxKey);
 const box = BUY_BOXES[boxKey];
+
+/**
+ * Parse problems print FIRST, above every verdict.
+ *
+ * A verdict computed from a rent roll with two unreadable rents is a verdict
+ * about a different building, and printing the caveat underneath is printing
+ * it after the decision has been made.
+ */
+const flat = Array.isArray(rentRollIssues) && rentRollIssues.length
+  && rentRollIssues[0]?.issues
+  ? rentRollIssues.flatMap((r) => r.issues.map((i) => ({ ...i, deal: r.deal })))
+  : rentRollIssues;
+const loud = flat.filter((i) => ['unparsed', 'missing', 'unusable', 'no-header'].includes(i.kind));
+if (loud.length) {
+  process.stdout.write(`\n${C.warn('Rent roll did not fully parse')}\n`);
+  for (const i of loud) {
+    const where = [i.deal, i.line ? `row ${i.line}` : null].filter(Boolean).join(' ');
+    process.stdout.write(`  ${C.warn('!')} ${where ? `${where}: ` : ''}`
+      + `${i.message || `${i.field} = ${JSON.stringify(i.raw)}`}\n`);
+  }
+}
+for (const i of flat.filter((x) => ['note', 'assumption', 'unmapped'].includes(x.kind))) {
+  process.stdout.write(`  ${C.dim(`· ${i.message}`)}\n`);
+}
 
 process.stdout.write(`\n${C.bold(box.name)}  ${C.dim(`— ${deals.length} candidates`)}\n\n`);
 
