@@ -5,6 +5,7 @@ import { DEAL_STAGES } from '../lib/sampleDeals';
 import { propertyTypes } from '../lib/propertyTypes';
 import { DEFAULT_COVENANTS } from '../lib/validation';
 import { irrQualification, IrrMark, IRR_FOOTNOTE } from './irrQualification';
+import { screenDeal, verdictRank, VERDICT, BUY_BOX_FOOTNOTE } from '../lib/buyBoxView';
 
 // The covenant itself, read from the one place that states it. It was written
 // here as a literal 1.25 beside the sizer's own DEFAULT_DEBT_SIZING.minDSCR, so
@@ -23,6 +24,12 @@ const SAVED_VIEWS = [
   // watches. It is NOT itself a firm default, and there is no entry for it in
   // FIRM_DEFAULTS.
   { key: 'dscr',    label: 'DSCR at risk',    test: (d, m) => (m.operating.minStabilizedDSCR ?? 9) < DSCR_WATCHLIST },
+  // Deals a buy box APPLIES to, not deals that pass one. Filtering to `pass`
+  // would be an empty view on most pipelines — a pass needs every criterion
+  // measured, and at the top of a funnel almost nothing is. The verdict is the
+  // Box column's job; this view's job is to drop the asset classes no box was
+  // written for, so the column beside them means something.
+  { key: 'box',     label: 'Buy box',         test: (d, m, r) => Boolean(r.box) },
   { key: 'every',   label: 'Everything',      test: () => true },
 ];
 
@@ -38,6 +45,9 @@ const COLUMNS = [
   { key: 'yoc',    label: 'YoC',     align: 'r' },
   { key: 'spread', label: 'Sprd',    align: 'r' },
   { key: 'dscr',   label: 'DSCR',    align: 'r' },
+  // Sorted on the verdict's rank rather than its name, so the order is
+  // In box → Review → Incomplete → Outside rather than alphabetical.
+  { key: 'boxRank', label: 'Box',    align: 'l' },
   { key: 'shape',  label: 'Shape',   align: 'l' },
 ];
 
@@ -48,9 +58,13 @@ export default function Pipeline({ deals, onOpen, onExport }) {
   const [view, setView] = useState('all');
   const [sort, setSort] = useState({ key: 'irr', dir: -1 });
   const [query, setQuery] = useState('');
+  // The deal whose buy box criteria are expanded, or null. One at a time: the
+  // point of the detail is to read it, and every row open is the table again.
+  const [openBox, setOpenBox] = useState(null);
 
   const rows = useMemo(() => deals.map((deal) => {
     const m = deal.metrics.model;
+    const box = screenDeal(deal);
     return {
       deal,
       model: m,
@@ -69,13 +83,19 @@ export default function Pipeline({ deals, onOpen, onExport }) {
       // difference; nothing on this screen read it, so an indicative IRR sorted
       // and coloured exactly like a settled one.
       irrQ: irrQualification(m.returns.irrDiagnostics, 'levered'),
+      // `null` for a property type no box covers — see buyBoxView.js. The
+      // screen is struck on the DEAL, not on the model: a buy box is a question
+      // about the building and the lease, and it has an answer before anything
+      // has been underwritten.
+      box,
+      boxRank: verdictRank(box),
       shape: m.annual.map((y) => y.cashFlow),
     };
   }), [deals]);
 
   const activeView = SAVED_VIEWS.find((v) => v.key === view) ?? SAVED_VIEWS[0];
   const filtered = rows
-    .filter((r) => activeView.test(r.deal, r.model))
+    .filter((r) => activeView.test(r.deal, r.model, r))
     .filter((r) => !query || `${r.name} ${r.market} ${r.owner ?? ''}`.toLowerCase().includes(query.toLowerCase()));
 
   const sorted = [...filtered].sort((a, b) => {
@@ -179,7 +199,7 @@ export default function Pipeline({ deals, onOpen, onExport }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r) => (
+            {sorted.map((r) => [(
               <tr key={r.deal.id} style={{ cursor: 'pointer' }} onClick={() => onOpen(r.deal)}>
                 <td className="name">
                   {r.name}
@@ -201,9 +221,39 @@ export default function Pipeline({ deals, onOpen, onExport }) {
                 <td className={`r num ${r.dscr !== null && r.dscr < MIN_DSCR ? 'neg' : ''}`}>
                   {mult(r.dscr)}
                 </td>
+                <td>
+                  {r.box ? (
+                    <button
+                      type="button"
+                      className={`chip ${VERDICT[r.box.verdict].tone}`}
+                      aria-expanded={openBox === r.deal.id}
+                      title={`${r.box.boxName} — click for the criteria`}
+                      // The row opens the deal. Reading why a deal is outside
+                      // the box must not navigate away from the list you are
+                      // reading it against.
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenBox((cur) => (cur === r.deal.id ? null : r.deal.id));
+                      }}
+                    >
+                      {VERDICT[r.box.verdict].label}
+                    </button>
+                  ) : (
+                    // No box covers this property type. An absence, not a
+                    // verdict: grading a car wash on bay count and restaurant
+                    // share would put red in a column that never applied to it.
+                    <span className="dim2" title="No buy box for this property type">{NA}</span>
+                  )}
+                </td>
                 <td><Sparkline values={r.shape} /></td>
               </tr>
-            ))}
+            ), openBox === r.deal.id && r.box ? (
+              <tr key={`${r.deal.id}-box`}>
+                <td colSpan={COLUMNS.length} style={{ background: 'var(--surface-2)' }}>
+                  <BuyBoxDetail screen={r.box} />
+                </td>
+              </tr>
+            ) : null])}
             {!sorted.length && (
               <tr><td colSpan={COLUMNS.length}><div className="empty">No deals match this view.</div></td></tr>
             )}
@@ -214,6 +264,9 @@ export default function Pipeline({ deals, onOpen, onExport }) {
       {sorted.some((r) => r.irrQ) && (
         <div className="dim2" style={{ fontSize: '10.5px' }}>{IRR_FOOTNOTE}</div>
       )}
+      {sorted.some((r) => r.box) && (
+        <div className="dim2" style={{ fontSize: '10.5px' }}>{BUY_BOX_FOOTNOTE}</div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11px', color: 'var(--text-4)' }}>
         <span>{sorted.length} of {deals.length} deals</span>
@@ -223,6 +276,83 @@ export default function Pipeline({ deals, onOpen, onExport }) {
           Export ledger
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Why a deal sits where it sits in the box.
+ *
+ * Failures first, then what was never measured, then what passed. That order is
+ * the point: a verdict without the criterion that produced it is a score, and a
+ * score is the thing a buy box exists to replace. The measured value sits
+ * beside the threshold on every line, so "Outside" is always readable as a
+ * distance rather than a judgement.
+ */
+const STATUS_ORDER = { fail: 0, unknown: 1, pass: 2, reported: 3 };
+const STATUS_MARK = {
+  fail: { glyph: '\u00d7', cls: 'neg', hint: 'missed' },
+  unknown: { glyph: '?', cls: 'dim2', hint: 'not measured' },
+  pass: { glyph: '\u2713', cls: 'pos', hint: 'met' },
+  reported: { glyph: '\u00b7', cls: 'dim2', hint: 'reported, not tested' },
+};
+
+export function BuyBoxDetail({ screen }) {
+  const rows = [...screen.results]
+    .sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
+      // Within a status, a hard criterion before a soft one: the rules that end
+      // the conversation are the ones to read first.
+      || ((a.severity === 'hard' ? 0 : 1) - (b.severity === 'hard' ? 0 : 1)));
+
+  const byKey = new Map(screen.results.map((r) => [r.key, r]));
+  const missingLabels = screen.missing.map((k) => byKey.get(k)?.label ?? k);
+
+  return (
+    <div style={{ padding: '2px 0 6px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '14px', marginBottom: '9px' }}>
+        <span className="lbl">{screen.boxName}</span>
+        <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>
+          <span className="pos">{screen.passed} met</span>
+          {' \u00b7 '}
+          <span className={screen.failed ? 'neg' : ''}>{screen.failed} missed</span>
+          {' \u00b7 '}
+          <span>{screen.unknown} unmeasured</span>
+        </span>
+      </div>
+
+      {rows.map((r) => {
+        const mark = STATUS_MARK[r.status] ?? STATUS_MARK.unknown;
+        return (
+          <div
+            key={r.key}
+            style={{ display: 'flex', alignItems: 'baseline', gap: '10px', padding: '2.5px 0', fontSize: '11.5px' }}
+            title={r.note || undefined}
+          >
+            <span className={mark.cls} style={{ width: '12px', flex: 'none' }}>{mark.glyph}</span>
+            <span style={{ width: '210px', flex: 'none', color: 'var(--text-2)' }}>
+              {r.label}
+              {/* Soft is a conversation, hard is a no. Unmarked would let a
+                  28%-restaurant centre read like one outside the price range. */}
+              {r.severity === 'soft' && r.status === 'fail' && (
+                <span className="dim2" style={{ fontSize: '10px' }}> soft</span>
+              )}
+            </span>
+            <span className="num" style={{ width: '135px', flex: 'none' }}>{r.display ?? NA}</span>
+            <span className="dim2">{r.threshold || mark.hint}</span>
+          </div>
+        );
+      })}
+
+      {missingLabels.length > 0 && (
+        <div style={{ marginTop: '9px', fontSize: '11px', color: 'var(--text-3)' }}>
+          <span className="lbl">To finish the screen</span>{' '}
+          {missingLabels.join(', ')}
+        </div>
+      )}
+
+      {screen.notes.map((n) => (
+        <div key={n} className="prov" style={{ marginTop: '8px', fontSize: '10.5px' }}>{n}</div>
+      ))}
     </div>
   );
 }

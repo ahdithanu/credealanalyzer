@@ -566,3 +566,12 @@ select.inp { cursor: pointer; }
   cursor: pointer; text-decoration: underline;
 }
 .linkish:hover { opacity: 1; }
+
+/* A chip that is also a control.
+ *
+ * `.chip` resets nothing a <button> brings with it, so a bare
+ * <button class="chip"> renders with the UA's own background, font and padding
+ * — a system button wearing a border. The toned rules above are two classes
+ * deep and so still win on background for pos/neg/warn. */
+button.chip { background: transparent; font: inherit; font-size: 10.5px; cursor: pointer; }
+button.chip:hover { border-color: var(--text-3); }

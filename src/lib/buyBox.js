@@ -103,7 +103,10 @@ export const STRIP_CENTER_BOX = {
       min: 1_500_000, max: 4_000_000, format: money,
     }),
     range('pricePSF', 'Price per SF', {
-      min: 100, max: 200, format: (n) => `$${n}/SF`,
+      // `psf`, not a raw interpolation: a computed price per SF is a ratio and
+      // carries the whole float. $5.2M over 18,000 SF printed as
+      // "$288.8888888888889/SF" beside a threshold of "$200/SF".
+      min: 100, max: 200, format: psf,
       note: 'Checked independently of total price: the two ranges do not line up at the '
         + 'corners. 25,000 SF at $200/SF is $5M, past the price cap; 8,000 SF at $100/SF '
         + 'is $800k, under the floor.',
