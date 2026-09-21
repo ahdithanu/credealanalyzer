@@ -295,3 +295,79 @@ describe('the Buy box view and the Box sort', () => {
     });
   });
 });
+
+/**
+ * The Market Intelligence banner, which states what the market table is made of.
+ *
+ * Lives here rather than in its own file because it guards the same failure as
+ * the Box column: a label that reports something other than what the data says.
+ */
+describe('the market data banner is computed, not written down', () => {
+  it('reports the real count of markets and the real share that is sourced', async () => {
+    const { default: MarketIntelligence } = await import('../MarketIntelligence');
+    const { markets, fieldQuality, MARKET_DATA_FIELDS } = await import('../../lib/markets');
+
+    const total = markets.length * MARKET_DATA_FIELDS.length;
+    const sourced = markets
+      .flatMap((m) => MARKET_DATA_FIELDS.map((f) => fieldQuality(m, f)))
+      .filter((q) => q === 'sourced').length;
+
+    withScreen(<MarketIntelligence deal={null} />, (c) => {
+      const shown = text(c);
+      expect(shown).toContain(`${markets.length} markets`);
+      expect(shown).toContain(`${Math.round((sourced / total) * 100)}% of fields sourced`);
+      // Today that is 0%, and the banner has to be willing to say so rather
+      // than rounding an empty overlay up into a reassuring phrase.
+      expect(sourced).toBe(0);
+      expect(shown).toContain('the rest seed data');
+    });
+  });
+});
+
+/**
+ * The market radius control, whose widest setting claims to show everything.
+ *
+ * That claim was true while every market was in Texas or Florida and false the
+ * moment the Midwest records landed — Houston to Detroit is about 1,100 miles
+ * against a widest filter of 1,000. Nothing failed; nine markets were simply
+ * not there, behind a control labelled "All".
+ */
+describe('the widest market radius shows every market', () => {
+  it('reaches a market further away than any fixed radius on the control', async () => {
+    const { default: MarketIntelligence } = await import('../MarketIntelligence');
+    const { findMarket, distanceMiles, markets } = await import('../../lib/markets');
+    const { withMetrics: wm } = await import('../testing/cases');
+
+    const houston = findMarket('Houston, TX');
+    const furthest = markets
+      .map((m) => ({ m, d: distanceMiles(houston, m) }))
+      .sort((a, b) => b.d - a.d)[0];
+    // The premise: something really is beyond the widest NUMBERED option.
+    expect(furthest.d).toBeGreaterThan(1000);
+
+    const deal = wm({ ...SAMPLE_DEALS[0], location: 'Houston, TX' });
+    withScreen(<MarketIntelligence deal={deal} />, (c) => {
+      expect(text(c)).not.toContain(furthest.m.city);
+      click(buttonsByText(c, /^All$/)[0]);
+      expect(text(c)).toContain(furthest.m.city);
+    });
+  });
+
+  it('never prints Infinity, whatever the control is set to', async () => {
+    // Infinity is the honest value for "no radius" and the dishonest thing to
+    // render. It reaches the DOM through the empty-state message first.
+    const { default: MarketIntelligence } = await import('../MarketIntelligence');
+
+    const { container, unmount } = renderScreen(<MarketIntelligence deal={null} />);
+    try {
+      for (const label of ['50 mi', '100 mi', '250 mi', '500 mi', 'All']) {
+        const [btn] = buttonsByText(container, new RegExp(`^${label}$`));
+        expect(btn, label).toBeDefined();
+        click(btn);
+        assertNoImpossibleNumbers(container, `Market Intelligence at ${label}`);
+      }
+    } finally {
+      unmount();
+    }
+  });
+});

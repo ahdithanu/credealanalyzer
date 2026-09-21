@@ -1,12 +1,25 @@
 import React, { useMemo, useState } from 'react';
 import { Panel, Seg } from '../ui/components';
-import { findMarket } from '../lib/markets';
+import { findMarket, dataQualityMix } from '../lib/markets';
 import { scoreAll } from '../lib/marketScore';
 import { rankNearbyMarkets } from '../lib/siteSelection';
 import { propertyTypes } from '../lib/propertyTypes';
 import { NA } from '../lib/format';
 
-const RADII = [50, 100, 250, 1000];
+/**
+ * Search radii, with the widest meaning EVERY market rather than a number that
+ * used to cover them all.
+ *
+ * This was [50, 100, 250, 1000] with 1000 labelled "All", which was true while
+ * every market was in Texas or Florida. It stopped being true the day the
+ * Midwest records landed: Houston to Detroit is about 1,100 miles and Miami to
+ * Minneapolis about 1,500, so the widest filter silently hid nine markets
+ * behind a control that said it was showing everything. Infinity is the honest
+ * spelling of "no distance filter"; rankNearbyMarkets compares with <=, so it
+ * needs no special case.
+ */
+const ALL_MARKETS = Infinity;
+const RADII = [50, 100, 250, 500, ALL_MARKETS];
 
 export default function MarketIntelligence({ deal }) {
   // NOT a firm default: FIRM_DEFAULTS has no entry for a default property type,
@@ -39,14 +52,14 @@ export default function MarketIntelligence({ deal }) {
           {Object.entries(propertyTypes).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
         </select>
         <Seg
-          options={RADII.map((r) => ({ value: r, label: r >= 1000 ? 'All' : `${r} mi` }))}
+          options={RADII.map((r) => ({ value: r, label: r === ALL_MARKETS ? 'All' : `${r} mi` }))}
           value={radius}
           onChange={setRadius}
         />
         {origin && <span className="chip acc">from {origin.city}, {origin.state}</span>}
         <span className="spacer" />
         <span className="chip warn">Weights: default prior — not fitted</span>
-        <span className="prov">Seed data · not sourced</span>
+        <DataQualityNote />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', flex: 1, minHeight: 0 }}>
@@ -81,7 +94,18 @@ export default function MarketIntelligence({ deal }) {
                 <MarketRow key={r.marketKey} row={r} onClick={() => setSelected(r.marketKey)} active={active?.marketKey === r.marketKey} />
               ))}
               {!ranked.rows.length && (
-                <tr><td colSpan={8}><div className="empty">No markets within {radius} miles.</div></td></tr>
+                <tr><td colSpan={8}><div className="empty">
+                  {/* Never "within Infinity miles" — at the widest setting there
+                      is no radius, so an empty list is about the market table.
+
+                      The 'All' arm is unreachable today and kept anyway: an
+                      empty list needs every market to be filtered out, and at
+                      'All' nothing is. No test can kill a mutation here, which
+                      is recorded rather than papered over with one that looks
+                      like it does. The numbered arm IS reached — 50 miles from
+                      Houston contains no other market in the table. */}
+                  {radius === ALL_MARKETS ? 'No markets to compare.' : `No markets within ${radius} miles.`}
+                </div></td></tr>
               )}
             </tbody>
           </table>
@@ -164,6 +188,38 @@ function Contributions({ scored }) {
 }
 
 /** Equirectangular projection over the market set. Adequate at state scale. */
+/**
+ * What the table underneath this screen is actually made of.
+ *
+ * DERIVED, not written down. This banner used to read a hardcoded "Seed data ·
+ * not sourced" — correct on the day it was typed, and a label that would go on
+ * saying it after `npm run markets` had replaced a third of the fields with
+ * Census figures, or, worse, go on saying "sourced" if someone flipped a flag
+ * and the numbers were still invented. A provenance label that is not computed
+ * from the provenance is decoration.
+ */
+function DataQualityNote() {
+  const mix = useMemo(() => dataQualityMix(), []);
+  const round = (n) => Math.round(n);
+
+  const summary = mix.sourcedPct === 100
+    ? `${mix.markets} markets · every field sourced`
+    : `${mix.markets} markets · ${round(mix.sourcedPct)}% of fields sourced`
+      + `${mix.counts.estimate ? `, ${round(mix.estimatePct)}% estimated` : ''}`
+      + ', the rest seed data';
+
+  return (
+    <span
+      className="prov"
+      title={'Supply pipeline, rent growth, cap rates, traffic counts and employment growth '
+        + 'have no free source. Population, median income and population growth can be '
+        + 'filled from Census ACS with: npm run markets'}
+    >
+      {summary}
+    </span>
+  );
+}
+
 function MarketMap({ rows, origin, active, onPick }) {
   const all = [...(origin ? [origin] : []), ...rows];
   if (!all.length) return <div className="empty">No markets to plot.</div>;
