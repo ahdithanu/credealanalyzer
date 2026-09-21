@@ -34,6 +34,25 @@ import { getJson } from './http.js';
 import { assertNonOverlapping } from './census.js';
 
 const ACS = 'https://api.census.gov/data';
+
+/**
+ * The Census API key.
+ *
+ * The Census answers a keyless request to this dataset with an HTML page
+ * titled "Missing Key", at HTTP 200 — so the failure arrives looking like a
+ * successful call returning no data. Free and instant at
+ * https://api.census.gov/data/key_signup.html.
+ *
+ * Read from the environment rather than committed, and never printed: every
+ * error message from http.js runs the URL through redactUrl first.
+ *
+ * Appended only when set, so this keeps working if the Census relaxes the
+ * requirement again — and a keyless run fails with the sign-up link rather
+ * than with a parse error.
+ */
+export function censusKeyParam(key = process.env.CENSUS_API_KEY) {
+  return key ? `&key=${encodeURIComponent(key)}` : '';
+}
 const POP = 'B01003_001E';
 const MEDIAN_HHI = 'B19013_001E';
 const CBSA_GEO = 'metropolitan statistical area/micropolitan statistical area';
@@ -111,12 +130,15 @@ function acsNumber(raw) {
  * column order is not guaranteed to match the order requested — so the columns
  * are located by name.
  */
-export async function cbsaFigures(cbsa, { vintage, variables = [POP, MEDIAN_HHI] }, opts = {}) {
+export async function cbsaFigures(cbsa, {
+  vintage, variables = [POP, MEDIAN_HHI], apiKey,
+}, opts = {}) {
   // Spaces are encoded, the slash is NOT. The Census's own documented form for
   // this geography is `metropolitan%20statistical%20area/micropolitan%20...`,
   // and encodeURIComponent would turn the separator into %2F.
   const geo = CBSA_GEO.split('/').map(encodeURIComponent).join('/');
-  const url = `${ACS}/${vintage}/acs/acs5?get=NAME,${variables.join(',')}&for=${geo}:${cbsa}`;
+  const url = `${ACS}/${vintage}/acs/acs5?get=NAME,${variables.join(',')}&for=${geo}:${cbsa}`
+    + censusKeyParam(apiKey);
   const rows = await getJson(url, opts);
   const [header, row] = rows || [];
   if (!header || !row) return null;
@@ -141,6 +163,7 @@ export async function sourceMarket(key, {
   cbsa = CBSA[key],
   vintages = DEFAULT_VINTAGES,
   latestVintage = vintages.to,
+  apiKey,
   ...opts
 } = {}) {
   if (!cbsa) {
@@ -149,7 +172,7 @@ export async function sourceMarket(key, {
   assertNonOverlapping(vintages);
 
   const notes = [];
-  const latest = await cbsaFigures(cbsa, { vintage: latestVintage }, opts);
+  const latest = await cbsaFigures(cbsa, { vintage: latestVintage, apiKey }, opts);
   if (!latest) {
     return { key, cbsa, fields: {}, notes: [`ACS ${latestVintage} returned no row for CBSA ${cbsa}`] };
   }
@@ -167,7 +190,8 @@ export async function sourceMarket(key, {
   else notes.push(`ACS ${latestVintage} suppressed median household income for CBSA ${cbsa}`);
 
   // Growth, as a CAGR over the gap between the two vintages' labels.
-  const earlier = await cbsaFigures(cbsa, { vintage: vintages.from, variables: [POP] }, opts);
+  const earlier = await cbsaFigures(cbsa,
+    { vintage: vintages.from, variables: [POP], apiKey }, opts);
   if (earlier?.[POP] && latest[POP]) {
     const years = vintages.to - vintages.from;
     fields.popGrowth5y = (((latest[POP] / earlier[POP]) ** (1 / years)) - 1) * 100;

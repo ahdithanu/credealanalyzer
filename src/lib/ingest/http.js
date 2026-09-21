@@ -14,6 +14,18 @@
 /** Default timeout. A screening pass should not hang on a slow state server. */
 export const TIMEOUT_MS = 20_000;
 
+/**
+ * Mask an API key in a URL before it reaches a message, a log or a terminal.
+ *
+ * Every error below embeds the URL it failed on, which is the right thing to
+ * report and the wrong thing to report verbatim once a query string carries a
+ * credential. A key pasted into a bug report or a CI log is a key that has to
+ * be rotated.
+ */
+export function redactUrl(url) {
+  return String(url).replace(/([?&](?:key|api_key|apikey|token)=)[^&]*/gi, '$1REDACTED');
+}
+
 export class FetchError extends Error {
   /**
    * @param {string} code      stable, safe to branch on
@@ -50,12 +62,13 @@ export async function getJson(url, { fetchImpl = globalThis.fetch, timeoutMs = T
     // Unreachable is distinct from refused, because only one of them means the
     // data does not exist. A provider that cannot be reached leaves the field
     // unknown; a provider that answered "no such place" is an answer.
-    throw new FetchError('unreachable', `${url} did not answer: ${err.message}`, { url });
+    throw new FetchError('unreachable', `${redactUrl(url)} did not answer: ${err.message}`,
+      { url: redactUrl(url) });
   }
 
   if (!res.ok) {
-    throw new FetchError('http_error', `${url} returned HTTP ${res.status}`,
-      { url, status: res.status });
+    throw new FetchError('http_error', `${redactUrl(url)} returned HTTP ${res.status}`,
+      { url: redactUrl(url), status: res.status });
   }
 
   const text = await res.text();
@@ -69,9 +82,25 @@ export async function getJson(url, { fetchImpl = globalThis.fetch, timeoutMs = T
      * code so the enrichment can say "this endpoint is wrong" rather than
      * "this property has no traffic count".
      */
+    /**
+     * The Census's own version of this: it answers a keyless or bad-key
+     * request with an HTML page titled "Missing Key" or "Invalid Key", at
+     * HTTP 200. Reported as its own code because the fix is a specific,
+     * two-minute one and "returned 200 but not JSON" does not say what it is.
+     */
+    const missing = /<title>\s*Missing Key\s*<\/title>/i.test(text);
+    const invalid = /<title>\s*Invalid Key\s*<\/title>/i.test(text);
+    if (missing || invalid) {
+      throw new FetchError(missing ? 'missing_key' : 'invalid_key',
+        `${redactUrl(url)} needs a Census API key`
+        + `${invalid ? ', and the one supplied was rejected' : ''}. `
+        + 'Get one free at https://api.census.gov/data/key_signup.html and set CENSUS_API_KEY.',
+        { url: redactUrl(url), status: res.status });
+    }
     throw new FetchError('not_json',
-      `${url} returned ${res.status} but not JSON (${text.slice(0, 80).replace(/\s+/g, ' ')}…)`,
-      { url, status: res.status });
+      `${redactUrl(url)} returned ${res.status} but not JSON `
+      + `(${text.slice(0, 80).replace(/\s+/g, ' ')}…)`,
+      { url: redactUrl(url), status: res.status });
   }
 }
 

@@ -39,6 +39,7 @@
  */
 
 import { getJson, haversineMiles } from './http.js';
+import { censusKeyParam } from './acsMarkets.js';
 
 const GEOCODER = 'https://geocoding.geo.census.gov/geocoder/locations/onelineaddress';
 const TIGERWEB = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer/6/query';
@@ -135,8 +136,10 @@ export async function tractsWithin({ lat, lng }, radiusMiles = 3, opts = {}) {
 
 /** Population for every tract in a county, keyed by GEOID. */
 export async function tractPopulations({ state, county, vintage }, opts = {}) {
+  // The ACS endpoints need a key; the geocoder and TIGERweb do not. See
+  // censusKeyParam — a keyless call comes back as HTML with a 200.
   const url = `${ACS}/${vintage}/acs/acs5?get=${POP}&for=tract:*`
-    + `&in=state:${state}%20county:${county}`;
+    + `&in=state:${state}%20county:${county}${censusKeyParam(opts.apiKey)}`;
   const rows = await getJson(url, opts);
   // ACS answers as a header row followed by data rows, not as objects.
   const [header, ...data] = rows;
@@ -157,7 +160,7 @@ export async function tractPopulations({ state, county, vintage }, opts = {}) {
 /** County population for one vintage. */
 export async function countyPopulation({ state, county, vintage }, opts = {}) {
   const url = `${ACS}/${vintage}/acs/acs5?get=NAME,${POP}`
-    + `&for=county:${county}&in=state:${state}`;
+    + `&for=county:${county}&in=state:${state}${censusKeyParam(opts.apiKey)}`;
   const rows = await getJson(url, opts);
   const [header, row] = rows;
   if (!row) return null;

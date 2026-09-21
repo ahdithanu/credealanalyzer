@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getJson, FetchError, haversineMiles } from '../ingest/http';
+import { getJson, FetchError, haversineMiles, redactUrl } from '../ingest/http';
 import {
   geocode, tractsWithin, tractPopulations, enrichDemographics,
   assertNonOverlapping, DEFAULT_VINTAGES,
@@ -285,5 +285,129 @@ describe('traffic counts', () => {
   it('probe on an unknown state explains how to add one', async () => {
     await expect(probe('WY', { fetchImpl: fakeFetch({}) }))
       .rejects.toThrow(/Add one to DOT_SOURCES/);
+  });
+});
+
+/**
+ * The Census API key.
+ *
+ * Found by running the real thing: `npm run markets` came back with thirty-six
+ * identical failures reading "returned 200 but not JSON (<html …<title>Missing
+ * Key</title>…". The Census answers a keyless request to this dataset with an
+ * HTML page at HTTP 200, so without the not_json guard it would have arrived
+ * as thirty-six metros that apparently have no population.
+ */
+describe('the Census key, and never printing it', () => {
+  const MISSING_KEY_PAGE =
+    '<html style="font-size: 14px;"> <head> <title>Missing Key</title> '
+    + '<link rel="stylesheet"></head><body>A key is required.</body></html>';
+  const INVALID_KEY_PAGE = '<html><head><title>Invalid Key</title></head><body>no</body></html>';
+
+  it('names a keyless request as such instead of as a parse failure', async () => {
+    // "returned 200 but not JSON" is true and useless: the fix is a two-minute
+    // signup, and nothing in that message says so.
+    const impl = fakeFetch({ 'api.census.gov': MISSING_KEY_PAGE });
+    await expect(getJson('https://api.census.gov/data/2022/acs/acs5?get=NAME', { fetchImpl: impl }))
+      .rejects.toMatchObject({ code: 'missing_key' });
+
+    await expect(getJson('https://api.census.gov/x', { fetchImpl: impl }))
+      .rejects.toThrow(/key_signup/);
+  });
+
+  it('separates a rejected key from an absent one', async () => {
+    const impl = fakeFetch({ 'api.census.gov': INVALID_KEY_PAGE });
+    await expect(getJson('https://api.census.gov/x', { fetchImpl: impl }))
+      .rejects.toMatchObject({ code: 'invalid_key' });
+  });
+
+  it('still reports an ordinary moved endpoint as not_json', async () => {
+    // The key detection must not swallow the ArcGIS portal-page case it sits
+    // next to; that one is a wrong URL, not a missing credential.
+    const impl = fakeFetch({ 'gis.dot': '<html><head><title>ArcGIS Portal</title></head></html>' });
+    await expect(getJson('https://gis.dot.state.oh.us/x', { fetchImpl: impl }))
+      .rejects.toMatchObject({ code: 'not_json' });
+  });
+
+  it('never puts the key in the message, the context, or anything logged', async () => {
+    // Every error here embeds the URL it failed on, which is right to report
+    // and wrong to report verbatim once the query string carries a credential.
+    const SECRET = 'abc123secretkey';
+    const url = `https://api.census.gov/data/2022/acs/acs5?get=NAME&key=${SECRET}`;
+
+    for (const [routes, opts] of [
+      [{ 'api.census.gov': MISSING_KEY_PAGE }, {}],
+      [{ 'api.census.gov': '<html>portal</html>' }, {}],
+      [{ 'api.census.gov': {} }, { status: 500 }],
+      [{ 'api.census.gov': new Error('socket hang up') }, {}],
+    ]) {
+      const err = await getJson(url, { fetchImpl: fakeFetch(routes, opts) })
+        .then(() => null, (e) => e);
+      expect(err, JSON.stringify(routes)).toBeInstanceOf(FetchError);
+      expect(err.message).not.toContain(SECRET);
+      expect(err.url).not.toContain(SECRET);
+      expect(err.message).toContain('key=REDACTED');
+    }
+  });
+
+  it('redacts the key and nothing else, so the message still says what failed', () => {
+    // Over-redaction is safe and useless. `for=...:18140` is the part you read
+    // to find a transposed CBSA code, and swallowing the rest of the query
+    // string with the key takes it with it.
+    const masked = redactUrl('https://api.census.gov/data/2022/acs/acs5'
+      + '?get=NAME&key=abc123&for=metropolitan+statistical+area:18140&x=1');
+    expect(masked).toContain('key=REDACTED');
+    expect(masked).not.toContain('abc123');
+    expect(masked).toContain('get=NAME');
+    expect(masked).toContain('18140');
+    expect(masked).toContain('x=1');
+  });
+});
+
+describe('the key reaches the endpoints that need it', () => {
+  it('is appended only when set, and url-encoded', async () => {
+    const { censusKeyParam } = await import('../ingest/acsMarkets');
+    expect(censusKeyParam(undefined)).toBe('');
+    expect(censusKeyParam('')).toBe('');
+    // Keeps working if the Census relaxes the requirement again, and a keyless
+    // run then fails with the sign-up link rather than with a parse error.
+    expect(censusKeyParam('a b&c')).toBe('&key=a%20b%26c');
+  });
+
+  it('rides on the ACS calls and on nothing else', async () => {
+    // The geocoder and TIGERweb do NOT take a key. Sending one there is a
+    // credential handed to an endpoint that never asked for it.
+    // A tract inside the ring, so the TRACT ACS call fires as well as the
+    // county one. With `features: []` only the county call ran, and a key
+    // dropped from the tract URL went unnoticed.
+    const impl = fakeFetch({
+      'geocoding.geo.census.gov': GEOCODE_HIT,
+      'tigerweb': {
+        features: [{
+          attributes: {
+            GEOID: '39049007200', CENTLAT: '40.0500', CENTLON: '-83.0200',
+            STATE: '39', COUNTY: '049', TRACT: '007200',
+          },
+        }],
+      },
+      'for=tract': [['B01003_001E', 'state', 'county', 'tract'], ['4210', '39', '049', '007200']],
+      'api.census.gov': [['NAME', 'B01003_001E', 'state', 'county'], ['Franklin County, Ohio', '1326063', '39', '049']],
+    });
+    await enrichDemographics('4500 Maple Ave, Columbus, OH', { fetchImpl: impl, apiKey: 'K' });
+
+    const acs = impl.calls.filter((u) => u.includes('api.census.gov'));
+    // County (two vintages) and tract — not just one of them.
+    expect(acs.length).toBeGreaterThanOrEqual(3);
+    expect(acs.some((u) => u.includes('for=tract'))).toBe(true);
+    for (const u of acs) expect(u).toContain('&key=K');
+    for (const u of impl.calls.filter((u) => !u.includes('api.census.gov'))) {
+      expect(u).not.toContain('key=');
+    }
+  });
+
+  it('reaches the market sourcing calls too', async () => {
+    const { cbsaFigures } = await import('../ingest/acsMarkets');
+    const impl = fakeFetch({ 'api.census.gov': [['NAME', 'B01003_001E'], ['Columbus, OH Metro Area', '2151017']] });
+    await cbsaFigures('18140', { vintage: 2022, apiKey: 'K' }, { fetchImpl: impl });
+    expect(impl.calls[0]).toContain('&key=K');
   });
 });

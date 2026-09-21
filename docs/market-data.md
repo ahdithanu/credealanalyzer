@@ -25,15 +25,33 @@ every consumer branches on must not say that it is.
 
 ## Filling in what can be filled
 
+You need a Census API key. It is free and instant:
+[api.census.gov/data/key_signup.html](https://api.census.gov/data/key_signup.html).
+
 ```sh
+export CENSUS_API_KEY=your-key
+
 npm run markets                  # dry run: what would change, and from where
 npm run markets -- --write       # writes src/lib/marketsSourced.js
 npm run markets -- --only=columbus-oh
 ```
 
+Keep the key out of the repo. It is read from the environment, and every error
+message masks it before printing the URL it failed on — a key pasted into a bug
+report or a CI log is a key you have to rotate.
+
+Without one, the Census answers with an **HTML page carrying HTTP 200**, titled
+"Missing Key". That is the shape of failure worth knowing about: unguarded, it
+arrives as thirty-six metros that apparently have no population rather than as
+thirty-six refused requests. The script names it and stops after the first one
+rather than scrolling thirty-six identical errors past you.
+
 Census ACS 5-year estimates at CBSA level give **population**, **median
 household income**, and a five-year population CAGR from two non-overlapping
-vintages. Free, no key, nationwide.
+vintages. Nationwide.
+
+The key rides on the ACS calls only. The geocoder and TIGERweb — used by
+`npm run enrich` — do not take one, and are not sent one.
 
 The other six fields have no free source. Employment growth is BLS and could be
 added; supply pipeline, rent growth, traffic counts and cap rates are CoStar,
@@ -41,12 +59,20 @@ Yardi, a state DOT and the broker cap rate surveys, and there is no public
 substitute for any of them. So **every record still reads `seed` after this
 runs**, and that is the design working.
 
+**Nothing sourced means nothing written.** A run where every market failed
+leaves the overlay on disk exactly as it was and exits non-zero. It did not
+always: the first version rendered `{}` over whatever was there and exited 0,
+so an expired key or a Census outage would have silently deleted thirty-six
+sourced records and reported success. The file being empty the day that shipped
+is the only reason it cost nothing.
+
 **Check the CBSA names in the dry run.** The codes are from memory and a wrong
 one does not fail — it answers with a real metro that is not yours. The report
 prints the name the Census returned beside the city the record claims to be, so
 "Columbus, GA Metro Area" next to Columbus, OH is visible in a second and
 invisible any other way. A 403 on every row means `api.census.gov` is not on
-your environment's egress allowlist, not that the request was wrong.
+your environment's egress allowlist, not that the request was wrong; a "Missing
+Key" page on every row means what it says.
 
 ## Two things in the table that will bite
 

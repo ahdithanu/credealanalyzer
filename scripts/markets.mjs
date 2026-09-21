@@ -54,6 +54,7 @@ const asOf = `ACS 5-year ${DEFAULT_VINTAGES.to}`;
 const out = {};
 let reached = 0;
 let failed = 0;
+let keyProblem = null;
 
 process.stdout.write(
   `\n${C.bold('Sourcing')} ${C.dim(`${targets.length} markets from Census ACS `
@@ -76,6 +77,12 @@ for (const market of targets) {
      * this is running, and saying so saves an hour spent debugging a URL that
      * is correct.
      */
+    if (err.code === 'missing_key' || err.code === 'invalid_key') {
+      // Printed once, then the run is abandoned: thirty-six identical
+      // failures scrolling past is not more informative than one.
+      keyProblem = err.code;
+      break;
+    }
     if (err.status === 403) {
       process.stdout.write(`  ${C.dim('· 403 usually means api.census.gov is not on this '
         + 'environment\'s egress allowlist, not that the request was wrong.')}\n`);
@@ -135,22 +142,60 @@ for (const market of targets) {
 
 process.stdout.write(`${C.bold(`${reached} sourced`)}${failed ? C.warn(`, ${failed} not`) : ''}\n`);
 
-if (!write) {
-  process.stdout.write(C.dim('\nDry run. Check the CBSA names above, then re-run with --write.\n\n'));
-  process.exit(failed && !reached ? 1 : 0);
+if (keyProblem) {
+  process.stdout.write(
+    `\n${C.warn(keyProblem === 'missing_key'
+      ? 'The Census needs an API key for this dataset.'
+      : 'The Census rejected the API key in CENSUS_API_KEY.')}\n`
+    + C.dim('  It answers a keyless request with an HTML page at HTTP 200, so this\n'
+      + '  arrives looking like a call that returned no data rather than one that\n'
+      + '  was refused.\n\n')
+    + '  1. Sign up (free, instant): https://api.census.gov/data/key_signup.html\n'
+    + `  2. ${C.bold('export CENSUS_API_KEY=your-key')}\n`
+    + '  3. Re-run. Keep the key out of the repo; it is read from the environment\n'
+    + '     and masked in every message this prints.\n\n',
+  );
+  process.exit(2);
 }
 
-// A PARTIAL run must not erase the markets it did not touch, so --only merges
-// into whatever is already on disk rather than replacing the file wholesale.
-let existing = {};
-if (only) {
-  ({ SOURCED: existing } = await import('../src/lib/marketsSourced.js'));
+/**
+ * Nothing was sourced, so there is nothing to write.
+ *
+ * This used to write regardless. On a run where every market failed it
+ * rendered an overlay of `{}` over whatever was on disk and exited 0 — so a
+ * key that expired, or a Census outage, would silently delete thirty-six
+ * sourced records and report success. The file being empty when the bug
+ * shipped is the only reason it cost nothing.
+ */
+if (!reached) {
+  process.stdout.write(C.warn('\nNothing sourced, so nothing written.\n')
+    + C.dim('  The overlay on disk is left exactly as it was.\n\n'));
+  process.exit(1);
 }
+
+if (!write) {
+  process.stdout.write(C.dim('\nDry run. Check the CBSA names above, then re-run with --write.\n\n'));
+  process.exit(0);
+}
+
+// Merge into what is on disk rather than replacing it. A --only run touches
+// one market and must not drop the other thirty-five; a full run that reached
+// only some of them must not drop the ones it could not reach this time.
+const { SOURCED: existing } = await import('../src/lib/marketsSourced.js');
 const merged = { ...existing, ...out };
+
+const lost = Object.keys(existing).filter((k) => !(k in merged));
+if (lost.length) {
+  // Unreachable with a spread merge, and asserted rather than assumed: this
+  // is the invariant the bug above violated, and it is cheap to keep checking.
+  process.stdout.write(C.warn(`\nRefusing to write: would drop ${lost.join(', ')}.\n\n`));
+  process.exit(1);
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const target = resolve(here, '../src/lib/marketsSourced.js');
 writeFileSync(target, renderSourcedModule(merged, { vintages: DEFAULT_VINTAGES }));
 process.stdout.write(C.dim(`\n→ ${target}\n`)
+  + C.dim(`  ${Object.keys(merged).length} markets in the overlay.\n`)
   + C.dim('  Now run the suite: the markets test asserts nothing claims to be\n'
     + '  sourced, and it is meant to fail the first time this succeeds.\n\n'));
