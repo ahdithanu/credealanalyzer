@@ -373,6 +373,41 @@ describe('the key reaches the endpoints that need it', () => {
     expect(censusKeyParam('a b&c')).toBe('&key=a%20b%26c');
   });
 
+  it('survives the trailing newline every copy-paste carries', async () => {
+    // `export CENSUS_API_KEY=$(cat key.txt)`, a heredoc and a .env line all
+    // keep the newline. Untrimmed it encodes to %0A, the Census rejects the
+    // key, and the report blames a key that was right — which is exactly what
+    // happened the first time this was run for real.
+    const { censusKeyParam } = await import('../ingest/acsMarkets');
+    const KEY = '0123456789abcdef0123456789abcdef01234567';
+    for (const raw of [`${KEY}\n`, ` ${KEY}`, `${KEY}\r\n`, `\t${KEY} `]) {
+      expect(censusKeyParam(raw), JSON.stringify(raw)).toBe(`&key=${KEY}`);
+    }
+    // Whitespace INSIDE is not whitespace around it, and must still encode.
+    expect(censusKeyParam('ab cd')).toBe('&key=ab%20cd');
+  });
+
+  it('describes the key by shape, and never by value', async () => {
+    // A rejected key has two causes with identical symptoms: a mangled paste,
+    // or a well-formed key that was never activated from the confirmation
+    // email. Only the shape separates them, and printing the key to find out
+    // is not an option.
+    const { describeKey } = await import('../ingest/acsMarkets');
+    const KEY = '0123456789abcdef0123456789abcdef01234567';
+
+    expect(describeKey(KEY)).toMatchObject({ present: true, length: 40, looksValid: true });
+    expect(describeKey('0123456789abcdef')).toMatchObject({ length: 16, looksValid: false });
+    expect(describeKey(`"${KEY}"`)).toMatchObject({ looksQuoted: true, looksValid: false });
+    expect(describeKey(`${KEY}\n`)).toMatchObject({ hadSurroundingWhitespace: true, looksValid: true });
+    expect(describeKey(undefined)).toMatchObject({ present: false, looksValid: false });
+    // An uppercase or non-hex key is not a Census key.
+    expect(describeKey(KEY.toUpperCase()).looksValid).toBe(false);
+
+    for (const probe of [KEY, `"${KEY}"`, `${KEY}\n`]) {
+      expect(JSON.stringify(describeKey(probe))).not.toContain(KEY);
+    }
+  });
+
   it('rides on the ACS calls and on nothing else', async () => {
     // The geocoder and TIGERweb do NOT take a key. Sending one there is a
     // credential handed to an endpoint that never asked for it.

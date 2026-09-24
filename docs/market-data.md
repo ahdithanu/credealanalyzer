@@ -36,9 +36,18 @@ npm run markets -- --write       # writes src/lib/marketsSourced.js
 npm run markets -- --only=columbus-oh
 ```
 
+**Click the activation link in the confirmation email.** The key is rejected
+until you do, and a rejected key and a mistyped one look identical from here.
+When the Census refuses a key, the script checks its SHAPE — 40 hexadecimal
+characters — and says which of the two you have: a well-formed key that is
+refused is almost always one that was never activated.
+
 Keep the key out of the repo. It is read from the environment, and every error
 message masks it before printing the URL it failed on — a key pasted into a bug
-report or a CI log is a key you have to rotate.
+report or a CI log is a key you have to rotate. Surrounding whitespace is
+trimmed, because `export CENSUS_API_KEY=$(cat key.txt)`, a heredoc and a .env
+line all keep the trailing newline, and untrimmed it encodes to `%0A` and gets
+the key rejected.
 
 Without one, the Census answers with an **HTML page carrying HTTP 200**, titled
 "Missing Key". That is the shape of failure worth knowing about: unguarded, it

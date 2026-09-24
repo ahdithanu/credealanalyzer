@@ -51,7 +51,42 @@ const ACS = 'https://api.census.gov/data';
  * than with a parse error.
  */
 export function censusKeyParam(key = process.env.CENSUS_API_KEY) {
-  return key ? `&key=${encodeURIComponent(key)}` : '';
+  // TRIMMED, because the overwhelmingly common way to supply this is a copy
+  // and paste — and a trailing newline survives `export CENSUS_API_KEY=$(...)`,
+  // a heredoc, and a .env file. encodeURIComponent turns it into %0A, the
+  // Census rejects the key, and the report says the key was rejected, which is
+  // true and sends you to re-read a key that was correct all along.
+  const clean = typeof key === 'string' ? key.trim() : key;
+  return clean ? `&key=${encodeURIComponent(clean)}` : '';
+}
+
+/**
+ * A Census API key is 40 lowercase hex characters.
+ *
+ * Reported as a SHAPE, never as the value: length and whether it matches, so a
+ * truncated paste or a pasted-with-quotes key is distinguishable from a
+ * well-formed key the Census refused — which is almost always one that has not
+ * been activated from the confirmation email yet. Those two have identical
+ * symptoms and completely different fixes.
+ *
+ * `looksValid: false` is a reason to look at the key. `looksValid: true` is not
+ * a reason to believe it works; only the Census can say that.
+ */
+export const CENSUS_KEY_SHAPE = /^[0-9a-f]{40}$/;
+
+export function describeKey(key = process.env.CENSUS_API_KEY) {
+  if (!key) return { present: false, looksValid: false, note: 'CENSUS_API_KEY is not set' };
+  const raw = String(key);
+  const clean = raw.trim();
+  return {
+    present: true,
+    length: clean.length,
+    // Worth naming separately: it means the key WAS being mangled before it was
+    // trimmed, and someone reading an old failure needs to know that changed.
+    hadSurroundingWhitespace: clean !== raw,
+    looksQuoted: /^["'].*["']$/.test(clean),
+    looksValid: CENSUS_KEY_SHAPE.test(clean),
+  };
 }
 const POP = 'B01003_001E';
 const MEDIAN_HHI = 'B19013_001E';

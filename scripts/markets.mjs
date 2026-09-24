@@ -30,7 +30,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markets, fieldQuality } from '../src/lib/markets.js';
 import {
-  sourceMarket, CBSA, DEFAULT_VINTAGES, SOURCEABLE_FIELDS, renderSourcedModule,
+  sourceMarket, CBSA, DEFAULT_VINTAGES, SOURCEABLE_FIELDS, renderSourcedModule, describeKey,
 } from '../src/lib/ingest/acsMarkets.js';
 
 const C = {
@@ -149,10 +149,41 @@ if (keyProblem) {
       : 'The Census rejected the API key in CENSUS_API_KEY.')}\n`
     + C.dim('  It answers a keyless request with an HTML page at HTTP 200, so this\n'
       + '  arrives looking like a call that returned no data rather than one that\n'
-      + '  was refused.\n\n')
-    + '  1. Sign up (free, instant): https://api.census.gov/data/key_signup.html\n'
-    + `  2. ${C.bold('export CENSUS_API_KEY=your-key')}\n`
-    + '  3. Re-run. Keep the key out of the repo; it is read from the environment\n'
+      + '  was refused.\n\n'),
+  );
+
+  if (keyProblem === 'invalid_key') {
+    /**
+     * A rejected key has two completely different causes with identical
+     * symptoms, and only one of them is about the key's contents. Checking the
+     * SHAPE separates them: a well-formed key the Census refuses is almost
+     * always one that was never activated from the confirmation email.
+     */
+    const k = describeKey();
+    if (!k.looksValid) {
+      process.stdout.write(
+        `  ${C.warn('The key does not look like a Census key.')} `
+        + C.dim(`Expected 40 hexadecimal characters; got ${k.length}`)
+        + `${k.looksQuoted ? C.dim(', wrapped in quotes') : ''}.\n`
+        + C.dim('  Check for a truncated paste, or quotes carried in from a .env file.\n\n'),
+      );
+    } else {
+      process.stdout.write(
+        `  ${C.bold('The key is well-formed, so this is almost certainly activation.')}\n`
+        + C.dim('  The Census emails a confirmation link when you sign up, and the key is\n'
+          + '  rejected until you click it. Check that email — including spam — before\n'
+          + '  requesting another key.\n\n'),
+      );
+    }
+    process.exit(2);
+  }
+
+  process.stdout.write(
+    '  1. Sign up (free, instant): https://api.census.gov/data/key_signup.html\n'
+    + '  2. Click the activation link in the confirmation email. The key does not\n'
+    + '     work until you do.\n'
+    + `  3. ${C.bold('export CENSUS_API_KEY=your-key')}\n`
+    + '  4. Re-run. Keep the key out of the repo; it is read from the environment\n'
     + '     and masked in every message this prints.\n\n',
   );
   process.exit(2);
