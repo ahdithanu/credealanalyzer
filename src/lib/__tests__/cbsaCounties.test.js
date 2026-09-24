@@ -13,7 +13,8 @@
 
 import {
   discoverLayers, countiesInCbsa, pointInRings, LAYER_PATTERNS, CrosswalkError,
-  listServices, MAX_SERVICES_PROBED,
+  listServices, MAX_SERVICES_PROBED, MAX_LAYERS_COUNTED,
+  chooseByFeatureCount, EXPECTED_FEATURES,
 } from '../ingest/cbsaCounties';
 import { growthOverFixedCounties, countyPopulations } from '../ingest/acsMarkets';
 
@@ -63,13 +64,30 @@ const SUBCOUNTY_SERVICE = {
     { id: 90, name: 'Incorporated Places' },
   ],
 };
+/**
+ * Twenty-one layers all called "Counties" — the shape the real service has.
+ * TIGERweb stacks the same geography at several vintages and generalisation
+ * tiers under identical names, so only the feature counts separate them.
+ */
 const STATE_COUNTY_SERVICE = {
   layers: [
-    { id: 86, name: 'Counties' },
+    { id: 84, name: 'States' },
+    { id: 85, name: 'Counties' },   // a generalised tier: too few features
+    { id: 86, name: 'Counties' },   // the real one
     { id: 87, name: 'Counties Labels' },
-    { id: 88, name: 'States' },
+    { id: 88, name: 'Counties' },   // another tier
   ],
 };
+
+/** Feature counts by layer id, as returnCountOnly answers them. */
+const FEATURE_COUNTS = {
+  84: 56, 85: 400, 86: 3143, 88: 3143, 5: 935, 4: 935,
+};
+const countRoutes = Object.fromEntries(
+  Object.entries(FEATURE_COUNTS).map(([id, count]) => [
+    `/${id}/query?where=1%3D1&returnCountOnly=true`, { count },
+  ]),
+);
 const GENERALIZED_SERVICE = {
   layers: [
     { id: 4, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area Labels' },
@@ -79,6 +97,7 @@ const GENERALIZED_SERVICE = {
 
 /** Every route a discovery needs, with the two layers in DIFFERENT services. */
 const DISCOVERY = {
+  ...countRoutes,
   'arcgis/rest/services?f=json': DIRECTORY,
   'arcgis/rest/services/TIGERweb?f=json': FOLDER,
   'tigerWMS_Current/MapServer?f=json': SUBCOUNTY_SERVICE,
@@ -116,6 +135,84 @@ const acsCounties = (rows) => [
 ];
 
 describe('binding to the right TIGERweb layers', () => {
+  it('picks between identically-named layers by feature count', async () => {
+    /**
+     * The failure the second real run produced: twenty-one layers in
+     * `Census2020/State_County` all named exactly "Counties". Their names, ids
+     * and order say nothing about which carries whole counties at full detail,
+     * so the discriminator has to be the data — about 3,143 rows.
+     */
+    const layers = await discoverLayers({ fetchImpl: fakeFetch(DISCOVERY) });
+    // 85 is a generalised tier with 400 features and is skipped; 86 is the
+    // first candidate with a country's worth of counties.
+    expect(layers.counties.id).toBe(86);
+    expect(layers.counties.features).toBe(3143);
+    // And it records that it chose from several, so a probe does not read as
+    // more certain than it is.
+    expect(layers.counties.pickedFrom).toBe(3);
+  });
+
+  it('takes the FIRST plausible candidate, not the last, so probing stays cheap', async () => {
+    // Twenty-one candidates would be twenty-one requests if every one were
+    // counted. Ids 86 and 88 are both plausible; the lower wins and the search
+    // stops there.
+    const impl = fakeFetch(DISCOVERY);
+    await discoverLayers({ fetchImpl: impl });
+    expect(impl.calls.some((u) => u.includes('/88/query'))).toBe(false);
+  });
+
+  it('refuses when no candidate holds a plausible number of features', async () => {
+    // Every "Counties" layer returning 400 rows means none of them is the
+    // counties layer, whatever they are called.
+    const routes = {
+      ...DISCOVERY,
+      '/86/query?where=1%3D1&returnCountOnly=true': { count: 400 },
+      '/88/query?where=1%3D1&returnCountOnly=true': { count: 400 },
+    };
+    await expect(discoverLayers({ fetchImpl: fakeFetch(routes) }))
+      .rejects.toMatchObject({ code: 'layer_not_found' });
+    // …and says what the counts were, which is the only way to pick a band.
+    await expect(discoverLayers({ fetchImpl: fakeFetch(routes) }))
+      .rejects.toThrow(/plausible feature count/);
+  });
+
+  it('bands each geography so no other layer can satisfy it', () => {
+    // 3,143 counties and ~935 metro/micropolitan areas. The bands have to be
+    // wide enough for vintage drift and narrow enough that states (56),
+    // places (~30,000) or tracts (~85,000) cannot slip in.
+    expect(EXPECTED_FEATURES.counties.min).toBeGreaterThan(56);
+    expect(EXPECTED_FEATURES.counties.max).toBeLessThan(30000);
+    expect(EXPECTED_FEATURES.cbsa.max).toBeLessThan(EXPECTED_FEATURES.counties.min);
+    for (const e of Object.values(EXPECTED_FEATURES)) {
+      expect(e.about).toBeGreaterThanOrEqual(e.min);
+      expect(e.about).toBeLessThanOrEqual(e.max);
+    }
+  });
+
+  it('caps how many candidates it will count', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ id: i, name: 'Counties' }));
+    const impl = fakeFetch({ '/query?where=1%3D1&returnCountOnly=true': { count: 7 } });
+    const r = await chooseByFeatureCount('https://x/MapServer', many,
+      EXPECTED_FEATURES.counties, { fetchImpl: impl });
+    expect(r).toBeNull();
+    expect(impl.calls.length).toBeLessThanOrEqual(MAX_LAYERS_COUNTED);
+  });
+
+  it('prefers a current service over one pinned to a census year', async () => {
+    // A year-stamped service is a snapshot of THAT census's boundaries.
+    // Counties barely move; CBSA delineations do, and the whole point is to use
+    // the latest county list.
+    const services = await listServices({
+      fetchImpl: fakeFetch({
+        'arcgis/rest/services?f=json': { folders: [], services: [
+          { name: 'Census2020/State_County', type: 'MapServer' },
+          { name: 'TIGERweb/State_County', type: 'MapServer' },
+        ] },
+      }),
+    });
+    expect(services[0].name).toBe('TIGERweb/State_County');
+  });
+
   it('finds the two layers even when they live in different services', async () => {
     // The failure the first real run produced: tigerWMS_Current has neither.
     // Counties are in State_County and CBSAs in a Generalized service, so a
@@ -142,14 +239,31 @@ describe('binding to the right TIGERweb layers', () => {
     expect(layers.counties.service).not.toMatch(/\/Labels\//);
   });
 
-  it('opens the likeliest services first and stops once both are found', async () => {
+  it('opens the likeliest services first and stays inside the cap', async () => {
     const impl = fakeFetch(DISCOVERY);
     await discoverLayers({ fetchImpl: impl });
     const opened = impl.calls.filter((u) => u.includes('/MapServer?f=json'));
-    // State_County ranks first by name, so it is opened before the sub-county
-    // service — and once both layers are bound the loop stops.
+    // State_County scores highest, so it is opened before the sub-county
+    // service that carries neither layer.
     expect(opened[0]).toMatch(/State_County/);
-    expect(opened.length).toBeLessThanOrEqual(3);
+    expect(opened.length).toBeLessThanOrEqual(MAX_SERVICES_PROBED);
+  });
+
+  it('stops opening services once both layers are bound', async () => {
+    // With both layers in the first service there is nothing left to look for,
+    // and the remaining three must not be opened.
+    const impl = fakeFetch({
+      ...countRoutes,
+      'arcgis/rest/services?f=json': DIRECTORY,
+      'arcgis/rest/services/TIGERweb?f=json': FOLDER,
+      'State_County/MapServer?f=json': {
+        layers: [...STATE_COUNTY_SERVICE.layers, ...GENERALIZED_SERVICE.layers],
+      },
+    });
+    const layers = await discoverLayers({ fetchImpl: impl });
+    expect(layers.counties.service).toMatch(/State_County/);
+    expect(layers.cbsa.service).toMatch(/State_County/);
+    expect(impl.calls.filter((u) => u.includes('/MapServer?f=json'))).toHaveLength(1);
   });
 
   it('keeps going when one service will not answer', async () => {
@@ -184,13 +298,27 @@ describe('binding to the right TIGERweb layers', () => {
     await expect(discoverLayers({ fetchImpl: impl })).rejects.toThrow(/tigerWMS_Current/);
   });
 
-  it('refuses an ambiguous match rather than taking the first', async () => {
+  it('resolves ambiguity by data rather than refusing it', async () => {
+    // This used to throw `layer_ambiguous`, which was the right answer when
+    // two identical names meant something had gone wrong. The real service has
+    // twenty-one of them as a matter of course, so refusing would refuse
+    // always. The counts settle it: id 2 holds a country's worth, id 1 does
+    // not.
     const impl = fakeFetch({
       'arcgis/rest/services?f=json': { folders: [], services: [{ name: 'X', type: 'MapServer' }] },
-      'X/MapServer?f=json': { layers: [{ id: 1, name: 'Counties' }, { id: 2, name: 'Counties' }] },
+      'X/MapServer?f=json': {
+        layers: [
+          { id: 1, name: 'Counties' },
+          { id: 2, name: 'Counties' },
+          { id: 3, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area' },
+        ],
+      },
+      '/1/query?where=1%3D1&returnCountOnly=true': { count: 12 },
+      '/2/query?where=1%3D1&returnCountOnly=true': { count: 3143 },
+      '/3/query?where=1%3D1&returnCountOnly=true': { count: 935 },
     });
-    await expect(discoverLayers({ fetchImpl: impl }))
-      .rejects.toMatchObject({ code: 'layer_ambiguous' });
+    const layers = await discoverLayers({ fetchImpl: impl });
+    expect(layers.counties.id).toBe(2);
   });
 
   it('lists services from folders as well as the root', async () => {

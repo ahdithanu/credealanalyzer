@@ -50,17 +50,47 @@ const TIGERWEB_ROOT = 'https://tigerweb.geo.census.gov/arcgis/rest/services';
  * service either — the REST directory is listed and every candidate is opened
  * until both layers are found.
  */
-const SERVICE_PRIORITY = [
-  // Opened first because their names suggest county-or-larger geography. Being
-  // wrong about this order costs a few requests, not a wrong answer.
-  /state.*county/i,
-  /cbsa|metropolitan|micropolitan/i,
-  /generalized/i,
-  /current/i,
+const SERVICE_HINTS = [
+  // Positive: names suggesting county-or-larger geography, current vintage.
+  { pattern: /state.*county/i, score: 3 },
+  { pattern: /cbsa|metropolitan|micropolitan/i, score: 3 },
+  { pattern: /current/i, score: 2 },
+  { pattern: /generalized/i, score: 1 },
+  /**
+   * Negative: a service pinned to one census is a snapshot of THAT census's
+   * boundaries. Counties barely move, but CBSA delineations do — and the whole
+   * point of this crosswalk is to use the LATEST county list. A year-stamped
+   * service is a usable fallback, not a first choice.
+   */
+  { pattern: /census\s*\d{4}|acs\s*\d{4}|\b(19|20)\d{2}\b/i, score: -2 },
 ];
 
 /** A ceiling on how many MapServers one discovery will open. */
 export const MAX_SERVICES_PROBED = 30;
+
+/**
+ * How many features the right layer holds.
+ *
+ * The second thing the real run disproved: matching on name is not enough.
+ * `Census2020/State_County` offers TWENTY-ONE layers all named exactly
+ * "Counties" — TIGERweb stacks the same geography at several vintages and
+ * generalisation tiers, and their names are identical. Nothing in the name, the
+ * id or the order says which one carries whole counties at full detail.
+ *
+ * So the tie is broken by asking each candidate how many features it has, which
+ * is a question only the right layer answers correctly. A US counties layer
+ * holds about 3,143 — 3,235 with Puerto Rico's municipios and the island areas
+ * — and a CBSA layer about 935 metro and micropolitan areas. The bands are wide
+ * because the exact count moves with the vintage; they are narrow enough that
+ * no other geography in these services falls inside one.
+ */
+export const EXPECTED_FEATURES = {
+  counties: { min: 3000, max: 3400, about: 3143 },
+  cbsa: { min: 800, max: 1100, about: 935 },
+};
+
+/** A ceiling on how many candidate layers get a count probe. */
+export const MAX_LAYERS_COUNTED = 25;
 
 /**
  * How the two layers are recognised in the service's layer list.
@@ -102,6 +132,7 @@ export async function discoverLayers(opts = {}) {
 
   const found = {};
   const searched = [];
+  const counted = [];
   const offered = new Set();
 
   for (const service of services) {
@@ -126,13 +157,28 @@ export async function discoverLayers(opts = {}) {
       const hits = layers.filter((l) => pattern.test(String(l.name || ''))
         && !/label/i.test(String(l.name || '')));
       if (!hits.length) continue;
-      if (hits.length > 1) {
-        throw new CrosswalkError('layer_ambiguous',
-          `${hits.length} layers in ${service.name} match ${key}: `
-          + `${hits.map((l) => `${l.id}=${l.name}`).join(', ')}`,
-          { layer: key, service: service.name, candidates: hits });
+      /**
+       * Several layers with the same name is the normal case, not an error.
+       * Ask each how many features it has and take the one that holds a
+       * country's worth of the geography.
+       */
+      const chosen = hits.length === 1
+        ? { ...hits[0], count: null }
+        : await chooseByFeatureCount(service.url, hits, EXPECTED_FEATURES[key], opts);
+      if (!chosen) {
+        counted.push(`${key} in ${service.name}: ${hits.length} candidates, none with a `
+          + `plausible feature count`);
+        continue;
       }
-      found[key] = { id: hits[0].id, name: hits[0].name, service: service.url };
+      found[key] = {
+        id: chosen.id,
+        name: chosen.name,
+        service: service.url,
+        features: chosen.count,
+        // How many identically-named layers it was chosen from, so a probe
+        // that picked one of twenty-one says so rather than looking decisive.
+        pickedFrom: hits.length,
+      };
     }
   }
 
@@ -140,8 +186,10 @@ export async function discoverLayers(opts = {}) {
   if (missing.length) {
     throw new CrosswalkError('layer_not_found',
       `no TIGERweb layer for ${missing.join(' or ')} in ${searched.length} services `
-      + `(${searched.join(', ')}). Layers seen: ${[...offered].slice(0, 60).join(', ')}`,
-      { missing, searched, offered: [...offered] });
+      + `(${searched.join(', ')}). `
+      + (counted.length ? `Count probes: ${counted.join('; ')}. ` : '')
+      + `Layers seen: ${[...offered].slice(0, 60).join(', ')}`,
+      { missing, searched, counted, offered: [...offered] });
   }
   return found;
 }
@@ -168,14 +216,50 @@ export async function listServices(opts = {}) {
     }
   }
 
-  const rank = (name) => {
-    const i = SERVICE_PRIORITY.findIndex((p) => p.test(name));
-    return i === -1 ? SERVICE_PRIORITY.length : i;
-  };
+  const score = (name) => SERVICE_HINTS
+    .reduce((total, h) => total + (h.pattern.test(name) ? h.score : 0), 0);
   return services
     .filter((svc) => String(svc.type || 'MapServer') === 'MapServer')
-    .map((svc) => ({ name: svc.name, url: `${TIGERWEB_ROOT}/${svc.name}/MapServer` }))
-    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+    .map((svc) => ({
+      name: svc.name,
+      url: `${TIGERWEB_ROOT}/${svc.name}/MapServer`,
+      score: score(svc.name),
+    }))
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+}
+
+/**
+ * Pick between identically-named layers by how many features each holds.
+ *
+ * `Census2020/State_County` offers twenty-one layers called "Counties". Their
+ * names, ids and order say nothing about which one carries whole counties at
+ * full detail, so the only honest discriminator is the data itself: a counties
+ * layer has about 3,143 rows and a scale-generalised or partial one does not.
+ *
+ * `returnCountOnly` makes each probe a few bytes, and candidates are tried in
+ * id order and the FIRST plausible one wins — so the usual case is one extra
+ * request, not twenty-one.
+ */
+export async function chooseByFeatureCount(serviceUrl, candidates, expected, opts = {}) {
+  if (!expected) return candidates[0] ? { ...candidates[0], count: null } : null;
+
+  const ordered = [...candidates].sort((a, b) => a.id - b.id).slice(0, MAX_LAYERS_COUNTED);
+  for (const layer of ordered) {
+    let count;
+    try {
+      const body = await getJson(
+        `${serviceUrl}/${layer.id}/query?where=1%3D1&returnCountOnly=true&f=json`, opts,
+      );
+      count = body?.count;
+    } catch {
+      // A layer that will not answer a count is a layer that will not answer a
+      // spatial query either.
+      continue;
+    }
+    if (typeof count !== 'number') continue;
+    if (count >= expected.min && count <= expected.max) return { ...layer, count };
+  }
+  return null;
 }
 
 /**

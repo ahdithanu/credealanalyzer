@@ -69,9 +69,19 @@ if (args.includes('--probe-counties')) {
     || '18140';
   try {
     const layers = await discoverLayers();
+    /**
+     * Print the feature count and how many identically-named layers it was
+     * chosen from. A service can offer twenty-one layers called "Counties",
+     * and a probe that says only "bound to id 86" reads as more certain than
+     * it is.
+     */
+    const describe = (l) => `${C.ok(String(l.id))} ${C.dim(l.name)}`
+      + (l.features ? C.dim(`  ${l.features.toLocaleString()} features`) : '')
+      + (l.pickedFrom > 1 ? C.dim(`, chosen from ${l.pickedFrom} with that name`) : '')
+      + `\n      ${C.dim(l.service.replace('https://tigerweb.geo.census.gov/arcgis/rest/services/', ''))}`;
     process.stdout.write(`\n${C.bold('TIGERweb layers')}\n`
-      + `  counties  ${C.ok(`${layers.counties.id}`)} ${C.dim(layers.counties.name)}\n`
-      + `  CBSA      ${C.ok(`${layers.cbsa.id}`)} ${C.dim(layers.cbsa.name)}\n\n`);
+      + `  counties  ${describe(layers.counties)}\n`
+      + `  CBSA      ${describe(layers.cbsa)}\n\n`);
 
     const r = await countiesInCbsa(target, { layers });
     process.stdout.write(`${C.bold(r.cbsaName || target)} ${C.dim(`(CBSA ${target})`)}\n`

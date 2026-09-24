@@ -114,6 +114,15 @@ spans services, ordered likeliest-first, stopping as soon as both layers are
 bound and capped so a directory of hundreds does not become hundreds of
 requests.
 
+**Names do not identify a layer either.** `Census2020/State_County` offers
+**twenty-one layers all called `Counties`** — TIGERweb stacks the same geography
+at several vintages and generalisation tiers under identical names, and nothing
+in the name, the id or the order says which one carries whole counties at full
+detail. So the tie is broken by asking each candidate how many features it
+holds: a US counties layer has about 3,143 and a CBSA layer about 935. The
+probe prints the count and how many identically-named layers it chose from, so
+a binding never reads as more certain than it is.
+
 Layer IDs are discovered by name for the same reason. A stale ID does not
 error — it returns a different geography with the same field names, which is
 the worst kind of wrong. Binding `Counties` to `County Subdivisions` would
