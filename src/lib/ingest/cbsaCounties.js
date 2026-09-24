@@ -34,7 +34,33 @@
 
 import { getJson } from './http.js';
 
-const TIGERWEB_SERVICE = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer';
+const TIGERWEB_ROOT = 'https://tigerweb.geo.census.gov/arcgis/rest/services';
+
+/**
+ * TIGERweb is many MapServers, not one, and they are split by geography SIZE.
+ *
+ * The first version of this looked only in `TIGERweb/tigerWMS_Current`, which
+ * was a guess that the probe disproved on the first real run: that service
+ * carries tracts, blocks, places and County SUBDIVISIONS — every geography
+ * below a county — and neither Counties nor CBSAs. The error printed the
+ * layers it was offered, which is how we know.
+ *
+ * So the search now spans services. The two layers may live in different ones,
+ * and which service holds what has already moved once, so nothing here names a
+ * service either — the REST directory is listed and every candidate is opened
+ * until both layers are found.
+ */
+const SERVICE_PRIORITY = [
+  // Opened first because their names suggest county-or-larger geography. Being
+  // wrong about this order costs a few requests, not a wrong answer.
+  /state.*county/i,
+  /cbsa|metropolitan|micropolitan/i,
+  /generalized/i,
+  /current/i,
+];
+
+/** A ceiling on how many MapServers one discovery will open. */
+export const MAX_SERVICES_PROBED = 30;
 
 /**
  * How the two layers are recognised in the service's layer list.
@@ -68,38 +94,88 @@ export class CrosswalkError extends Error {
  * actually bound to rather than asserting it bound to the right thing.
  */
 export async function discoverLayers(opts = {}) {
-  const body = await getJson(`${TIGERWEB_SERVICE}?f=json`, opts);
-  const layers = [...(body?.layers || []), ...(body?.tables || [])];
-  if (!layers.length) {
-    throw new CrosswalkError('no_layers',
-      `${TIGERWEB_SERVICE} answered without a layer list; the service may have moved`);
+  const services = await listServices(opts);
+  if (!services.length) {
+    throw new CrosswalkError('no_services',
+      `${TIGERWEB_ROOT} listed no MapServers; the directory may have moved`);
   }
 
   const found = {};
-  for (const [key, pattern] of Object.entries(LAYER_PATTERNS)) {
-    const hits = layers.filter((l) => pattern.test(String(l.name || '')));
-    if (!hits.length) {
-      throw new CrosswalkError('layer_not_found',
-        `no TIGERweb layer matching ${key} (${pattern}). Layers offered: `
-        + `${layers.map((l) => l.name).slice(0, 40).join(', ')}`,
-        { layer: key, offered: layers.map((l) => l.name) });
+  const searched = [];
+  const offered = new Set();
+
+  for (const service of services) {
+    if (searched.length >= MAX_SERVICES_PROBED) break;
+    if (Object.keys(found).length === Object.keys(LAYER_PATTERNS).length) break;
+
+    let layers;
+    try {
+      const body = await getJson(`${service.url}?f=json`, opts);
+      layers = [...(body?.layers || []), ...(body?.tables || [])];
+    } catch {
+      // One unreachable service must not end the search; the next may hold
+      // both layers.
+      continue;
     }
-    /**
-     * More than one match is not resolvable by guessing. TIGERweb carries
-     * "Metropolitan Statistical Area/Micropolitan Statistical Area" and
-     * "...Labels" as separate layers, and picking the wrong one returns
-     * annotation geometry, so an ambiguous match is reported rather than
-     * resolved by taking the first.
-     */
-    const exact = hits.filter((l) => !/label/i.test(String(l.name)));
-    if (exact.length !== 1) {
-      throw new CrosswalkError('layer_ambiguous',
-        `${exact.length} TIGERweb layers match ${key}: ${hits.map((l) => `${l.id}=${l.name}`).join(', ')}`,
-        { layer: key, candidates: hits });
+    searched.push(service.name);
+    for (const l of layers) offered.add(String(l.name || ''));
+
+    for (const [key, pattern] of Object.entries(LAYER_PATTERNS)) {
+      if (found[key]) continue;
+      // Label layers carry annotation geometry, not boundaries.
+      const hits = layers.filter((l) => pattern.test(String(l.name || ''))
+        && !/label/i.test(String(l.name || '')));
+      if (!hits.length) continue;
+      if (hits.length > 1) {
+        throw new CrosswalkError('layer_ambiguous',
+          `${hits.length} layers in ${service.name} match ${key}: `
+          + `${hits.map((l) => `${l.id}=${l.name}`).join(', ')}`,
+          { layer: key, service: service.name, candidates: hits });
+      }
+      found[key] = { id: hits[0].id, name: hits[0].name, service: service.url };
     }
-    found[key] = { id: exact[0].id, name: exact[0].name };
+  }
+
+  const missing = Object.keys(LAYER_PATTERNS).filter((k) => !found[k]);
+  if (missing.length) {
+    throw new CrosswalkError('layer_not_found',
+      `no TIGERweb layer for ${missing.join(' or ')} in ${searched.length} services `
+      + `(${searched.join(', ')}). Layers seen: ${[...offered].slice(0, 60).join(', ')}`,
+      { missing, searched, offered: [...offered] });
   }
   return found;
+}
+
+/**
+ * Every MapServer the TIGERweb directory lists, best candidates first.
+ *
+ * The directory is read rather than hardcoded for the same reason the layer ids
+ * are: it has already changed once under this code.
+ */
+export async function listServices(opts = {}) {
+  const body = await getJson(`${TIGERWEB_ROOT}?f=json`, opts);
+  const folders = body?.folders || [];
+  const services = [...(body?.services || [])];
+
+  // Services live inside folders as well as at the root, and TIGERweb keeps
+  // almost everything in a folder of its own name.
+  for (const folder of folders) {
+    try {
+      const sub = await getJson(`${TIGERWEB_ROOT}/${folder}?f=json`, opts);
+      services.push(...(sub?.services || []));
+    } catch {
+      continue;
+    }
+  }
+
+  const rank = (name) => {
+    const i = SERVICE_PRIORITY.findIndex((p) => p.test(name));
+    return i === -1 ? SERVICE_PRIORITY.length : i;
+  };
+  return services
+    .filter((svc) => String(svc.type || 'MapServer') === 'MapServer')
+    .map((svc) => ({ name: svc.name, url: `${TIGERWEB_ROOT}/${svc.name}/MapServer` }))
+    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
 }
 
 /**
@@ -121,7 +197,7 @@ export async function countiesInCbsa(cbsaGeoid, { layers, ...opts } = {}) {
     outSR: '4326',
     f: 'json',
   });
-  const cbsaBody = await getJson(`${TIGERWEB_SERVICE}/${bound.cbsa.id}/query?${cbsaParams}`, opts);
+  const cbsaBody = await getJson(`${bound.cbsa.service}/${bound.cbsa.id}/query?${cbsaParams}`, opts);
   const cbsaFeature = cbsaBody?.features?.[0];
   if (!cbsaFeature?.geometry) {
     throw new CrosswalkError('cbsa_not_found',
@@ -138,7 +214,7 @@ export async function countiesInCbsa(cbsaGeoid, { layers, ...opts } = {}) {
     returnGeometry: 'false',
     f: 'json',
   });
-  const countyBody = await getJson(`${TIGERWEB_SERVICE}/${bound.counties.id}/query?${countyParams}`, opts);
+  const countyBody = await getJson(`${bound.counties.service}/${bound.counties.id}/query?${countyParams}`, opts);
   const features = countyBody?.features || [];
   if (!features.length) {
     throw new CrosswalkError('no_counties',

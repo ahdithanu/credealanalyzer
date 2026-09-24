@@ -105,12 +105,22 @@ metro's polygon, fetch the counties that intersect it, keep the ones whose
 border; the centroid test is exact here rather than approximate, because a
 county is wholly in or wholly out.
 
-Even the TIGERweb layer IDs are discovered, by reading the service's own layer
-list and matching on name. A stale ID does not error — it returns a different
-geography with the same field names, which is the worst kind of wrong. Binding
-to `County Subdivisions` instead of `Counties` would return townships; binding
-to a `Labels` layer would return annotation geometry. Both are refused rather
-than resolved by guessing.
+**TIGERweb is many MapServers, split by geography size, and the two layers do
+not live in the same one.** The first version looked only in
+`TIGERweb/tigerWMS_Current`, and the probe disproved that on the first real
+run: that service carries tracts, blocks, places and County *Subdivisions* —
+every geography below a county — and neither Counties nor CBSAs. So the search
+spans services, ordered likeliest-first, stopping as soon as both layers are
+bound and capped so a directory of hundreds does not become hundreds of
+requests.
+
+Layer IDs are discovered by name for the same reason. A stale ID does not
+error — it returns a different geography with the same field names, which is
+the worst kind of wrong. Binding `Counties` to `County Subdivisions` would
+return townships (and that layer is genuinely there, in the service that was
+searched first); binding to a `Labels` layer would return annotation geometry.
+Both are refused, and an ambiguous match is reported rather than resolved by
+taking the first.
 
 **It refuses rather than undercounting.** If any county in the set is missing
 from either vintage, no growth is written. Connecticut is the live case: the

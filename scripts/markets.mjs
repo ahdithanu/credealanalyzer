@@ -137,6 +137,7 @@ const asOf = `ACS 5-year ${DEFAULT_VINTAGES.to}`;
  * and not written, and the summary says how many did.
  */
 let layers = null;
+let crosswalkError = null;
 const cache = new Map();
 try {
   layers = await discoverLayers();
@@ -144,8 +145,18 @@ try {
     + `${layers.counties.id} (${layers.counties.name}) and `
     + `${layers.cbsa.id} (${layers.cbsa.name})\n\n`));
 } catch (err) {
-  process.stdout.write(`${C.warn(`County crosswalk unavailable: ${err.message}`)}\n`
-    + C.dim('  Growth will fall back to the whole-metro difference and NOT be written.\n\n'));
+  /**
+   * Printed ONCE, here, and then suppressed per market.
+   *
+   * The first real run emitted this same paragraph — a forty-layer list — under
+   * every one of thirty-six markets, which buried the numbers the run exists to
+   * show. A failure that is the same for every row is a property of the run.
+   */
+  crosswalkError = err;
+  process.stdout.write(`${C.warn('County crosswalk unavailable, growth will not be written')}\n`
+    + C.dim(`  ${err.message.split('. Layers seen:')[0]}\n`)
+    + C.dim('  Run --probe-counties for the full layer list.\n')
+    + C.dim('  Levels are unaffected; the whole-metro difference is shown but NOT written.\n\n'));
 }
 const out = {};
 let reached = 0;
@@ -167,7 +178,14 @@ for (const market of targets) {
   const label = `${market.city}, ${market.state}`;
   let result;
   try {
-    result = await sourceMarket(market.key, { cbsa: CBSA[market.key], layers, cache });
+    result = await sourceMarket(market.key, {
+      cbsa: CBSA[market.key],
+      layers,
+      cache,
+      // Already established for the whole run; retrying per market would be
+      // thirty-six identical failures.
+      countyGrowth: !crosswalkError,
+    });
   } catch (err) {
     failed += 1;
     process.stdout.write(`${C.bold(label.padEnd(22))} ${C.warn(`failed: ${err.message}`)}\n`);
@@ -261,7 +279,12 @@ for (const market of targets) {
     }
   }
 
-  for (const n of result.notes) process.stdout.write(`  ${C.dim(`· ${n}`)}\n`);
+  for (const n of result.notes) {
+    // A note carrying a layer inventory is a paragraph; the run-level message
+    // already said it once.
+    const short = n.length > 200 ? `${n.slice(0, 197)}…` : n;
+    process.stdout.write(`  ${C.dim(`· ${short}`)}\n`);
+  }
 
   if (changes.length) {
     reached += 1;

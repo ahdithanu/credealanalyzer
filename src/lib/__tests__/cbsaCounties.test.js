@@ -13,6 +13,7 @@
 
 import {
   discoverLayers, countiesInCbsa, pointInRings, LAYER_PATTERNS, CrosswalkError,
+  listServices, MAX_SERVICES_PROBED,
 } from '../ingest/cbsaCounties';
 import { growthOverFixedCounties, countyPopulations } from '../ingest/acsMarkets';
 
@@ -37,16 +38,55 @@ function fakeFetch(routes) {
   return impl;
 }
 
-/** The service root's layer list, as TIGERweb really shapes it. */
-const SERVICE_ROOT = {
+/**
+ * The REST directory, and the services in it.
+ *
+ * Shaped from the real run: `tigerWMS_Current` carries every geography BELOW a
+ * county — tracts, blocks, places, County Subdivisions — and neither Counties
+ * nor CBSAs. Those live in other services, and not necessarily the same one as
+ * each other.
+ */
+const DIRECTORY = { folders: ['TIGERweb'], services: [] };
+const FOLDER = {
+  services: [
+    { name: 'TIGERweb/tigerWMS_Current', type: 'MapServer' },
+    { name: 'TIGERweb/State_County', type: 'MapServer' },
+    { name: 'TIGERweb/Generalized_ACS2023', type: 'MapServer' },
+    { name: 'TIGERweb/Labels', type: 'MapServer' },
+  ],
+};
+const SUBCOUNTY_SERVICE = {
+  layers: [
+    { id: 0, name: 'Census Tracts' },
+    { id: 82, name: 'County Subdivisions' },
+    { id: 83, name: 'County Subdivisions Labels' },
+    { id: 90, name: 'Incorporated Places' },
+  ],
+};
+const STATE_COUNTY_SERVICE = {
+  layers: [
+    { id: 86, name: 'Counties' },
+    { id: 87, name: 'Counties Labels' },
+    { id: 88, name: 'States' },
+  ],
+};
+const GENERALIZED_SERVICE = {
   layers: [
     { id: 4, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area Labels' },
     { id: 5, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area' },
-    { id: 82, name: 'County Subdivisions' },
-    { id: 86, name: 'Counties' },
-    { id: 87, name: 'Counties Labels' },
   ],
 };
+
+/** Every route a discovery needs, with the two layers in DIFFERENT services. */
+const DISCOVERY = {
+  'arcgis/rest/services?f=json': DIRECTORY,
+  'arcgis/rest/services/TIGERweb?f=json': FOLDER,
+  'tigerWMS_Current/MapServer?f=json': SUBCOUNTY_SERVICE,
+  'State_County/MapServer?f=json': STATE_COUNTY_SERVICE,
+  'Generalized_ACS2023/MapServer?f=json': GENERALIZED_SERVICE,
+  'Labels/MapServer?f=json': { layers: [{ id: 1, name: 'Counties Labels' }] },
+};
+const SERVICE_ROOT = STATE_COUNTY_SERVICE;
 
 /** A 10×10 box CBSA, with three counties: two inside, one over the border. */
 const CBSA_POLYGON = {
@@ -76,52 +116,109 @@ const acsCounties = (rows) => [
 ];
 
 describe('binding to the right TIGERweb layers', () => {
-  it('finds counties and CBSAs by name, not by a hardcoded id', async () => {
-    // TIGERweb renumbers layers between releases, and a stale id does not
-    // error — it returns a different geography with the same field names.
-    const layers = await discoverLayers({ fetchImpl: fakeFetch({ MapServer: SERVICE_ROOT }) });
+  it('finds the two layers even when they live in different services', async () => {
+    // The failure the first real run produced: tigerWMS_Current has neither.
+    // Counties are in State_County and CBSAs in a Generalized service, so a
+    // search scoped to one MapServer finds nothing however good its patterns.
+    const layers = await discoverLayers({ fetchImpl: fakeFetch(DISCOVERY) });
     expect(layers.counties.id).toBe(86);
+    expect(layers.counties.service).toMatch(/State_County/);
     expect(layers.cbsa.id).toBe(5);
+    expect(layers.cbsa.service).toMatch(/Generalized_ACS2023/);
   });
 
   it('never binds Counties to County Subdivisions', () => {
-    // A looser pattern matches both, and subdivisions are townships — which
-    // would return dozens of sub-county pieces whose centroids all sit inside
-    // the metro, summing populations that double-count nothing but mean
-    // nothing either.
+    // A looser pattern matches both, and subdivisions are townships — dozens
+    // of sub-county pieces whose centroids all sit inside the metro. It is the
+    // layer tigerWMS_Current actually offers, so this is the live hazard.
     expect(LAYER_PATTERNS.counties.test('County Subdivisions')).toBe(false);
     expect(LAYER_PATTERNS.counties.test('Counties')).toBe(true);
   });
 
-  it('never binds to a Labels layer', async () => {
-    // Label layers carry annotation geometry, not boundaries.
-    const layers = await discoverLayers({ fetchImpl: fakeFetch({ MapServer: SERVICE_ROOT }) });
+  it('never binds to a Labels layer, in any service', async () => {
+    const layers = await discoverLayers({ fetchImpl: fakeFetch(DISCOVERY) });
     expect(layers.cbsa.name).not.toMatch(/label/i);
     expect(layers.counties.name).not.toMatch(/label/i);
+    expect(layers.counties.service).not.toMatch(/\/Labels\//);
   });
 
-  it('reports what the service offered when a layer is gone', async () => {
-    const impl = fakeFetch({ MapServer: { layers: [{ id: 1, name: 'Blocks' }] } });
+  it('opens the likeliest services first and stops once both are found', async () => {
+    const impl = fakeFetch(DISCOVERY);
+    await discoverLayers({ fetchImpl: impl });
+    const opened = impl.calls.filter((u) => u.includes('/MapServer?f=json'));
+    // State_County ranks first by name, so it is opened before the sub-county
+    // service — and once both layers are bound the loop stops.
+    expect(opened[0]).toMatch(/State_County/);
+    expect(opened.length).toBeLessThanOrEqual(3);
+  });
+
+  it('keeps going when one service will not answer', async () => {
+    // A single unreachable MapServer must not end the search; the next one may
+    // hold both layers.
+    const routes = { ...DISCOVERY };
+    delete routes['State_County/MapServer?f=json'];
+    const withFailure = {
+      ...routes,
+      'State_County/MapServer?f=json': new Error('gateway timeout'),
+      'Generalized_ACS2023/MapServer?f=json': {
+        layers: [...GENERALIZED_SERVICE.layers, { id: 86, name: 'Counties' }],
+      },
+    };
+    const layers = await discoverLayers({ fetchImpl: fakeFetch(withFailure) });
+    expect(layers.counties.service).toMatch(/Generalized_ACS2023/);
+  });
+
+  it('reports the services searched and the layers seen when it fails', async () => {
+    // This is the message that diagnosed the first failure: without the list
+    // of what WAS offered, "layer not found" is unactionable.
+    const impl = fakeFetch({
+      'arcgis/rest/services?f=json': DIRECTORY,
+      'arcgis/rest/services/TIGERweb?f=json': {
+        services: [{ name: 'TIGERweb/tigerWMS_Current', type: 'MapServer' }],
+      },
+      'tigerWMS_Current/MapServer?f=json': SUBCOUNTY_SERVICE,
+    });
     await expect(discoverLayers({ fetchImpl: impl }))
       .rejects.toMatchObject({ code: 'layer_not_found' });
-    // The failure has to name what WAS there, or the next step is guesswork.
-    await expect(discoverLayers({ fetchImpl: impl })).rejects.toThrow(/Blocks/);
+    await expect(discoverLayers({ fetchImpl: impl })).rejects.toThrow(/County Subdivisions/);
+    await expect(discoverLayers({ fetchImpl: impl })).rejects.toThrow(/tigerWMS_Current/);
   });
 
   it('refuses an ambiguous match rather than taking the first', async () => {
     const impl = fakeFetch({
-      MapServer: { layers: [{ id: 1, name: 'Counties' }, { id: 2, name: 'Counties' }] },
+      'arcgis/rest/services?f=json': { folders: [], services: [{ name: 'X', type: 'MapServer' }] },
+      'X/MapServer?f=json': { layers: [{ id: 1, name: 'Counties' }, { id: 2, name: 'Counties' }] },
     });
     await expect(discoverLayers({ fetchImpl: impl }))
       .rejects.toMatchObject({ code: 'layer_ambiguous' });
+  });
+
+  it('lists services from folders as well as the root', async () => {
+    // TIGERweb keeps everything in a folder of its own name, so a listing that
+    // reads only the root sees nothing at all.
+    const services = await listServices({ fetchImpl: fakeFetch(DISCOVERY) });
+    expect(services.map((s) => s.name)).toContain('TIGERweb/State_County');
+    expect(services.every((s) => s.url.endsWith('/MapServer'))).toBe(true);
+  });
+
+  it('will not open an unbounded number of services', async () => {
+    // A directory listing hundreds of MapServers must not become hundreds of
+    // requests on every run.
+    const many = Array.from({ length: 200 }, (_, i) => ({ name: `S${i}`, type: 'MapServer' }));
+    const routes = { 'arcgis/rest/services?f=json': { folders: [], services: many } };
+    for (const s of many) routes[`${s.name}/MapServer?f=json`] = { layers: [{ id: 0, name: 'Blocks' }] };
+    const impl = fakeFetch(routes);
+    await expect(discoverLayers({ fetchImpl: impl })).rejects.toMatchObject({ code: 'layer_not_found' });
+    expect(impl.calls.filter((u) => u.includes('/MapServer?f=json')).length)
+      .toBeLessThanOrEqual(MAX_SERVICES_PROBED);
   });
 });
 
 describe('which counties are in the metro', () => {
   const routes = {
-    'MapServer?f=json': SERVICE_ROOT,
-    'MapServer/5/query': CBSA_POLYGON,
-    'MapServer/86/query': COUNTIES,
+    ...DISCOVERY,
+    'Generalized_ACS2023/MapServer/5/query': CBSA_POLYGON,
+    'State_County/MapServer/86/query': COUNTIES,
   };
 
   it('takes the counties inside, and not the one over the border', async () => {
@@ -142,19 +239,19 @@ describe('which counties are in the metro', () => {
     // Every county bordering and none inside means the geometry or the
     // centroid fields are not what this expects — a silent empty set would
     // become a zero population.
-    const r = { ...routes, 'MapServer/86/query': { features: [county('12041', '12', '041', 'Dixie', 5, 14)] } };
+    const r = { ...routes, 'State_County/MapServer/86/query': { features: [county('12041', '12', '041', 'Dixie', 5, 14)] } };
     await expect(countiesInCbsa('23540', { fetchImpl: fakeFetch(r) }))
       .rejects.toMatchObject({ code: 'no_counties_inside' });
   });
 
   it('says so when the CBSA GEOID is not in the layer', async () => {
-    const r = { ...routes, 'MapServer/5/query': { features: [] } };
+    const r = { ...routes, 'Generalized_ACS2023/MapServer/5/query': { features: [] } };
     await expect(countiesInCbsa('99999', { fetchImpl: fakeFetch(r) }))
       .rejects.toMatchObject({ code: 'cbsa_not_found' });
   });
 
   it('is a CrosswalkError, so callers can tell it from a network failure', async () => {
-    const r = { ...routes, 'MapServer/5/query': { features: [] } };
+    const r = { ...routes, 'Generalized_ACS2023/MapServer/5/query': { features: [] } };
     await expect(countiesInCbsa('99999', { fetchImpl: fakeFetch(r) }))
       .rejects.toBeInstanceOf(CrosswalkError);
   });
@@ -162,9 +259,9 @@ describe('which counties are in the metro', () => {
 
 describe('growth over a fixed county set', () => {
   const geo = {
-    'MapServer?f=json': SERVICE_ROOT,
-    'MapServer/5/query': CBSA_POLYGON,
-    'MapServer/86/query': COUNTIES,
+    ...DISCOVERY,
+    'Generalized_ACS2023/MapServer/5/query': CBSA_POLYGON,
+    'State_County/MapServer/86/query': COUNTIES,
   };
 
   it('undoes the Gainesville artifact, which is the reason this exists', async () => {
@@ -302,7 +399,6 @@ describe('a metro that crosses state lines, which is the nationwide case', () =>
    * hides the error in the level and leaves the growth looking fine.
    */
   const TRI_STATE = {
-    layers: SERVICE_ROOT,
     cbsa: {
       features: [{
         attributes: { GEOID: '16980', NAME: 'Chicago-Naperville-Elgin, IL-IN-WI Metro Area' },
@@ -323,9 +419,9 @@ describe('a metro that crosses state lines, which is the nationwide case', () =>
     // the URL so a missed state shows up as a missing county, not as a silent
     // short sum.
     const f = fakeFetch({
-      'MapServer?f=json': TRI_STATE.layers,
-      'MapServer/5/query': TRI_STATE.cbsa,
-      'MapServer/86/query': TRI_STATE.counties,
+      ...DISCOVERY,
+      'Generalized_ACS2023/MapServer/5/query': TRI_STATE.cbsa,
+      'State_County/MapServer/86/query': TRI_STATE.counties,
       '/2017/acs/acs5?get=NAME,B01003_001E&for=county:*&in=state:17': acsCounties([['Cook County, Illinois', '5223719', '17', '031']]),
       '/2017/acs/acs5?get=NAME,B01003_001E&for=county:*&in=state:18': acsCounties([['Lake County, Indiana', '487865', '18', '089']]),
       '/2017/acs/acs5?get=NAME,B01003_001E&for=county:*&in=state:55': acsCounties([['Kenosha County, Wisconsin', '168330', '55', '059']]),
@@ -351,9 +447,9 @@ describe('a metro that crosses state lines, which is the nationwide case', () =>
     // The dangerous shape: two states answer, one does not. A sum over what
     // came back is a real-looking number about two thirds of a metro.
     const f = fakeFetch({
-      'MapServer?f=json': TRI_STATE.layers,
-      'MapServer/5/query': TRI_STATE.cbsa,
-      'MapServer/86/query': TRI_STATE.counties,
+      ...DISCOVERY,
+      'Generalized_ACS2023/MapServer/5/query': TRI_STATE.cbsa,
+      'State_County/MapServer/86/query': TRI_STATE.counties,
       '/2017/acs/acs5?get=NAME,B01003_001E&for=county:*&in=state:17': acsCounties([['Cook County, Illinois', '5223719', '17', '031']]),
       '/2017/acs/acs5?get=NAME,B01003_001E&for=county:*&in=state:18': acsCounties([['Lake County, Indiana', '487865', '18', '089']]),
       '/2017/acs/acs5?get=NAME,B01003_001E&for=county:*&in=state:55': acsCounties([]),
