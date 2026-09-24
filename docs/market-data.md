@@ -56,9 +56,46 @@ arrives as thirty-six metros that apparently have no population rather than as
 thirty-six refused requests. The script names it and stops after the first one
 rather than scrolling thirty-six identical errors past you.
 
-Census ACS 5-year estimates at CBSA level give **population**, **median
-household income**, and a five-year population CAGR from two non-overlapping
-vintages. Nationwide.
+Census ACS 5-year estimates at CBSA level give **population** and **median
+household income**, nationwide. Both are levels read off a single vintage, so
+nothing about them depends on two years being comparable.
+
+### Population growth is shown and NOT written
+
+Growth is a *difference* between two vintages, and OMB revises CBSA
+delineations between them. Differencing ACS 2017 against ACS 2022 for "the same
+metro" can compare two different sets of counties, and the answer wears a growth
+label while measuring a boundary. From the first real run:
+
+| | 2017 | 2022 | 5-year change |
+|---|---:|---:|---:|
+| Gainesville, FL | 277,120 | 341,067 | **+23.1%** |
+| Corpus Christi, TX | 450,276 | 422,187 | **−6.2%** |
+| Des Moines, IA | 623,057 | 711,490 | **+14.2%** |
+| Houston, TX (for scale) | 6,636,731 | 7,142,603 | +7.6% |
+
+Gainesville did not add 64,000 people; Levy and Gilchrist counties joined the
+CBSA. Corpus Christi did not lose 28,000; Aransas left. Written, 4.24%/yr would
+have put Gainesville at the top of the Population Growth percentile across all
+thirty-six markets — above Austin — off an artifact.
+
+**And it cannot be detected from the response.** The obvious guard is comparing
+the CBSA name across vintages; it does not work. Gainesville is "Gainesville,
+FL Metro Area" in both, because a metro keeps its name when a county is added.
+
+So the run prints growth with the two populations behind it and writes nothing.
+A change over 10% in five years gets an explicit warning, but **nothing depends
+on that flag** — Corpus Christi's −6.2% is under it and is still a boundary
+change. No threshold separates a redelineated metro from a genuinely shrinking
+one, which is why the refusal is unconditional rather than flag-driven.
+
+The seed value stays. A labelled guess beats a boundary change wearing a
+measurement's clothes, because only one of the two is recognisable as wrong.
+
+**The real fix**, which is a genuine piece of work and is not done: take the OMB
+delineation file for the latest vintage, read that metro's county list, and sum
+county populations over that *fixed* set for both years. County boundaries are
+stable, so the comparison then means what it says.
 
 The key rides on the ACS calls only. The geocoder and TIGERweb — used by
 `npm run enrich` — do not take one, and are not sent one.

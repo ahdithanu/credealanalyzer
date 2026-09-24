@@ -9,6 +9,7 @@
 
 import {
   cbsaFigures, sourceMarket, CBSA, DEFAULT_VINTAGES, SOURCEABLE_FIELDS, renderSourcedModule,
+  ADVISORY_FIELDS, IMPLAUSIBLE_5Y_CHANGE_PCT,
 } from '../ingest/acsMarkets';
 import { markets, MARKET_DATA_FIELDS } from '../markets';
 
@@ -26,7 +27,11 @@ function recorder(byMatch) {
     calls.push(url);
     const hit = Object.entries(byMatch).find(([fragment]) => url.includes(fragment));
     if (!hit) throw new Error(`unexpected request: ${url}`);
-    return { ok: true, status: 200, text: async () => JSON.stringify(hit[1]) };
+    // An empty string is a 204: the query matched nothing.
+    if (hit[1] === '') return { ok: true, status: 204, text: async () => '' };
+    // A raw string is served as-is, so an HTML error page can be a fixture.
+    const body = typeof hit[1] === 'string' ? hit[1] : JSON.stringify(hit[1]);
+    return { ok: true, status: 200, text: async () => body };
   };
   return { fetchImpl, calls };
 }
@@ -41,6 +46,12 @@ describe('the code registry lines up with the market table', () => {
 
   it('only claims the fields it can actually fill', () => {
     for (const f of SOURCEABLE_FIELDS) expect(MARKET_DATA_FIELDS).toContain(f);
+    // Growth is computed and shown, never written — the two lists must not
+    // overlap, or something advisory reaches the table as sourced.
+    for (const f of ADVISORY_FIELDS) {
+      expect(MARKET_DATA_FIELDS).toContain(f);
+      expect(SOURCEABLE_FIELDS).not.toContain(f);
+    }
     // Five of the nine have no free source at all. If this list ever grows to
     // cover them, it is because a feed was bought, not because the names were
     // added here.
@@ -103,8 +114,90 @@ describe('sourcing one market', () => {
     const { fetchImpl } = twoVintages('2200000', '2000000');
 
     return sourceMarket('columbus-oh', { fetchImpl }).then((r) => {
-      expect(r.fields.popGrowth5y).toBeCloseTo(1.9245, 3);
-      expect(r.fields.popGrowth5y).toBeLessThan(10);
+      expect(r.advisory.popGrowth5y).toBeCloseTo(1.9245, 3);
+      expect(r.advisory.totalChangePct).toBeCloseTo(10, 6);
+    });
+  });
+
+  it('NEVER writes the growth, however sane it looks', () => {
+    // The whole point. A plausible growth rate is not evidence the two
+    // vintages covered the same counties — it is evidence that if they did
+    // not, the artifact happened to be small. Written, there is no way to tell
+    // those apart afterwards.
+    const { fetchImpl } = twoVintages('2100000', '2000000');
+    return sourceMarket('columbus-oh', { fetchImpl }).then((r) => {
+      expect(r.fields).not.toHaveProperty('popGrowth5y');
+      expect(r.advisory.written).toBe(false);
+      expect(r.advisory.implausible).toBe(false);
+      // The levels ARE written: they are read off one vintage and no
+      // comparison is involved.
+      expect(r.fields.population).toBe(2100000);
+      expect(r.fields.medianHHI).toBe(76208);
+    });
+  });
+
+  it('flags a change too big to be people, with Gainesville as the case', () => {
+    // The real run: 277,120 → 341,067. Gainesville did not add 64,000 people
+    // in five years; Levy and Gilchrist counties joined the CBSA. Written,
+    // 4.24%/yr would have ranked Gainesville above Austin on population growth
+    // across all thirty-six markets.
+    const { fetchImpl } = twoVintages('341067', '277120');
+    return sourceMarket('gainesville-fl', { fetchImpl, cbsa: '23540' }).then((r) => {
+      expect(r.advisory.totalChangePct).toBeGreaterThan(IMPLAUSIBLE_5Y_CHANGE_PCT);
+      expect(r.advisory.implausible).toBe(true);
+      expect(r.fields).not.toHaveProperty('popGrowth5y');
+    });
+  });
+
+  it('is two-sided, so a metro that shrank can be flagged too', () => {
+    const { fetchImpl } = twoVintages('1000000', '1200000');
+    return sourceMarket('cleveland-oh', { fetchImpl, cbsa: '17460' }).then((r) => {
+      expect(r.advisory.totalChangePct).toBeLessThan(0);
+      expect(r.advisory.implausible).toBe(true);
+    });
+  });
+
+  it('MISSES Corpus Christi, which is why nothing depends on the flag', () => {
+    // 450,276 → 422,187 is Aransas County leaving the CBSA — a real boundary
+    // change — and at -6.2% it is under the threshold. No threshold separates
+    // a delineation change from a genuinely shrinking metro, because both are
+    // a real metro getting smaller on paper.
+    //
+    // That is the whole argument for refusing to write growth UNCONDITIONALLY
+    // rather than writing it when the flag stays quiet. The flag is a hint for
+    // the reader; it is not a gate, and this pins that it cannot become one.
+    const { fetchImpl } = twoVintages('422187', '450276');
+    return sourceMarket('corpus-christi-tx', { fetchImpl, cbsa: '18580' }).then((r) => {
+      expect(r.advisory.implausible).toBe(false);
+      expect(r.fields).not.toHaveProperty('popGrowth5y');
+      expect(r.advisory.written).toBe(false);
+    });
+  });
+
+  it('does not cry wolf on ordinary growth', () => {
+    // Houston, from the same run: 6,636,731 → 7,142,603, +7.6% over five
+    // years. Real, fast, and under the threshold. A guard that fires on this
+    // is a guard nobody reads.
+    const { fetchImpl } = twoVintages('7142603', '6636731');
+    return sourceMarket('houston-tx', { fetchImpl, cbsa: '26420' }).then((r) => {
+      expect(r.advisory.implausible).toBe(false);
+    });
+  });
+
+  it('treats a CBSA missing from the earlier vintage as uncomparable, not broken', () => {
+    // Dayton, from the real run: ACS 2017 answered 204 for CBSA 19430. An
+    // empty body is an ANSWER — the metro was not delineated that way then —
+    // and it used to surface as "returned 204 but not JSON", which sends you
+    // to check a URL that is correct.
+    const { fetchImpl } = recorder({
+      '/2022/acs/acs5': acs(['NAME', POP, HHI, GEO], ['Dayton-Kettering, OH Metro Area', '814049', '65000', '19430']),
+      '/2017/acs/acs5': '',
+    });
+    return sourceMarket('dayton-oh', { fetchImpl, cbsa: '19430' }).then((r) => {
+      // The levels still land. Only the comparison is impossible.
+      expect(r.fields.population).toBe(814049);
+      expect(r.advisory).toBeNull();
+      expect(r.notes.join(' ')).toMatch(/did not exist in ACS 2017/i);
     });
   });
 
@@ -142,6 +235,25 @@ describe('sourcing one market', () => {
       expect(r.fields.population).toBe(2200000);
       expect(r.notes.join(' ')).toMatch(/growth not computed/i);
     });
+  });
+
+  it('lets a REAL failure on the earlier vintage through, not as "did not exist"', () => {
+    // Only 204 means the metro was not delineated that way. A 500, a rejected
+    // key or a moved endpoint must not be laundered into a comparability note
+    // — the script stops the whole run on missing_key, and it can only do that
+    // if the error survives the growth lookup.
+    const cases = [
+      ['<html><head><title>Invalid Key</title></head></html>', 'invalid_key'],
+      ['<html><head><title>Missing Key</title></head></html>', 'missing_key'],
+    ];
+    return Promise.all(cases.map(([body, code]) => {
+      const { fetchImpl } = recorder({
+        '/2022/acs/acs5': acs(['NAME', POP, HHI, GEO], ['Columbus, OH Metro Area', '2137223', '76541', '18140']),
+        '/2017/acs/acs5': body,
+      });
+      return expect(sourceMarket('columbus-oh', { fetchImpl }))
+        .rejects.toMatchObject({ code });
+    }));
   });
 
   it('refuses a pair of overlapping vintages', () => {

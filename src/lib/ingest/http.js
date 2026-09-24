@@ -72,6 +72,21 @@ export async function getJson(url, { fetchImpl = globalThis.fetch, timeoutMs = T
   }
 
   const text = await res.text();
+
+  /**
+   * 204, or a 200 with an empty body, is an ANSWER: the query matched nothing.
+   *
+   * It is not a malformed response, and reporting it as one sends the reader
+   * to check a URL that is correct. The Census returns this for a CBSA that
+   * does not exist in the requested vintage — which is how a metro that was
+   * redelineated between two years shows up.
+   */
+  if (res.status === 204 || text.trim() === '') {
+    throw new FetchError('no_data',
+      `${redactUrl(url)} returned ${res.status} with no content: the query matched nothing`,
+      { url: redactUrl(url), status: res.status });
+  }
+
   try {
     return JSON.parse(text);
   } catch {

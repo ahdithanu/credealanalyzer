@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { markets, fieldQuality } from '../src/lib/markets.js';
 import {
   sourceMarket, CBSA, DEFAULT_VINTAGES, SOURCEABLE_FIELDS, renderSourcedModule, describeKey,
+  ADVISORY_FIELDS,
 } from '../src/lib/ingest/acsMarkets.js';
 
 const C = {
@@ -101,8 +102,10 @@ let keyProblem = null;
 process.stdout.write(
   `\n${C.bold('Sourcing')} ${C.dim(`${targets.length} markets from Census ACS `
     + `(${DEFAULT_VINTAGES.from} → ${DEFAULT_VINTAGES.to}, non-overlapping)`)}\n`
-  + `${C.dim(`Fillable: ${SOURCEABLE_FIELDS.join(', ')}. `
-    + 'The other six fields have no free source and stay seed data.')}\n\n`,
+  + `${C.dim(`Writes: ${SOURCEABLE_FIELDS.join(', ')}. `
+    + `Shows but does NOT write: ${ADVISORY_FIELDS.join(', ')} — `
+    + 'CBSA boundaries move between vintages.')}\n`
+  + `${C.dim('The remaining six fields have no free source and stay seed data.')}\n\n`,
 );
 
 for (const market of targets) {
@@ -166,6 +169,32 @@ for (const market of targets) {
         + 'Every submarket of one metro will score identically on Market Scale.')}\n`,
     );
   }
+  /**
+   * Growth, shown and not written.
+   *
+   * Printed with the two populations it came from, because the number on its
+   * own is not checkable and this is the field where an unchecked number does
+   * the most damage: it is percentile-ranked across every market, so one
+   * boundary artifact re-sorts the whole column.
+   */
+  if (result.advisory) {
+    const a = result.advisory;
+    const sign = a.popGrowth5y > 0 ? '+' : '';
+    process.stdout.write(
+      `  ${C.dim('popGrowth5y'.padEnd(16))} ${C.dim('not written')}  `
+      + `${a.earlierPopulation.toLocaleString()} → ${a.latestPopulation.toLocaleString()}`
+      + `  ${sign}${a.totalChangePct.toFixed(1)}% over 5y`
+      + ` (${sign}${a.popGrowth5y.toFixed(2)}%/yr)\n`,
+    );
+    if (a.implausible) {
+      process.stdout.write(
+        `  ${C.warn('!')} ${C.warn('a metro does not change size by that much in five years')} `
+        + C.dim('— a county moved in or out of this CBSA between the two vintages, '
+          + 'so this is a boundary change, not growth.\n'),
+      );
+    }
+  }
+
   for (const n of result.notes) process.stdout.write(`  ${C.dim(`· ${n}`)}\n`);
 
   if (changes.length) {
@@ -182,7 +211,9 @@ for (const market of targets) {
   process.stdout.write('\n');
 }
 
-process.stdout.write(`${C.bold(`${reached} sourced`)}${failed ? C.warn(`, ${failed} not`) : ''}\n`);
+process.stdout.write(`${C.bold(`${reached} sourced`)}${failed ? C.warn(`, ${failed} not`) : ''}\n`
+  + C.dim(`  ${ADVISORY_FIELDS.join(', ')} shown above but not written — see SOURCEABLE_FIELDS\n`)
+  + C.dim('  in src/lib/ingest/acsMarkets.js for why, with the numbers that decided it.\n'));
 
 if (keyProblem) {
   process.stdout.write(

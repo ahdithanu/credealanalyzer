@@ -240,13 +240,42 @@ export async function sourceMarket(key, {
   if (latest[MEDIAN_HHI] !== null) fields.medianHHI = latest[MEDIAN_HHI];
   else notes.push(`ACS ${latestVintage} suppressed median household income for CBSA ${cbsa}`);
 
-  // Growth, as a CAGR over the gap between the two vintages' labels.
-  const earlier = await cbsaFigures(cbsa,
-    { vintage: vintages.from, variables: [POP], apiKey }, opts);
+  /**
+   * Growth, computed and REPORTED but never written. See the note above
+   * SOURCEABLE_FIELDS: differencing two ACS vintages at CBSA level measures
+   * the delineation as much as the population.
+   */
+  let advisory = null;
+  let earlier = null;
+  let earlierAbsent = false;
+  try {
+    earlier = await cbsaFigures(cbsa,
+      { vintage: vintages.from, variables: [POP], apiKey }, opts);
+  } catch (err) {
+    // A CBSA that did not exist in the earlier vintage answers 204. That is an
+    // answer — the metro was created or renumbered in between — and it is the
+    // strongest possible evidence the two years are not comparable.
+    if (err.code !== 'no_data') throw err;
+    earlierAbsent = true;
+    notes.push(`CBSA ${cbsa} did not exist in ACS ${vintages.from}; no growth comparison is possible`);
+  }
+
   if (earlier?.[POP] && latest[POP]) {
     const years = vintages.to - vintages.from;
-    fields.popGrowth5y = (((latest[POP] / earlier[POP]) ** (1 / years)) - 1) * 100;
-  } else {
+    const totalPct = ((latest[POP] / earlier[POP]) - 1) * 100;
+    advisory = {
+      popGrowth5y: (((latest[POP] / earlier[POP]) ** (1 / years)) - 1) * 100,
+      earlierPopulation: earlier[POP],
+      latestPopulation: latest[POP],
+      totalChangePct: totalPct,
+      // A metro does not gain or lose a tenth of itself in five years. Past
+      // this, a county moved in or out of the CBSA.
+      implausible: Math.abs(totalPct) > IMPLAUSIBLE_5Y_CHANGE_PCT,
+      written: false,
+    };
+  } else if (!earlierAbsent) {
+    // A header row with no data row, or a suppressed population. Distinct from
+    // the 204 above, which has already said its piece.
     notes.push(`no ${vintages.from} population for CBSA ${cbsa}; growth not computed`);
   }
 
@@ -255,13 +284,66 @@ export async function sourceMarket(key, {
     cbsa,
     cbsaName: latest.name,
     fields,
+    advisory,
     detail: { vintages, latestVintage, earlier: earlier?.[POP] ?? null, latest: latest[POP] },
     notes,
   };
 }
 
-/** Which market fields this module can actually fill. Everything else stays seed. */
-export const SOURCEABLE_FIELDS = ['population', 'medianHHI', 'popGrowth5y'];
+/**
+ * A five-year change big enough that it is a boundary, not a population.
+ *
+ * 10% over five years compounds to about 1.9% a year, which only the very
+ * fastest US metros sustain. Austin, the fastest in this table, runs 2.8%.
+ */
+export const IMPLAUSIBLE_5Y_CHANGE_PCT = 10;
+
+/**
+ * Which market fields this module will WRITE.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * popGrowth5y IS NOT ON THIS LIST, AND THAT IS THE POINT
+ *
+ * Population and median household income are LEVELS read off one vintage.
+ * Nothing about them depends on two years being comparable, so they are
+ * sourced and written.
+ *
+ * Growth is a DIFFERENCE between two vintages, and OMB revises CBSA
+ * delineations between them. Differencing ACS 2017 against ACS 2022 for "the
+ * same metro" can compare two different sets of counties, and the result wears
+ * a growth label while measuring a boundary.
+ *
+ * Not hypothetical. From the first real run:
+ *
+ *   Gainesville, FL     277,120 → 341,067   +23.1% over five years
+ *   Corpus Christi, TX  450,276 → 422,187    -6.2%
+ *   Des Moines, IA      623,057 → 711,490   +14.2%
+ *
+ * Gainesville did not add 64,000 people; Levy and Gilchrist counties joined
+ * the CBSA. Corpus Christi did not lose 28,000; Aransas left. Written, that
+ * would have put Gainesville at the top of the Population Growth percentile
+ * across all thirty-six markets — above Austin — off an artifact.
+ *
+ * AND IT CANNOT BE DETECTED FROM THE RESPONSE. The obvious guard is comparing
+ * the CBSA name across vintages, and it does not work: Gainesville is
+ * "Gainesville, FL Metro Area" in both. A metro keeps its name when a county
+ * is added, because it is still named after the same city.
+ *
+ * So growth is computed, returned on `advisory`, printed by the script, and
+ * never written. The seed value stays — a labelled guess beats a boundary
+ * change wearing a measurement's clothes, because only one of them is
+ * recognisable as wrong.
+ *
+ * THE REAL FIX, a genuine piece of work and not this: take the OMB delineation
+ * file for the LATEST vintage, read that metro's county list, and sum county
+ * populations over that FIXED set for both years. County boundaries are stable,
+ * so the comparison then means what it says.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const SOURCEABLE_FIELDS = ['population', 'medianHHI'];
+
+/** Computed and shown, never written. */
+export const ADVISORY_FIELDS = ['popGrowth5y'];
 
 /**
  * Render the generated overlay module.
