@@ -58,7 +58,7 @@ if (args.includes('--check-key')) {
   const k = describeKey();
   if (!k.present) {
     process.stdout.write(`\n${C.warn('CENSUS_API_KEY is not set in this shell.')}\n`
-      + C.dim('  export CENSUS_API_KEY=your-key\n')
+      + C.dim('  export CENSUS_API_KEY=<the 40 hex characters from the email>\n')
       + C.dim('  Note it is per-shell: a key exported in another tab is not set here.\n\n'));
     process.exit(1);
   }
@@ -230,7 +230,7 @@ if (keyProblem) {
     '  1. Sign up (free, instant): https://api.census.gov/data/key_signup.html\n'
     + '  2. Click the activation link in the confirmation email. The key does not\n'
     + '     work until you do.\n'
-    + `  3. ${C.bold('export CENSUS_API_KEY=your-key')}\n`
+    + `  3. ${C.bold('export CENSUS_API_KEY=<the 40 hex characters from the email>')}\n`
     + '  4. Re-run. Keep the key out of the repo; it is read from the environment\n'
     + '     and masked in every message this prints.\n\n',
   );
