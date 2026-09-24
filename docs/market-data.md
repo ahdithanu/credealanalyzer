@@ -60,12 +60,11 @@ Census ACS 5-year estimates at CBSA level give **population** and **median
 household income**, nationwide. Both are levels read off a single vintage, so
 nothing about them depends on two years being comparable.
 
-### Population growth is shown and NOT written
+### Population growth is summed over a fixed county list
 
 Growth is a *difference* between two vintages, and OMB revises CBSA
 delineations between them. Differencing ACS 2017 against ACS 2022 for "the same
-metro" can compare two different sets of counties, and the answer wears a growth
-label while measuring a boundary. From the first real run:
+metro" can compare two different sets of counties. From the first real run:
 
 | | 2017 | 2022 | 5-year change |
 |---|---:|---:|---:|
@@ -75,36 +74,61 @@ label while measuring a boundary. From the first real run:
 | Houston, TX (for scale) | 6,636,731 | 7,142,603 | +7.6% |
 
 Gainesville did not add 64,000 people; Levy and Gilchrist counties joined the
-CBSA. Corpus Christi did not lose 28,000; Aransas left. Written, 4.24%/yr would
-have put Gainesville at the top of the Population Growth percentile across all
-thirty-six markets — above Austin — off an artifact.
+CBSA. Corpus Christi did not lose 28,000; Aransas left.
 
-**And it cannot be detected from the response.** The obvious guard is comparing
-the CBSA name across vintages; it does not work. Gainesville is "Gainesville,
-FL Metro Area" in both, because a metro keeps its name when a county is added.
+**The fix is to stop asking the metro and start asking its counties.** A CBSA is
+a union of whole counties, and county boundaries are stable. So: take the county
+list from the *latest* delineation, then sum county populations over that same
+list in *both* years. A county joining or leaving the metro can no longer read
+as people arriving or leaving.
 
-So the run prints growth with the two populations behind it and writes nothing.
-A change over 10% in five years gets an explicit warning, but **nothing depends
-on that flag** — Corpus Christi's −6.2% is under it and is still a boundary
-change. No threshold separates a redelineated metro from a genuinely shrinking
-one, which is why the refusal is unconditional rather than flag-driven.
+```sh
+npm run markets -- --probe-counties            # Columbus, OH by default
+npm run markets -- --probe-counties=16980      # any CBSA, nationwide
+```
 
-The seed value stays. A labelled guess beats a boundary change wearing a
-measurement's clothes, because only one of the two is recognisable as wrong.
+```
+TIGERweb layers
+  counties  86  Counties
+  CBSA      5   Metropolitan Statistical Area/Micropolitan Statistical Area
 
-**The real fix**, which is a genuine piece of work and is not done: take the OMB
-delineation file for the latest vintage, read that metro's county list, and sum
-county populations over that *fixed* set for both years. County boundaries are
-stable, so the comparison then means what it says.
+Columbus, OH Metro Area (CBSA 18140)
+  7 counties: Delaware, Fairfield, Franklin, Hocking, Licking, Madison, Perry
+  4 bordering counties intersected and were excluded by centroid
+```
 
-The key rides on the ACS calls only. The geocoder and TIGERweb — used by
-`npm run enrich` — do not take one, and are not sent one.
+**Nothing is hardcoded.** The county list is not in the ACS API — CBSA is its own
+summary level, not a rung on the state/county hierarchy — and OMB publishes the
+delineation as a spreadsheet. So it comes from TIGERweb spatially: fetch the
+metro's polygon, fetch the counties that intersect it, keep the ones whose
+*centroid* is inside. Intersection alone picks up neighbours that merely share a
+border; the centroid test is exact here rather than approximate, because a
+county is wholly in or wholly out.
 
-The other six fields have no free source. Employment growth is BLS and could be
-added; supply pipeline, rent growth, traffic counts and cap rates are CoStar,
-Yardi, a state DOT and the broker cap rate surveys, and there is no public
-substitute for any of them. So **every record still reads `seed` after this
-runs**, and that is the design working.
+Even the TIGERweb layer IDs are discovered, by reading the service's own layer
+list and matching on name. A stale ID does not error — it returns a different
+geography with the same field names, which is the worst kind of wrong. Binding
+to `County Subdivisions` instead of `Counties` would return townships; binding
+to a `Labels` layer would return annotation geometry. Both are refused rather
+than resolved by guessing.
+
+**It refuses rather than undercounting.** If any county in the set is missing
+from either vintage, no growth is written. Connecticut is the live case: the
+2022 ACS replaced its eight counties with nine planning regions on new FIPS
+codes, so a current county list finds nothing in 2017. Summing what matched
+would drop whole counties from the earlier total and report a population
+collapse that never happened — the same class of error, arriving through the fix
+instead of the bug.
+
+Multi-state metros work, which is most of what "nationwide" means here: Chicago
+is IL-IN-WI, Cincinnati OH-KY-IN, Kansas City MO-KS. County populations are
+fetched per state per vintage and cached across the run, so a nine-state pass
+costs a handful of calls rather than one per county.
+
+**When the crosswalk cannot be built**, the run falls back to the whole-metro
+difference, prints it marked `NOT written`, and writes nothing for growth. The
+summary says how many markets fell back. Levels are unaffected either way —
+they are read off a single vintage and never needed the county list.
 
 **Nothing sourced means nothing written.** A run where every market failed
 leaves the overlay on disk exactly as it was and exits non-zero. It did not

@@ -34,6 +34,7 @@ import {
   sourceMarket, CBSA, DEFAULT_VINTAGES, SOURCEABLE_FIELDS, renderSourcedModule, describeKey,
   ADVISORY_FIELDS,
 } from '../src/lib/ingest/acsMarkets.js';
+import { discoverLayers, countiesInCbsa } from '../src/lib/ingest/cbsaCounties.js';
 
 const C = {
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
@@ -55,6 +56,38 @@ const only = (args.find((a) => a.startsWith('--only=')) || '').split('=')[1];
  * quoting, no pipes and no network, and it prints the shape rather than the
  * key.
  */
+/**
+ * Confirm the county crosswalk against the live service before trusting it.
+ *
+ * Every layer id here is discovered rather than hardcoded, and none of it has
+ * been run against census.gov from where it was written. This prints what it
+ * bound to and the county list it got, which is the whole verification: a
+ * metro whose county list looks wrong is a metro whose growth is wrong.
+ */
+if (args.includes('--probe-counties')) {
+  const target = (args.find((a) => a.startsWith('--probe-counties=')) || '').split('=')[1]
+    || '18140';
+  try {
+    const layers = await discoverLayers();
+    process.stdout.write(`\n${C.bold('TIGERweb layers')}\n`
+      + `  counties  ${C.ok(`${layers.counties.id}`)} ${C.dim(layers.counties.name)}\n`
+      + `  CBSA      ${C.ok(`${layers.cbsa.id}`)} ${C.dim(layers.cbsa.name)}\n\n`);
+
+    const r = await countiesInCbsa(target, { layers });
+    process.stdout.write(`${C.bold(r.cbsaName || target)} ${C.dim(`(CBSA ${target})`)}\n`
+      + `  ${r.counties.length} counties: `
+      + `${r.counties.map((c) => c.name).join(', ')}\n`
+      + C.dim(`  ${r.bordering} bordering counties intersected and were excluded by centroid\n\n`)
+      + C.ok('  The crosswalk works. Growth will be computed over a fixed county set.\n\n'));
+    process.exit(0);
+  } catch (err) {
+    process.stdout.write(`\n${C.warn(`crosswalk probe failed: ${err.message}`)}\n`
+      + C.dim('  Without this, growth falls back to the whole-metro difference, which is\n'
+        + '  shown but never written. Levels are unaffected.\n\n'));
+    process.exit(1);
+  }
+}
+
 if (args.includes('--check-key')) {
   const k = describeKey();
   if (!k.present) {
@@ -94,17 +127,39 @@ if (!targets.length) {
 }
 
 const asOf = `ACS 5-year ${DEFAULT_VINTAGES.to}`;
+
+/**
+ * Bind the TIGERweb layers once and share the per-state population cache.
+ *
+ * Without this, thirty-six metros rediscover the same two layers thirty-six
+ * times and refetch Texas eight times per vintage. A failure here is not fatal:
+ * every market then falls back to the whole-metro difference, which is shown
+ * and not written, and the summary says how many did.
+ */
+let layers = null;
+const cache = new Map();
+try {
+  layers = await discoverLayers();
+  process.stdout.write(C.dim(`County crosswalk: TIGERweb layers `
+    + `${layers.counties.id} (${layers.counties.name}) and `
+    + `${layers.cbsa.id} (${layers.cbsa.name})\n\n`));
+} catch (err) {
+  process.stdout.write(`${C.warn(`County crosswalk unavailable: ${err.message}`)}\n`
+    + C.dim('  Growth will fall back to the whole-metro difference and NOT be written.\n\n'));
+}
 const out = {};
 let reached = 0;
 let failed = 0;
 let keyProblem = null;
+let advisoryOnly = 0;
 
 process.stdout.write(
   `\n${C.bold('Sourcing')} ${C.dim(`${targets.length} markets from Census ACS `
     + `(${DEFAULT_VINTAGES.from} → ${DEFAULT_VINTAGES.to}, non-overlapping)`)}\n`
-  + `${C.dim(`Writes: ${SOURCEABLE_FIELDS.join(', ')}. `
-    + `Shows but does NOT write: ${ADVISORY_FIELDS.join(', ')} — `
-    + 'CBSA boundaries move between vintages.')}\n`
+  + `${C.dim(`Writes: ${SOURCEABLE_FIELDS.join(', ')}.`)}\n`
+  + `${C.dim('Growth is summed over each metro\'s FIXED county list, so a county joining '
+    + 'or leaving\nthe CBSA cannot read as people arriving or leaving. Where that list '
+    + 'cannot be built,\nthe whole-metro difference is shown and NOT written.')}\n`
   + `${C.dim('The remaining six fields have no free source and stay seed data.')}\n\n`,
 );
 
@@ -112,7 +167,7 @@ for (const market of targets) {
   const label = `${market.city}, ${market.state}`;
   let result;
   try {
-    result = await sourceMarket(market.key, { cbsa: CBSA[market.key] });
+    result = await sourceMarket(market.key, { cbsa: CBSA[market.key], layers, cache });
   } catch (err) {
     failed += 1;
     process.stdout.write(`${C.bold(label.padEnd(22))} ${C.warn(`failed: ${err.message}`)}\n`);
@@ -177,11 +232,22 @@ for (const market of targets) {
    * the most damage: it is percentile-ranked across every market, so one
    * boundary artifact re-sorts the whole column.
    */
+  if (result.growth?.method === 'fixed-county-set') {
+    const g = result.growth;
+    process.stdout.write(
+      C.dim(`  ${'via'.padEnd(16)} ${g.countyCount} counties `)
+      + C.dim(`(${g.counties.map((c) => c.name).slice(0, 6).join(', ')}`)
+      + C.dim(`${g.countyCount > 6 ? `, +${g.countyCount - 6} more` : ''}) `)
+      + C.dim(`${g.earlierTotal.toLocaleString()} → ${g.latestTotal.toLocaleString()}\n`),
+    );
+  }
+
   if (result.advisory) {
+    advisoryOnly += 1;
     const a = result.advisory;
     const sign = a.popGrowth5y > 0 ? '+' : '';
     process.stdout.write(
-      `  ${C.dim('popGrowth5y'.padEnd(16))} ${C.dim('not written')}  `
+      `  ${C.dim('popGrowth5y'.padEnd(16))} ${C.warn('whole-metro diff, NOT written')}  `
       + `${a.earlierPopulation.toLocaleString()} → ${a.latestPopulation.toLocaleString()}`
       + `  ${sign}${a.totalChangePct.toFixed(1)}% over 5y`
       + ` (${sign}${a.popGrowth5y.toFixed(2)}%/yr)\n`,
@@ -212,8 +278,10 @@ for (const market of targets) {
 }
 
 process.stdout.write(`${C.bold(`${reached} sourced`)}${failed ? C.warn(`, ${failed} not`) : ''}\n`
-  + C.dim(`  ${ADVISORY_FIELDS.join(', ')} shown above but not written — see SOURCEABLE_FIELDS\n`)
-  + C.dim('  in src/lib/ingest/acsMarkets.js for why, with the numbers that decided it.\n'));
+  + (advisoryOnly
+    ? C.warn(`  ${advisoryOnly} market(s) fell back to the whole-metro difference for growth;\n`)
+      + C.dim('  those figures are shown above and NOT written. Run --probe-counties to see why.\n')
+    : C.dim('  Growth came from each metro\'s fixed county list throughout.\n')));
 
 if (keyProblem) {
   process.stdout.write(

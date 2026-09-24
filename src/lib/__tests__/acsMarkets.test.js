@@ -46,12 +46,12 @@ describe('the code registry lines up with the market table', () => {
 
   it('only claims the fields it can actually fill', () => {
     for (const f of SOURCEABLE_FIELDS) expect(MARKET_DATA_FIELDS).toContain(f);
-    // Growth is computed and shown, never written — the two lists must not
-    // overlap, or something advisory reaches the table as sourced.
-    for (const f of ADVISORY_FIELDS) {
-      expect(MARKET_DATA_FIELDS).toContain(f);
-      expect(SOURCEABLE_FIELDS).not.toContain(f);
-    }
+    // popGrowth5y is on BOTH lists, which is the design rather than a slip:
+    // written when it comes from the fixed county set, shown-only when it
+    // falls back to the whole-metro difference. The METHOD decides, not the
+    // field — so what must hold is that every advisory name is a real field.
+    for (const f of ADVISORY_FIELDS) expect(MARKET_DATA_FIELDS).toContain(f);
+    expect(ADVISORY_FIELDS).toContain('popGrowth5y');
     // Five of the nine have no free source at all. If this list ever grows to
     // cover them, it is because a feed was bought, not because the names were
     // added here.
@@ -101,6 +101,9 @@ describe('reading one vintage', () => {
 });
 
 describe('sourcing one market', () => {
+  // countyGrowth: false on these — they pin what the WHOLE-METRO difference
+  // does, which is the fallback path. The county route has its own suite in
+  // cbsaCounties.test.js with TIGERweb fixtures.
   const twoVintages = (latestPop, earlierPop, hhi = '76208') => recorder({
     '/2022/acs/acs5': acs(['NAME', POP, HHI, GEO], ['Columbus, OH Metro Area', latestPop, hhi, '18140']),
     '/2017/acs/acs5': acs(['NAME', POP, GEO], ['Columbus, OH Metro Area', earlierPop, '18140']),
@@ -113,7 +116,7 @@ describe('sourcing one market', () => {
     // top of the growth feature — an artefact of the unit, not of the place.
     const { fetchImpl } = twoVintages('2200000', '2000000');
 
-    return sourceMarket('columbus-oh', { fetchImpl }).then((r) => {
+    return sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false }).then((r) => {
       expect(r.advisory.popGrowth5y).toBeCloseTo(1.9245, 3);
       expect(r.advisory.totalChangePct).toBeCloseTo(10, 6);
     });
@@ -125,7 +128,7 @@ describe('sourcing one market', () => {
     // not, the artifact happened to be small. Written, there is no way to tell
     // those apart afterwards.
     const { fetchImpl } = twoVintages('2100000', '2000000');
-    return sourceMarket('columbus-oh', { fetchImpl }).then((r) => {
+    return sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false }).then((r) => {
       expect(r.fields).not.toHaveProperty('popGrowth5y');
       expect(r.advisory.written).toBe(false);
       expect(r.advisory.implausible).toBe(false);
@@ -142,7 +145,7 @@ describe('sourcing one market', () => {
     // 4.24%/yr would have ranked Gainesville above Austin on population growth
     // across all thirty-six markets.
     const { fetchImpl } = twoVintages('341067', '277120');
-    return sourceMarket('gainesville-fl', { fetchImpl, cbsa: '23540' }).then((r) => {
+    return sourceMarket('gainesville-fl', { fetchImpl, cbsa: '23540', countyGrowth: false }).then((r) => {
       expect(r.advisory.totalChangePct).toBeGreaterThan(IMPLAUSIBLE_5Y_CHANGE_PCT);
       expect(r.advisory.implausible).toBe(true);
       expect(r.fields).not.toHaveProperty('popGrowth5y');
@@ -151,7 +154,7 @@ describe('sourcing one market', () => {
 
   it('is two-sided, so a metro that shrank can be flagged too', () => {
     const { fetchImpl } = twoVintages('1000000', '1200000');
-    return sourceMarket('cleveland-oh', { fetchImpl, cbsa: '17460' }).then((r) => {
+    return sourceMarket('cleveland-oh', { fetchImpl, cbsa: '17460', countyGrowth: false }).then((r) => {
       expect(r.advisory.totalChangePct).toBeLessThan(0);
       expect(r.advisory.implausible).toBe(true);
     });
@@ -167,7 +170,7 @@ describe('sourcing one market', () => {
     // rather than writing it when the flag stays quiet. The flag is a hint for
     // the reader; it is not a gate, and this pins that it cannot become one.
     const { fetchImpl } = twoVintages('422187', '450276');
-    return sourceMarket('corpus-christi-tx', { fetchImpl, cbsa: '18580' }).then((r) => {
+    return sourceMarket('corpus-christi-tx', { fetchImpl, cbsa: '18580', countyGrowth: false }).then((r) => {
       expect(r.advisory.implausible).toBe(false);
       expect(r.fields).not.toHaveProperty('popGrowth5y');
       expect(r.advisory.written).toBe(false);
@@ -179,7 +182,7 @@ describe('sourcing one market', () => {
     // years. Real, fast, and under the threshold. A guard that fires on this
     // is a guard nobody reads.
     const { fetchImpl } = twoVintages('7142603', '6636731');
-    return sourceMarket('houston-tx', { fetchImpl, cbsa: '26420' }).then((r) => {
+    return sourceMarket('houston-tx', { fetchImpl, cbsa: '26420', countyGrowth: false }).then((r) => {
       expect(r.advisory.implausible).toBe(false);
     });
   });
@@ -193,7 +196,7 @@ describe('sourcing one market', () => {
       '/2022/acs/acs5': acs(['NAME', POP, HHI, GEO], ['Dayton-Kettering, OH Metro Area', '814049', '65000', '19430']),
       '/2017/acs/acs5': '',
     });
-    return sourceMarket('dayton-oh', { fetchImpl, cbsa: '19430' }).then((r) => {
+    return sourceMarket('dayton-oh', { fetchImpl, cbsa: '19430', countyGrowth: false }).then((r) => {
       // The levels still land. Only the comparison is impossible.
       expect(r.fields.population).toBe(814049);
       expect(r.advisory).toBeNull();
@@ -211,7 +214,7 @@ describe('sourcing one market', () => {
 
   it('sets the population basis to metro, because that is what a CBSA is', () => {
     const { fetchImpl } = twoVintages('2200000', '2000000');
-    return sourceMarket('plano-tx', { fetchImpl, cbsa: '19100' })
+    return sourceMarket('plano-tx', { fetchImpl, cbsa: '19100', countyGrowth: false })
       .then((r) => expect(r.fields.populationBasis).toBe('metro'));
   });
 
@@ -219,7 +222,7 @@ describe('sourcing one market', () => {
     // A missing median income must not arrive as 0, which reads as the poorest
     // market in the peer set rather than as an unknown.
     const { fetchImpl } = twoVintages('2200000', '2000000', '-666666666');
-    return sourceMarket('columbus-oh', { fetchImpl }).then((r) => {
+    return sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false }).then((r) => {
       expect(r.fields).not.toHaveProperty('medianHHI');
       expect(r.notes.join(' ')).toMatch(/median household income/i);
     });
@@ -230,7 +233,7 @@ describe('sourcing one market', () => {
       '/2022/acs/acs5': acs(['NAME', POP, HHI, GEO], ['Columbus, OH Metro Area', '2200000', '76208', '18140']),
       '/2017/acs/acs5': [['NAME', POP, GEO]],
     });
-    return sourceMarket('columbus-oh', { fetchImpl }).then((r) => {
+    return sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false }).then((r) => {
       expect(r.fields).not.toHaveProperty('popGrowth5y');
       expect(r.fields.population).toBe(2200000);
       expect(r.notes.join(' ')).toMatch(/growth not computed/i);
@@ -251,7 +254,7 @@ describe('sourcing one market', () => {
         '/2022/acs/acs5': acs(['NAME', POP, HHI, GEO], ['Columbus, OH Metro Area', '2137223', '76541', '18140']),
         '/2017/acs/acs5': body,
       });
-      return expect(sourceMarket('columbus-oh', { fetchImpl }))
+      return expect(sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false }))
         .rejects.toMatchObject({ code });
     }));
   });
@@ -260,7 +263,7 @@ describe('sourcing one market', () => {
     // 2019 (2015-2019) against 2022 (2018-2022) shares two years, and the
     // Census Bureau says plainly not to difference those.
     const { fetchImpl } = twoVintages('2200000', '2000000');
-    return expect(sourceMarket('columbus-oh', { fetchImpl, vintages: { from: 2019, to: 2022 } }))
+    return expect(sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false, vintages: { from: 2019, to: 2022 } }))
       .rejects.toThrow(/overlap/i);
   });
 
@@ -275,7 +278,7 @@ describe('sourcing one market', () => {
   it('uses the configured non-overlapping vintages by default', () => {
     expect(DEFAULT_VINTAGES.to - DEFAULT_VINTAGES.from).toBeGreaterThanOrEqual(5);
     const { fetchImpl, calls } = twoVintages('2200000', '2000000');
-    return sourceMarket('columbus-oh', { fetchImpl }).then(() => {
+    return sourceMarket('columbus-oh', { fetchImpl, countyGrowth: false }).then(() => {
       expect(calls.some((u) => u.includes(`/${DEFAULT_VINTAGES.to}/acs/acs5`))).toBe(true);
       expect(calls.some((u) => u.includes(`/${DEFAULT_VINTAGES.from}/acs/acs5`))).toBe(true);
     });

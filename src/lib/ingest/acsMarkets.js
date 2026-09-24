@@ -32,6 +32,7 @@
 
 import { getJson } from './http.js';
 import { assertNonOverlapping } from './census.js';
+import { countiesInCbsa } from './cbsaCounties.js';
 
 const ACS = 'https://api.census.gov/data';
 
@@ -215,6 +216,13 @@ export async function sourceMarket(key, {
   vintages = DEFAULT_VINTAGES,
   latestVintage = vintages.to,
   apiKey,
+  // The TIGERweb layer binding and the per-state population cache, both shared
+  // across a whole run. Passing them is an optimisation, not a requirement.
+  layers,
+  cache,
+  // Set false to skip the county route entirely — used by the tests that pin
+  // what the old whole-metro difference would have said.
+  countyGrowth = true,
   ...opts
 } = {}) {
   if (!cbsa) {
@@ -241,42 +249,63 @@ export async function sourceMarket(key, {
   else notes.push(`ACS ${latestVintage} suppressed median household income for CBSA ${cbsa}`);
 
   /**
-   * Growth, computed and REPORTED but never written. See the note above
-   * SOURCEABLE_FIELDS: differencing two ACS vintages at CBSA level measures
-   * the delineation as much as the population.
+   * Growth, over a FIXED county set.
+   *
+   * Never by differencing the two CBSA populations — that measures the
+   * delineation. See SOURCEABLE_FIELDS. When the county route cannot be
+   * completed the naive figure is still computed and returned on `advisory`,
+   * where it is shown and not written, so the reader can see what the old
+   * method would have claimed.
    */
+  let growth = null;
   let advisory = null;
   let earlier = null;
-  let earlierAbsent = false;
-  try {
-    earlier = await cbsaFigures(cbsa,
-      { vintage: vintages.from, variables: [POP], apiKey }, opts);
-  } catch (err) {
-    // A CBSA that did not exist in the earlier vintage answers 204. That is an
-    // answer — the metro was created or renumbered in between — and it is the
-    // strongest possible evidence the two years are not comparable.
-    if (err.code !== 'no_data') throw err;
-    earlierAbsent = true;
-    notes.push(`CBSA ${cbsa} did not exist in ACS ${vintages.from}; no growth comparison is possible`);
+  if (countyGrowth !== false) {
+    try {
+      growth = await growthOverFixedCounties(cbsa, { vintages, apiKey, layers, cache, ...opts });
+      if (growth.popGrowth5y !== null) {
+        fields.popGrowth5y = growth.popGrowth5y;
+      } else {
+        notes.push(growth.note);
+      }
+    } catch (err) {
+      // A crosswalk failure must not take the levels down with it: population
+      // and median income never needed the county list.
+      if (err.code === 'missing_key' || err.code === 'invalid_key') throw err;
+      notes.push(`county-set growth unavailable (${err.code || 'error'}): ${err.message}`);
+    }
   }
 
-  if (earlier?.[POP] && latest[POP]) {
-    const years = vintages.to - vintages.from;
-    const totalPct = ((latest[POP] / earlier[POP]) - 1) * 100;
-    advisory = {
-      popGrowth5y: (((latest[POP] / earlier[POP]) ** (1 / years)) - 1) * 100,
-      earlierPopulation: earlier[POP],
-      latestPopulation: latest[POP],
-      totalChangePct: totalPct,
-      // A metro does not gain or lose a tenth of itself in five years. Past
-      // this, a county moved in or out of the CBSA.
-      implausible: Math.abs(totalPct) > IMPLAUSIBLE_5Y_CHANGE_PCT,
-      written: false,
-    };
-  } else if (!earlierAbsent) {
-    // A header row with no data row, or a suppressed population. Distinct from
-    // the 204 above, which has already said its piece.
-    notes.push(`no ${vintages.from} population for CBSA ${cbsa}; growth not computed`);
+  if (!fields.popGrowth5y) {
+    let earlierAbsent = false;
+    try {
+      earlier = await cbsaFigures(cbsa,
+        { vintage: vintages.from, variables: [POP], apiKey }, opts);
+    } catch (err) {
+      // A CBSA that did not exist in the earlier vintage answers 204. That is
+      // an answer — the metro was created or renumbered in between — and it is
+      // the strongest possible evidence the two years are not comparable.
+      if (err.code !== 'no_data') throw err;
+      earlierAbsent = true;
+      notes.push(`CBSA ${cbsa} did not exist in ACS ${vintages.from}; no whole-metro comparison is possible`);
+    }
+
+    if (earlier?.[POP] && latest[POP]) {
+      const years = vintages.to - vintages.from;
+      const totalPct = ((latest[POP] / earlier[POP]) - 1) * 100;
+      advisory = {
+        popGrowth5y: (((latest[POP] / earlier[POP]) ** (1 / years)) - 1) * 100,
+        earlierPopulation: earlier[POP],
+        latestPopulation: latest[POP],
+        totalChangePct: totalPct,
+        // A metro does not gain or lose a tenth of itself in five years. Past
+        // this, a county moved in or out of the CBSA.
+        implausible: Math.abs(totalPct) > IMPLAUSIBLE_5Y_CHANGE_PCT,
+        written: false,
+      };
+    } else if (!earlierAbsent) {
+      notes.push(`no ${vintages.from} population for CBSA ${cbsa}; growth not computed`);
+    }
   }
 
   return {
@@ -284,6 +313,7 @@ export async function sourceMarket(key, {
     cbsa,
     cbsaName: latest.name,
     fields,
+    growth,
     advisory,
     detail: { vintages, latestVintage, earlier: earlier?.[POP] ?? null, latest: latest[POP] },
     notes,
@@ -340,10 +370,133 @@ export const IMPLAUSIBLE_5Y_CHANGE_PCT = 10;
  * so the comparison then means what it says.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-export const SOURCEABLE_FIELDS = ['population', 'medianHHI'];
+export const SOURCEABLE_FIELDS = ['population', 'medianHHI', 'popGrowth5y'];
 
-/** Computed and shown, never written. */
+/**
+ * Fields that can arrive as a SHOWN-BUT-NOT-WRITTEN figure.
+ *
+ * popGrowth5y is on both lists, and that is not a contradiction: it is written
+ * when it comes from the fixed county set, and shown-only when it comes from
+ * the whole-metro difference. The method decides, not the field.
+ */
 export const ADVISORY_FIELDS = ['popGrowth5y'];
+
+/**
+ * Every county in a state, for one vintage, keyed by five-digit FIPS.
+ *
+ * One call per state per vintage rather than one per county: a metro spans at
+ * most a handful of states, and this is the difference between ~80 requests and
+ * ~5,000 across the table.
+ */
+export async function countyPopulations(stateFips, { vintage, apiKey }, opts = {}) {
+  const url = `${ACS}/${vintage}/acs/acs5?get=NAME,${POP}&for=county:*&in=state:${stateFips}`
+    + censusKeyParam(apiKey);
+  const rows = await getJson(url, opts);
+  const [header, ...data] = rows || [];
+  if (!header) return new Map();
+  const iPop = header.indexOf(POP);
+  const iState = header.indexOf('state');
+  const iCounty = header.indexOf('county');
+  const iName = header.indexOf('NAME');
+  const out = new Map();
+  for (const r of data) {
+    out.set(`${r[iState]}${r[iCounty]}`, {
+      population: acsNumber(r[iPop]),
+      name: iName >= 0 ? r[iName] : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Five-year population growth over a FIXED set of counties.
+ *
+ * This is the whole point of the module. The county list comes from the LATEST
+ * delineation and is then applied to BOTH vintages, so a county joining or
+ * leaving the metro cannot show up as people arriving or leaving. County
+ * boundaries are stable, so the difference means what it says.
+ *
+ * `cache` is a plain Map the caller reuses across markets; without it, sourcing
+ * thirty-six metros refetches the same state a dozen times.
+ */
+export async function growthOverFixedCounties(cbsaGeoid, {
+  vintages = DEFAULT_VINTAGES,
+  apiKey,
+  layers,
+  cache = new Map(),
+  ...opts
+} = {}) {
+  assertNonOverlapping(vintages);
+
+  const { counties, cbsaName, bordering } = await countiesInCbsa(cbsaGeoid, { layers, ...opts });
+  const states = [...new Set(counties.map((c) => c.state))];
+
+  const load = async (stateFips, vintage) => {
+    const key = `${stateFips}:${vintage}`;
+    if (!cache.has(key)) cache.set(key, countyPopulations(stateFips, { vintage, apiKey }, opts));
+    return cache.get(key);
+  };
+
+  const [earlierByState, latestByState] = await Promise.all([
+    Promise.all(states.map((st) => load(st, vintages.from))),
+    Promise.all(states.map((st) => load(st, vintages.to))),
+  ]);
+  const earlier = new Map(earlierByState.flatMap((m) => [...m]));
+  const latest = new Map(latestByState.flatMap((m) => [...m]));
+
+  /**
+   * A county in the set that the earlier vintage does not carry is a REFUSAL,
+   * not a zero.
+   *
+   * Connecticut is the live case: the 2022 ACS replaced its eight counties
+   * with nine planning regions on new FIPS codes, so the current county list
+   * finds nothing in 2017. Summing what matched would drop whole counties out
+   * of the earlier total and report a collapse in population that never
+   * happened — the exact failure this function exists to prevent, arriving
+   * through the fix instead of the bug.
+   */
+  const missing = { from: [], to: [] };
+  let earlierTotal = 0;
+  let latestTotal = 0;
+  for (const c of counties) {
+    const a = earlier.get(c.geoid);
+    const b = latest.get(c.geoid);
+    if (!a || a.population === null) missing.from.push(c.name || c.geoid);
+    else earlierTotal += a.population;
+    if (!b || b.population === null) missing.to.push(c.name || c.geoid);
+    else latestTotal += b.population;
+  }
+
+  if (missing.from.length || missing.to.length) {
+    return {
+      cbsa: cbsaGeoid,
+      cbsaName,
+      popGrowth5y: null,
+      counties,
+      refused: 'incomplete_county_coverage',
+      missing,
+      note: `${[...new Set([...missing.from, ...missing.to])].join(', ')} `
+        + `${missing.from.length + missing.to.length === 1 ? 'is' : 'are'} absent from one of the `
+        + `vintages, so the two totals would cover different ground. Connecticut's 2022 switch `
+        + `from counties to planning regions does this.`,
+    };
+  }
+
+  const years = vintages.to - vintages.from;
+  return {
+    cbsa: cbsaGeoid,
+    cbsaName,
+    popGrowth5y: (((latestTotal / earlierTotal) ** (1 / years)) - 1) * 100,
+    totalChangePct: ((latestTotal / earlierTotal) - 1) * 100,
+    counties,
+    countyCount: counties.length,
+    borderingExcluded: bordering,
+    earlierTotal,
+    latestTotal,
+    vintages,
+    method: 'fixed-county-set',
+  };
+}
 
 /**
  * Render the generated overlay module.
