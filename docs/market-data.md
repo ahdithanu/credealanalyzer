@@ -29,7 +29,7 @@ You need a Census API key. It is free and instant:
 [api.census.gov/data/key_signup.html](https://api.census.gov/data/key_signup.html).
 
 ```sh
-export CENSUS_API_KEY=your-key
+export CENSUS_API_KEY=<the 40 hex characters from the signup email>
 
 npm run markets -- --check-key   # is the key the right shape? no network, no quoting
 npm run markets                  # dry run: what would change, and from where

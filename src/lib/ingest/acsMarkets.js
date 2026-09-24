@@ -74,6 +74,21 @@ export function censusKeyParam(key = process.env.CENSUS_API_KEY) {
  */
 export const CENSUS_KEY_SHAPE = /^[0-9a-f]{40}$/;
 
+/**
+ * Values that are a placeholder rather than a key.
+ *
+ * `your-key` is on this list because it is what the documentation says, and it
+ * was exported verbatim the first time someone followed it. That failure is
+ * indistinguishable from a truncated paste by length alone, and the fix is
+ * completely different, so it is worth naming rather than leaving to be
+ * deduced from "expected 40 characters, got 8".
+ */
+const PLACEHOLDERS = [
+  'your-key', 'your_key', 'yourkey', 'your-api-key', 'your_api_key',
+  'my-key', 'api-key', 'api_key', 'key', 'changeme', 'change-me',
+  'xxx', 'xxxx', 'todo', 'tbd', 'paste-your-key-here',
+];
+
 export function describeKey(key = process.env.CENSUS_API_KEY) {
   if (!key) return { present: false, looksValid: false, note: 'CENSUS_API_KEY is not set' };
   const raw = String(key);
@@ -81,6 +96,7 @@ export function describeKey(key = process.env.CENSUS_API_KEY) {
   return {
     present: true,
     length: clean.length,
+    looksLikePlaceholder: PLACEHOLDERS.includes(clean.toLowerCase().replace(/^["']|["']$/g, '')),
     // Worth naming separately: it means the key WAS being mangled before it was
     // trimmed, and someone reading an old failure needs to know that changed.
     hadSurroundingWhitespace: clean !== raw,

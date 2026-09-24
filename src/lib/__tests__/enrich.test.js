@@ -408,6 +408,24 @@ describe('the key reaches the endpoints that need it', () => {
     }
   });
 
+  it('names the documentation\'s own placeholder rather than calling it truncated', async () => {
+    // `your-key` is eight characters, so by length alone it is indistinguishable
+    // from a truncated paste — and the fixes are completely different. This is
+    // not hypothetical: the export line in the docs was followed verbatim.
+    const { describeKey } = await import('../ingest/acsMarkets');
+
+    for (const placeholder of ['your-key', 'YOUR_KEY', ' your-key ', '"your-key"', 'changeme']) {
+      expect(describeKey(placeholder), placeholder)
+        .toMatchObject({ looksLikePlaceholder: true, looksValid: false });
+    }
+
+    // A real key is not a placeholder, and neither is a genuinely truncated one
+    // — that has its own message about a bad paste.
+    const KEY = '0123456789abcdef0123456789abcdef01234567';
+    expect(describeKey(KEY).looksLikePlaceholder).toBe(false);
+    expect(describeKey('0123abcd')).toMatchObject({ looksLikePlaceholder: false, length: 8 });
+  });
+
   it('rides on the ACS calls and on nothing else', async () => {
     // The geocoder and TIGERweb do NOT take a key. Sending one there is a
     // credential handed to an endpoint that never asked for it.

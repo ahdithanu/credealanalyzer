@@ -62,6 +62,15 @@ if (args.includes('--check-key')) {
       + C.dim('  Note it is per-shell: a key exported in another tab is not set here.\n\n'));
     process.exit(1);
   }
+  if (k.looksLikePlaceholder) {
+    process.stdout.write(`\n${C.warn('CENSUS_API_KEY is set to a placeholder, not a key.')}\n`
+      + C.dim('  The documentation writes the export line with a stand-in value; that is\n'
+        + '  the part to replace. Your real key is in the Census signup email — 40\n'
+        + '  hexadecimal characters.\n\n')
+      + `  ${C.bold('export CENSUS_API_KEY=<the 40 characters from the email>')}\n\n`);
+    process.exit(1);
+  }
+
   process.stdout.write(`\n${C.bold('CENSUS_API_KEY')}\n`
     + `  length            ${k.length}${k.length === 40 ? C.ok('  ✓') : C.warn('  ✗ expected 40')}\n`
     + `  40 hex characters ${k.looksValid ? C.ok('yes') : C.warn('no')}\n`
@@ -193,7 +202,13 @@ if (keyProblem) {
      * always one that was never activated from the confirmation email.
      */
     const k = describeKey();
-    if (!k.looksValid) {
+    if (k.looksLikePlaceholder) {
+      process.stdout.write(
+        `  ${C.warn('CENSUS_API_KEY is set to a placeholder, not a key.')}\n`
+        + C.dim('  Replace the stand-in value from the docs with the 40 hexadecimal\n'
+          + '  characters in your Census signup email.\n\n'),
+      );
+    } else if (!k.looksValid) {
       process.stdout.write(
         `  ${C.warn('The key does not look like a Census key.')} `
         + C.dim(`Expected 40 hexadecimal characters; got ${k.length}`)
