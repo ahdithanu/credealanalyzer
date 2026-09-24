@@ -52,6 +52,7 @@ const TIGERWEB_ROOT = 'https://tigerweb.geo.census.gov/arcgis/rest/services';
  */
 const SERVICE_HINTS = [
   // Positive: names suggesting county-or-larger geography, current vintage.
+  { pattern: /^tigerweb\//i, score: 2 },
   { pattern: /state.*county/i, score: 3 },
   { pattern: /cbsa|metropolitan|micropolitan/i, score: 3 },
   { pattern: /current/i, score: 2 },
@@ -86,7 +87,11 @@ export const MAX_SERVICES_PROBED = 30;
  */
 export const EXPECTED_FEATURES = {
   counties: { min: 3000, max: 3400, about: 3143 },
-  cbsa: { min: 800, max: 1100, about: 935 },
+  // Wide enough to accept either the combined layer (~935) or a metros-only
+  // one (~393). The PATTERN does the work of excluding Micropolitan-only
+  // (~542) and Combined Statistical Areas (~175); the band is the second lock,
+  // not the first.
+  cbsa: { min: 300, max: 1200, about: 935 },
 };
 
 /** A ceiling on how many candidate layers get a count probe. */
@@ -100,10 +105,35 @@ export const MAX_LAYERS_COUNTED = 25;
  * with the same field names, which is the worst kind of wrong.
  */
 export const LAYER_PATTERNS = {
-  // "Counties" — and not "County Subdivisions", which is a different thing
-  // that would match a looser pattern and silently return townships.
-  counties: /^counties$/i,
-  cbsa: /metropolitan statistical area\/micropolitan statistical area/i,
+  /**
+   * "Counties" exactly — not "County Subdivisions" (townships), and not
+   * "Counties 500K" / "5M" / "20M", which are the same counties drawn for
+   * small-scale maps. A generalised outline moves county borders by miles,
+   * which is enough to put a centroid on the wrong side of a metro line.
+   */
+  counties: [/^counties$/i],
+
+  /**
+   * The CBSA layer, in preference order.
+   *
+   * The pattern here was `metropolitan statistical area/micropolitan
+   * statistical area` — the name the ACS API uses for the geography — and no
+   * TIGERweb layer is called that. The real names, from the probe:
+   *
+   *   Metropolitan and Micropolitan Statistical Areas   ← both, what we want
+   *   Metropolitan Statistical Areas                    ← metros only
+   *   Micropolitan Statistical Areas                    ← micros only
+   *   Metropolitan Divisions, Combined Statistical Areas, and the New England
+   *   City and Town Area family, none of which are CBSAs
+   *
+   * Anchored at both ends: `^metropolitan` excludes "Micropolitan" (which is a
+   * real layer, would pass any feature-count band, and contains none of the
+   * metros in this table), and `$` excludes every generalisation tier.
+   */
+  cbsa: [
+    /^metropolitan and micropolitan statistical areas$/i,
+    /^metropolitan statistical areas$/i,
+  ],
 };
 
 /** Fields to read off a county. CENTLAT/CENTLON decide membership. */
@@ -151,20 +181,27 @@ export async function discoverLayers(opts = {}) {
     searched.push(service.name);
     for (const l of layers) offered.add(String(l.name || ''));
 
-    for (const [key, pattern] of Object.entries(LAYER_PATTERNS)) {
+    for (const [key, patterns] of Object.entries(LAYER_PATTERNS)) {
       if (found[key]) continue;
-      // Label layers carry annotation geometry, not boundaries.
-      const hits = layers.filter((l) => pattern.test(String(l.name || ''))
-        && !/label/i.test(String(l.name || '')));
+      // Patterns are tried in preference order: the combined CBSA layer before
+      // a metros-only one. Label layers carry annotation geometry, not
+      // boundaries, and never match.
+      let hits = [];
+      for (const pattern of patterns) {
+        hits = layers.filter((l) => pattern.test(String(l.name || ''))
+          && !/label/i.test(String(l.name || '')));
+        if (hits.length) break;
+      }
       if (!hits.length) continue;
       /**
-       * Several layers with the same name is the normal case, not an error.
-       * Ask each how many features it has and take the one that holds a
-       * country's worth of the geography.
+       * Every candidate is count-verified, including a lone one.
+       *
+       * Skipping the check for a single hit was a hole: a service offering
+       * exactly one layer called "Counties" that holds four hundred features
+       * would have been accepted on its name alone. The name says what a layer
+       * is meant to be; only the count says what it has.
        */
-      const chosen = hits.length === 1
-        ? { ...hits[0], count: null }
-        : await chooseByFeatureCount(service.url, hits, EXPECTED_FEATURES[key], opts);
+      const chosen = await chooseByFeatureCount(service.url, hits, EXPECTED_FEATURES[key], opts);
       if (!chosen) {
         counted.push(`${key} in ${service.name}: ${hits.length} candidates, none with a `
           + `plausible feature count`);

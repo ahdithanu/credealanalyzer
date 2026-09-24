@@ -72,26 +72,45 @@ const SUBCOUNTY_SERVICE = {
 const STATE_COUNTY_SERVICE = {
   layers: [
     { id: 84, name: 'States' },
-    { id: 85, name: 'Counties' },   // a generalised tier: too few features
-    { id: 86, name: 'Counties' },   // the real one
+    { id: 85, name: 'Counties' },        // an earlier vintage: too few features
+    { id: 86, name: 'Counties' },        // the real one
     { id: 87, name: 'Counties Labels' },
-    { id: 88, name: 'Counties' },   // another tier
+    { id: 88, name: 'Counties' },        // another tier
+    { id: 89, name: 'Counties 500K' },   // generalised for small-scale maps
+    { id: 90, name: 'Counties 20M' },
+    { id: 91, name: 'County Subdivisions' },
   ],
 };
 
 /** Feature counts by layer id, as returnCountOnly answers them. */
 const FEATURE_COUNTS = {
-  84: 56, 85: 400, 86: 3143, 88: 3143, 5: 935, 4: 935,
+  84: 56, 85: 400, 86: 3143, 88: 3143, 89: 3143, 90: 3143, 91: 36000,
+  1: 175, 3: 31, 4: 393, 5: 935, 6: 542, 7: 393, 8: 38,
 };
 const countRoutes = Object.fromEntries(
   Object.entries(FEATURE_COUNTS).map(([id, count]) => [
     `/${id}/query?where=1%3D1&returnCountOnly=true`, { count },
   ]),
 );
+/**
+ * The CBSA service's real layer list, from the probe.
+ *
+ * Note what is NOT here: any layer called "Metropolitan Statistical
+ * Area/Micropolitan Statistical Area". That is the ACS API's name for the
+ * geography, and the pattern was written from it — so it matched nothing
+ * across thirty services. These are the names TIGERweb actually uses.
+ */
 const GENERALIZED_SERVICE = {
   layers: [
-    { id: 4, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area Labels' },
-    { id: 5, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area' },
+    { id: 1, name: 'Combined Statistical Areas' },
+    { id: 2, name: 'Combined Statistical Areas 500K' },
+    { id: 3, name: 'Metropolitan Divisions' },
+    { id: 4, name: 'Metropolitan Statistical Areas' },
+    { id: 5, name: 'Metropolitan and Micropolitan Statistical Areas' },
+    { id: 6, name: 'Micropolitan Statistical Areas' },
+    { id: 7, name: 'Metropolitan Statistical Areas 500K' },
+    { id: 8, name: 'Metropolitan New England City and Town Areas' },
+    { id: 9, name: 'Labels' },
   ],
 };
 
@@ -224,12 +243,54 @@ describe('binding to the right TIGERweb layers', () => {
     expect(layers.cbsa.service).toMatch(/Generalized_ACS2023/);
   });
 
+  it('matches the names TIGERweb actually uses, and only those', () => {
+    /**
+     * The third thing the real run disproved. The CBSA pattern was written
+     * from the ACS API's name for the geography — "metropolitan statistical
+     * area/micropolitan statistical area" — and no TIGERweb layer is called
+     * that, so it matched nothing across thirty services.
+     *
+     * Every name below came back from the live probe.
+     */
+    const matches = (key, name) => LAYER_PATTERNS[key].some((p) => p.test(name));
+
+    expect(matches('cbsa', 'Metropolitan and Micropolitan Statistical Areas')).toBe(true);
+    expect(matches('cbsa', 'Metropolitan Statistical Areas')).toBe(true);
+    expect(matches('counties', 'Counties')).toBe(true);
+
+    for (const wrong of [
+      // Micropolitan areas are real CBSAs and contain none of these markets.
+      // It also passes any feature-count band, so only the pattern stops it.
+      'Micropolitan Statistical Areas',
+      // Generalisation tiers: the same areas drawn for small-scale maps, with
+      // borders moved by miles — enough to put a centroid the wrong side.
+      'Metropolitan Statistical Areas 500K', 'Metropolitan Statistical Areas 5M',
+      'Counties 500K', 'Counties 5M', 'Counties 20M',
+      // Different geographies that read like the right one.
+      'Metropolitan Divisions', 'Combined Statistical Areas',
+      'Metropolitan New England City and Town Areas', 'County Subdivisions',
+      'States', 'Principal Cities', 'Labels',
+    ]) {
+      expect(matches('cbsa', wrong), `cbsa should not match ${wrong}`).toBe(false);
+      expect(matches('counties', wrong), `counties should not match ${wrong}`).toBe(false);
+    }
+  });
+
+  it('prefers the combined CBSA layer over a metros-only one', async () => {
+    // Both are acceptable and both are present; the combined layer also
+    // carries micropolitan areas, which is what a future market needs.
+    const layers = await discoverLayers({ fetchImpl: fakeFetch(DISCOVERY) });
+    expect(layers.cbsa.name).toBe('Metropolitan and Micropolitan Statistical Areas');
+    expect(layers.cbsa.features).toBe(935);
+  });
+
   it('never binds Counties to County Subdivisions', () => {
     // A looser pattern matches both, and subdivisions are townships — dozens
     // of sub-county pieces whose centroids all sit inside the metro. It is the
     // layer tigerWMS_Current actually offers, so this is the live hazard.
-    expect(LAYER_PATTERNS.counties.test('County Subdivisions')).toBe(false);
-    expect(LAYER_PATTERNS.counties.test('Counties')).toBe(true);
+    const matches = (name) => LAYER_PATTERNS.counties.some((p) => p.test(name));
+    expect(matches('County Subdivisions')).toBe(false);
+    expect(matches('Counties')).toBe(true);
   });
 
   it('never binds to a Labels layer, in any service', async () => {
@@ -259,6 +320,7 @@ describe('binding to the right TIGERweb layers', () => {
       'State_County/MapServer?f=json': {
         layers: [...STATE_COUNTY_SERVICE.layers, ...GENERALIZED_SERVICE.layers],
       },
+      ...countRoutes,
     });
     const layers = await discoverLayers({ fetchImpl: impl });
     expect(layers.counties.service).toMatch(/State_County/);
@@ -310,7 +372,7 @@ describe('binding to the right TIGERweb layers', () => {
         layers: [
           { id: 1, name: 'Counties' },
           { id: 2, name: 'Counties' },
-          { id: 3, name: 'Metropolitan Statistical Area/Micropolitan Statistical Area' },
+          { id: 3, name: 'Metropolitan and Micropolitan Statistical Areas' },
         ],
       },
       '/1/query?where=1%3D1&returnCountOnly=true': { count: 12 },
@@ -641,5 +703,90 @@ describe('the point-in-polygon test the membership rests on', () => {
     const step = [[[0, 0], [0, 10], [5, 10], [5, 5], [10, 5], [10, 0], [0, 0]]];
     expect(pointInRings(2, 5, step)).toBe(true);
     expect(pointInRings(7, 5, step)).toBe(false);
+  });
+});
+
+describe('a lone name match still has to prove itself', () => {
+  it('rejects a single "Counties" layer that does not hold counties', async () => {
+    // Skipping the count check when only one layer matched was a hole: the
+    // name says what a layer is MEANT to be, and only the count says what it
+    // has. A service offering one "Counties" layer of four hundred features
+    // would have been accepted on its name alone.
+    const impl = fakeFetch({
+      'arcgis/rest/services?f=json': { folders: [], services: [{ name: 'X', type: 'MapServer' }] },
+      'X/MapServer?f=json': {
+        layers: [
+          { id: 1, name: 'Counties' },
+          { id: 2, name: 'Metropolitan and Micropolitan Statistical Areas' },
+        ],
+      },
+      '/1/query?where=1%3D1&returnCountOnly=true': { count: 400 },
+      '/2/query?where=1%3D1&returnCountOnly=true': { count: 935 },
+    });
+    await expect(discoverLayers({ fetchImpl: impl }))
+      .rejects.toMatchObject({ code: 'layer_not_found' });
+  });
+
+  it('accepts it once the count is right, and records the count', async () => {
+    const impl = fakeFetch({
+      'arcgis/rest/services?f=json': { folders: [], services: [{ name: 'X', type: 'MapServer' }] },
+      'X/MapServer?f=json': {
+        layers: [
+          { id: 1, name: 'Counties' },
+          { id: 2, name: 'Metropolitan and Micropolitan Statistical Areas' },
+        ],
+      },
+      '/1/query?where=1%3D1&returnCountOnly=true': { count: 3143 },
+      '/2/query?where=1%3D1&returnCountOnly=true': { count: 935 },
+    });
+    const layers = await discoverLayers({ fetchImpl: impl });
+    expect(layers.counties.features).toBe(3143);
+    expect(layers.cbsa.features).toBe(935);
+  });
+});
+
+describe('the fallbacks, which only fire when the preferred thing is absent', () => {
+  it('falls back to a metros-only layer when the combined one is not offered', async () => {
+    // Not every service carries "Metropolitan and Micropolitan Statistical
+    // Areas". A metros-only layer holds every market in this table, so it is
+    // an acceptable second choice — but only a second choice, and only if the
+    // pattern list is actually tried past its first entry.
+    const impl = fakeFetch({
+      'arcgis/rest/services?f=json': { folders: [], services: [{ name: 'TIGERweb/CBSA', type: 'MapServer' }] },
+      'TIGERweb/CBSA/MapServer?f=json': {
+        layers: [
+          { id: 1, name: 'Counties' },
+          { id: 2, name: 'Metropolitan Statistical Areas' },
+          { id: 3, name: 'Micropolitan Statistical Areas' },
+        ],
+      },
+      '/1/query?where=1%3D1&returnCountOnly=true': { count: 3143 },
+      '/2/query?where=1%3D1&returnCountOnly=true': { count: 393 },
+      '/3/query?where=1%3D1&returnCountOnly=true': { count: 542 },
+    });
+    const layers = await discoverLayers({ fetchImpl: impl });
+    expect(layers.cbsa.name).toBe('Metropolitan Statistical Areas');
+    expect(layers.cbsa.features).toBe(393);
+  });
+
+  it('prefers the canonical TIGERweb service over another scoring the same', async () => {
+    // Econ/CBSA is the Economic Census cut of the same geography and scores
+    // identically on the CBSA hint. Alphabetically Econ wins, which is not a
+    // reason to pick it.
+    const services = await listServices({
+      fetchImpl: fakeFetch({
+        'arcgis/rest/services?f=json': {
+          folders: [],
+          services: [
+            { name: 'Econ/CBSA', type: 'MapServer' },
+            { name: 'TIGERweb/CBSA', type: 'MapServer' },
+            { name: 'Generalized_ACS2025/CBSA', type: 'MapServer' },
+          ],
+        },
+      }),
+    });
+    expect(services[0].name).toBe('TIGERweb/CBSA');
+    // And the year-stamped one ranks below both.
+    expect(services[services.length - 1].name).toBe('Generalized_ACS2025/CBSA');
   });
 });

@@ -114,6 +114,16 @@ spans services, ordered likeliest-first, stopping as soon as both layers are
 bound and capped so a directory of hundreds does not become hundreds of
 requests.
 
+**The layer is not called what the API calls the geography.** The ACS API says
+`metropolitan statistical area/micropolitan statistical area`; TIGERweb calls it
+`Metropolitan and Micropolitan Statistical Areas`. Beside it sit
+`Micropolitan Statistical Areas` (real CBSAs, none of them these markets),
+`Metropolitan Divisions`, `Combined Statistical Areas`, the New England City and
+Town Area family, and `500K` / `5M` / `20M` generalisation tiers of each — the
+same areas drawn for small-scale maps, with borders moved by miles, which is
+enough to put a county centroid on the wrong side of a metro line. The patterns
+are anchored at both ends so only the two acceptable names match.
+
 **Names do not identify a layer either.** `Census2020/State_County` offers
 **twenty-one layers all called `Counties`** — TIGERweb stacks the same geography
 at several vintages and generalisation tiers under identical names, and nothing
