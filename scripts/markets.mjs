@@ -5,6 +5,7 @@
  *   npm run markets                      # dry run: report what would change
  *   npm run markets -- --write           # write src/lib/marketsSourced.js
  *   npm run markets -- --only=columbus-oh
+ *   npm run markets -- --check-key       # is CENSUS_API_KEY the right shape?
  *
  * Fills three of the nine fields on every market record — population, median
  * household income, and a five-year population CAGR — from ACS 5-year estimates
@@ -43,6 +44,38 @@ const C = {
 const args = process.argv.slice(2);
 const write = args.includes('--write');
 const only = (args.find((a) => a.startsWith('--only=')) || '').split('=')[1];
+
+/**
+ * Check the key without calling anything.
+ *
+ * Exists because the alternative is a shell one-liner, and a shell one-liner is
+ * how you find out that macOS zsh does not treat # as a comment interactively
+ * and has just passed your comment to wc as three filenames. This takes no
+ * quoting, no pipes and no network, and it prints the shape rather than the
+ * key.
+ */
+if (args.includes('--check-key')) {
+  const k = describeKey();
+  if (!k.present) {
+    process.stdout.write(`\n${C.warn('CENSUS_API_KEY is not set in this shell.')}\n`
+      + C.dim('  export CENSUS_API_KEY=your-key\n')
+      + C.dim('  Note it is per-shell: a key exported in another tab is not set here.\n\n'));
+    process.exit(1);
+  }
+  process.stdout.write(`\n${C.bold('CENSUS_API_KEY')}\n`
+    + `  length            ${k.length}${k.length === 40 ? C.ok('  ✓') : C.warn('  ✗ expected 40')}\n`
+    + `  40 hex characters ${k.looksValid ? C.ok('yes') : C.warn('no')}\n`
+    + `  wrapped in quotes ${k.looksQuoted ? C.warn('YES — strip them') : C.dim('no')}\n`
+    + `  stray whitespace  ${k.hadSurroundingWhitespace
+      ? C.dim('yes, trimmed automatically') : C.dim('no')}\n\n`);
+
+  process.stdout.write(k.looksValid
+    ? C.dim('  The shape is right, which is all this can tell you — only the Census\n'
+      + '  can say whether the key works. If it is refused, it is almost certainly\n'
+      + '  not activated: click the link in the confirmation email.\n\n')
+    : C.warn('  This is not a Census key. Check for a truncated paste or stray quotes.\n\n'));
+  process.exit(k.looksValid ? 0 : 1);
+}
 
 const targets = markets.filter((m) => !only || m.key === only);
 if (!targets.length) {

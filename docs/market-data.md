@@ -31,6 +31,7 @@ You need a Census API key. It is free and instant:
 ```sh
 export CENSUS_API_KEY=your-key
 
+npm run markets -- --check-key   # is the key the right shape? no network, no quoting
 npm run markets                  # dry run: what would change, and from where
 npm run markets -- --write       # writes src/lib/marketsSourced.js
 npm run markets -- --only=columbus-oh
