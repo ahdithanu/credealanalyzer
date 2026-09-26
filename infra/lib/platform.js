@@ -943,6 +943,98 @@ class PlatformStack extends Stack {
         + 'pushing against it.',
     });
 
+    // ─── The migration task ──────────────────────────────────────────────────
+    /**
+     * Schema migrations, as a task you run rather than a thing that happens.
+     *
+     * Without this the stack deploys an EMPTY database: the API comes up, every
+     * query fails, and there is no supported way in. RDS sits in the VPC, ECS
+     * Exec is not enabled, and the API task deliberately holds no credential
+     * that could create a table.
+     *
+     * A SEPARATE task definition, not the API's, and that separation is the
+     * point. The API connects as app_user/auth_user over IAM auth — non-owner
+     * roles that row level security applies to. Migrations need the owner, and
+     * giving the API task the owner credential so it could also migrate would
+     * hand every request handler the privilege to bypass RLS. The daily audit
+     * job reuses the API task for the opposite reason: it SHOULD be constrained
+     * to what the app can see.
+     *
+     * NOT run automatically on deploy. A migration that runs itself runs during
+     * an incident, during a rollback, and at 3am when the deploy pipeline
+     * retries — and a schema change is the one deploy step where a human
+     * deciding "now" is worth the manual call.
+     */
+    const migrationTask = new ecs.FargateTaskDefinition(this, 'MigrationTask', {
+      cpu: 256,
+      memoryLimitMiB: 512,
+    });
+    migrationTask.addContainer('migrate', {
+      image: ecs.ContainerImage.fromAsset('../server'),
+      command: ['node', 'src/db/migrate.js'],
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: 'migrate',
+        logGroup: new logs.LogGroup(this, 'MigrationLogs', {
+          retention: logs.RetentionDays.ONE_YEAR,
+          removalPolicy: RemovalPolicy.RETAIN,
+        }),
+      }),
+      /**
+       * The master credential's fields, injected separately.
+       *
+       * Not composed into a DATABASE_URL: every way of building that URL puts
+       * the password somewhere it should not be — a shell command line, a
+       * process argument, a log line. `pg` reads these directly, so the
+       * password reaches the client from the environment and nowhere else.
+       */
+      secrets: {
+        PGHOST: ecs.Secret.fromSecretsManager(this.database.secret, 'host'),
+        PGPORT: ecs.Secret.fromSecretsManager(this.database.secret, 'port'),
+        PGUSER: ecs.Secret.fromSecretsManager(this.database.secret, 'username'),
+        PGPASSWORD: ecs.Secret.fromSecretsManager(this.database.secret, 'password'),
+        PGDATABASE: ecs.Secret.fromSecretsManager(this.database.secret, 'dbname'),
+      },
+      environment: { PGSSLMODE: 'require' },
+    });
+
+    /**
+     * Its own security group, so revoking migration access to the database does
+     * not revoke the API's. Both are ingress rules on the same port; one of
+     * them should be removable in an incident without taking the product down.
+     */
+    this.migrationSecurityGroup = new ec2.SecurityGroup(this, 'MigrationSg', {
+      vpc: this.vpc,
+      description: 'One-off schema migration tasks. Not the API.',
+    });
+    this.dbSecurityGroup.addIngressRule(
+      this.migrationSecurityGroup,
+      ec2.Port.tcp(5432),
+      'Migration task to Postgres',
+    );
+
+    this.migrationTask = migrationTask;
+
+    /**
+     * The exact command to run it, as a stack output.
+     *
+     * A runbook step that has to be assembled from four console pages is a
+     * runbook step that gets done wrong at 2am. Every id here is known at
+     * synth time, so it is printed rather than described.
+     */
+    new CfnOutput(this, 'RunMigrations', {
+      description: 'Run this after every deploy that adds a migration',
+      value: [
+        'aws ecs run-task',
+        `--cluster ${cluster.clusterName}`,
+        `--task-definition ${migrationTask.family}`,
+        '--launch-type FARGATE',
+        `--network-configuration 'awsvpcConfiguration={subnets=[${
+          this.vpc.selectSubnets(taskPlacement).subnetIds.join(',')
+        }],securityGroups=[' + this.migrationSecurityGroup.securityGroupId + '],assignPublicIp=`
+          + `${lean ? 'ENABLED' : 'DISABLED'}}'`,
+      ].join(' '),
+    });
+
     // ─── The scheduled audit verification ────────────────────────────────────
     /**
      * Runs the hash-chain verification daily, on the SAME task definition and

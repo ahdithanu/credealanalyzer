@@ -18,7 +18,8 @@ const { Client } = require('pg');
  * cleanly instead of resuming half way.
  */
 async function migrate(connectionString, { log = console.log } = {}) {
-  const client = new Client({ connectionString });
+  // Undefined connectionString is meaningful: pg then reads the PG* variables.
+  const client = new Client(connectionString ? { connectionString } : {});
   await client.connect();
   try {
     await client.query(`
@@ -56,8 +57,21 @@ async function migrate(connectionString, { log = console.log } = {}) {
 module.exports = { migrate };
 
 if (require.main === module) {
+  /**
+   * A URL, or the standard PG* environment variables.
+   *
+   * `pg` reads PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE when given no
+   * connection string, and that is what the deployed migration task uses: the
+   * RDS master credential is a JSON secret, and every way of turning it into a
+   * URL puts the password somewhere it should not be — a shell command line, a
+   * process argument, a log line. Injecting the fields separately keeps it in
+   * the container's environment and nowhere else.
+   */
   const url = process.env.DATABASE_MIGRATION_URL || process.env.DATABASE_URL;
-  if (!url) { console.error('set DATABASE_MIGRATION_URL'); process.exit(1); }
+  if (!url && !process.env.PGHOST) {
+    console.error('set DATABASE_MIGRATION_URL, or PGHOST/PGUSER/PGPASSWORD/PGDATABASE');
+    process.exit(1);
+  }
 
   // Retry briefly. The compose healthcheck covers the ordinary case, but a
   // cold volume's first-boot initialisation can still outlast it, and the

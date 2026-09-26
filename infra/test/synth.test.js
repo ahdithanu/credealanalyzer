@@ -88,17 +88,31 @@ test('the database subnets have no route to a NAT gateway', () => {
   }
 });
 
-test('only the API security group may reach Postgres, and only on 5432', () => {
+test('exactly two named security groups may reach Postgres, and only on 5432', () => {
+  /**
+   * Two, not one: the API tasks and the one-off migration task. The count is
+   * asserted rather than the rules merely checked, because the thing worth
+   * catching is a THIRD source appearing — a bastion, a debug container, a
+   * CIDR someone opened during an incident and left.
+   */
   const ingress = pt.findResources('AWS::EC2::SecurityGroupIngress');
   const toDb = Object.values(ingress).filter((r) => r.Properties?.FromPort === 5432);
-  assert.equal(toDb.length, 1, 'expected exactly one ingress rule to Postgres');
-  const rule = toDb[0].Properties;
-  assert.equal(rule.ToPort, 5432);
-  assert.equal(rule.IpProtocol, 'tcp');
-  // From a security group, never a CIDR. A CIDR here would admit anything that
-  // happened to land in that address range.
-  assert.ok(rule.SourceSecurityGroupId, 'Postgres ingress is not scoped to a security group');
-  assert.ok(!rule.CidrIp, 'Postgres ingress admits a CIDR range');
+  assert.equal(toDb.length, 2, 'expected exactly two ingress rules to Postgres');
+
+  const sources = new Set();
+  for (const r of toDb) {
+    const rule = r.Properties;
+    assert.equal(rule.ToPort, 5432);
+    assert.equal(rule.IpProtocol, 'tcp');
+    // From a security group, never a CIDR. A CIDR here would admit anything
+    // that happened to land in that address range.
+    assert.ok(rule.SourceSecurityGroupId, 'Postgres ingress is not scoped to a security group');
+    assert.ok(!rule.CidrIp, 'Postgres ingress admits a CIDR range');
+    sources.add(JSON.stringify(rule.SourceSecurityGroupId));
+  }
+  // Distinct groups, so revoking the migration task's access in an incident
+  // does not also take the API down.
+  assert.equal(sources.size, 2, 'the two Postgres ingress rules share a security group');
 });
 
 test('the task role can connect as the two app roles and NOT as the owner', () => {
@@ -117,13 +131,65 @@ test('the task role can connect as the two app roles and NOT as the owner', () =
   assert.ok(!resources.includes('dbuser:*'), 'the grant is a wildcard over every database role');
 });
 
-test('no database password reaches the task definition', () => {
+test('no database password reaches the API task definition', () => {
   // The point of IAM auth. A password here is readable by anyone who can
   // describe the task definition, and lives until someone rotates it.
-  const defs = pt.findResources('AWS::ECS::TaskDefinition');
-  const rendered = JSON.stringify(Object.values(defs));
+  const defs = Object.values(pt.findResources('AWS::ECS::TaskDefinition'));
+  const api = defs.filter((d) => !d.Properties.ContainerDefinitions.some((c) => c.Name === 'migrate'));
+  assert.ok(api.length >= 1, 'no API task definition found');
+  const rendered = JSON.stringify(api);
   assert.ok(!/DATABASE_URL/.test(rendered), 'a DATABASE_URL was baked into the task definition');
   assert.ok(!/DB_PASSWORD|PGPASSWORD/.test(rendered), 'a database password reached the task definition');
+});
+
+test('the migration task is the ONLY one holding the owner credential', () => {
+  /**
+   * The exception, named rather than left to slip in anywhere.
+   *
+   * Migrations need the table owner and RDS IAM auth does not cover the master
+   * user, so this one task definition genuinely carries the password. What
+   * must stay true is that it is exactly one task, that the credential arrives
+   * from Secrets Manager rather than as plaintext, and that the task does
+   * nothing but migrate.
+   */
+  const defs = Object.values(pt.findResources('AWS::ECS::TaskDefinition'));
+  const withPassword = defs.filter((d) => /PGPASSWORD|DB_PASSWORD|DATABASE_URL/
+    .test(JSON.stringify(d.Properties.ContainerDefinitions)));
+  assert.equal(withPassword.length, 1, 'expected exactly one task definition to hold a DB password');
+
+  const [container] = withPassword[0].Properties.ContainerDefinitions;
+  assert.equal(container.Name, 'migrate', 'a non-migration task holds the owner credential');
+  assert.deepEqual(container.Command, ['node', 'src/db/migrate.js'],
+    'the task holding the owner credential does something other than migrate');
+
+  // From Secrets Manager, never plaintext environment.
+  const secretNames = (container.Secrets || []).map((s) => s.Name);
+  assert.ok(secretNames.includes('PGPASSWORD'), 'PGPASSWORD is not injected as a secret');
+  const envNames = (container.Environment || []).map((e) => e.Name);
+  assert.ok(!envNames.includes('PGPASSWORD'), 'PGPASSWORD is in the plaintext environment');
+
+  // And never composed into a URL, which is how a password ends up on a
+  // command line or in a log.
+  assert.ok(!/DATABASE_URL/.test(JSON.stringify(container)),
+    'the migration task composes a DATABASE_URL');
+});
+
+test('the migration task does not run itself', () => {
+  /**
+   * No schedule, no service, no deploy hook. A migration that runs itself runs
+   * during an incident, during a rollback, and at 3am when the pipeline
+   * retries. The stack prints the command; a human decides when.
+   */
+  const rules = Object.values(pt.findResources('AWS::Events::Rule'));
+  for (const r of rules) {
+    const targets = JSON.stringify(r.Properties?.Targets || []);
+    assert.ok(!/migrate/i.test(targets), 'a scheduled rule runs the migration task');
+  }
+  const services = Object.values(pt.findResources('AWS::ECS::Service'));
+  for (const svc of services) {
+    assert.ok(!/MigrationTask/.test(JSON.stringify(svc.Properties?.TaskDefinition || '')),
+      'the migration task is running as a service');
+  }
 });
 
 test('the session signing secret and broker key arrive as secrets, not plaintext', () => {
