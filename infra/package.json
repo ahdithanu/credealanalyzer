@@ -3,12 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "description": "AWS infrastructure for the CRE Deal Analyzer, as CDK.",
-  "bin": { "infra": "bin/app.js" },
+  "bin": {
+    "infra": "bin/app.js"
+  },
   "scripts": {
     "synth": "cdk synth",
     "diff": "cdk diff",
     "deploy": "cdk deploy",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "preflight": "node preflight.mjs"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.170.0",

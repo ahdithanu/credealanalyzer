@@ -46,11 +46,34 @@ not fine for anything with a second user.
 4. **A WorkOS account** for SSO, if you are selling to firms that want it.
 5. **A Duo account** per client firm, for MFA.
 
-### Deploy
+### Check before you deploy
 
 ```sh
 cd infra
 npm ci
+npm run preflight -- \
+  -c tier=lean \
+  -c apiCertArn=arn:aws:acm:us-east-2:…:certificate/… \
+  -c webCertArn=arn:aws:acm:us-east-1:…:certificate/… \
+  -c alertEmail=you@yourfirm.com
+```
+
+Read-only, takes seconds, and takes the same `-c` arguments as `cdk deploy` so
+the line copies straight across. It checks the four things that otherwise fail
+*after* CloudFormation has started changing resources:
+
+- **the web certificate's region** — ACM issues it anywhere, CDK accepts the
+  ARN, and CloudFront rejects it twenty minutes in;
+- **certificate status** — a `PENDING_VALIDATION` certificate deploys fine and
+  then serves nothing;
+- **CDK bootstrap** — missing, this fails at asset publishing, after synthesis;
+- **Docker** — the API image is built from `../server` mid-deploy.
+
+It reports every problem in one pass rather than one per run.
+
+### Deploy
+
+```sh
 npx cdk bootstrap                       # once per account/region
 
 npx cdk deploy --all \
