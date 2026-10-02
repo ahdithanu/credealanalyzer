@@ -17,7 +17,12 @@ serves both.
 ## Path A — your own deal screening, today
 
 Single-user mode keeps deals in `localStorage` and calls no API. It is what the
-app does when `VITE_API_URL` is unset.
+app does when `REACT_APP_API_URL` is unset — **that name, not Vite's
+`VITE_API_URL`**. `vite.config.js` maps the REACT_APP_ prefix onto the
+identifier `src/lib/api.js` reads, deliberately, so an existing Docker build
+arg keeps working. Setting the Vite-convention name instead does not fail the
+build: it starts the app against localStorage while you believe it is talking
+to your API.
 
 ```sh
 npm install
@@ -26,6 +31,29 @@ npm run build          # → build/
 
 `build/` is static. Any host will do — S3 + CloudFront, Netlify, Vercel, GitHub
 Pages, or `npx vite preview` on your own machine.
+
+### Automated, on GitHub Pages
+
+`.github/workflows/pages.yml` does the above on every push to `main`: it runs
+the suite, builds, asserts the bundle carries no inline script, and publishes
+`build/`. Pages is the default here because the repository is already on
+GitHub — no second vendor, no account, no card — and because `vite.config.js`
+already sets `base: './'` so one artefact serves both a domain root and the
+`/credealanalyzer/` subpath a Pages project site lives under.
+
+Two steps cannot be done from a workflow file and have to be done once, by
+hand, in the repository's settings:
+
+1. **Settings → Pages → Source → GitHub Actions.** Until this is set the
+   workflow runs green and publishes nothing.
+2. **Make sure `main` holds the code you want served.** This is the one that
+   actually bites: a host serves the branch it is pointed at, so moving hosts
+   changes nothing if `main` is behind. Check with
+   `git log --oneline origin/main -1` before assuming a deploy is stale.
+
+To point the static build at a deployed API later, set the repository
+variable `REACT_APP_API_URL` (Settings → Secrets and variables → Actions →
+Variables). The workflow passes it through under that exact name.
 
 **Know what you are getting.** No sign-in, no server, no backup. The deals live
 in one browser profile on one machine, and clearing site data deletes them.
