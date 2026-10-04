@@ -105,6 +105,53 @@ const config = {
     auth: Number(process.env.RATE_LIMIT_AUTH || 30),
     export: Number(process.env.RATE_LIMIT_EXPORT || 5),
     csp: Number(process.env.RATE_LIMIT_CSP || 60),
+    // Deliberately far tighter than `auth`. Every request on this route sends
+    // an email to an address the caller chose, so an unthrottled endpoint is a
+    // mail cannon pointed at whoever the caller names, from our domain and our
+    // sending reputation. The limit is on the route, and magicLink.js also
+    // throttles per ADDRESS, because one caller rotating IPs past a per-IP
+    // limit is the actual abuse shape.
+    magicLink: Number(process.env.RATE_LIMIT_MAGIC_LINK || 5),
+  },
+
+  /**
+   * Single-use email sign-in links, for firms with no identity provider.
+   *
+   * Enabled per TENANT (`tenants.auth_methods`), never globally: these settings
+   * are the platform's transport, not a switch that admits anyone.
+   */
+  magicLink: {
+    /**
+     * Short on purpose. The link is a bearer credential sitting in an inbox,
+     * which is exactly where an attacker with mailbox access looks, and a
+     * fifteen-minute window is the difference between a stolen link being
+     * useful and being expired. Long enough to survive a slow mail relay.
+     */
+    ttlMs: Number(process.env.MAGIC_LINK_TTL_MS || 15 * 60 * 1000),
+    /**
+     * Per address, per window, independent of the route's per-IP limit.
+     * Without it, one address can be mailed as often as the attacker can
+     * rotate source addresses.
+     */
+    perEmailPerHour: Number(process.env.MAGIC_LINK_PER_EMAIL_PER_HOUR || 5),
+    /**
+     * Where the mailed link points. This is an API URL, not an app URL: the
+     * token is consumed server-side and exchanged for a session cookie before
+     * the browser ever reaches the SPA. Defaulted the same way Duo's callback
+     * is, so a single-host dev setup needs no configuration.
+     */
+    callbackUrl: process.env.MAGIC_LINK_CALLBACK_URL
+      || 'http://localhost:8080/auth/magic/callback',
+  },
+
+  /**
+   * Outbound mail. No vendor is bundled — see auth/mailer.js for why, and for
+   * the one-line install if `ses` is the choice.
+   */
+  mail: {
+    provider: process.env.MAIL_PROVIDER || (isProd ? 'ses' : 'stub'),
+    from: process.env.MAIL_FROM || 'no-reply@localhost',
+    region: process.env.MAIL_REGION || process.env.AWS_REGION || 'us-east-1',
   },
 
   /**

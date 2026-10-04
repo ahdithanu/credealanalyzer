@@ -7,6 +7,8 @@ const session = require('../auth/session');
 const { requireSession, readCookie } = require('../middleware/requireSession');
 const { broker } = require('../auth/broker');
 const { securityEvent, KIND } = require('../obs/securityLog');
+const { rateLimit } = require('../middleware/rateLimit');
+const magicLink = require('../auth/magicLink');
 
 /**
  * Authentication routes.
@@ -151,6 +153,85 @@ function authRoutes() {
     } catch (err) {
       if (err instanceof login.LoginError) {
         securityEvent(KIND.LOGIN_FAILED, { code: err.code, ip: req.ip });
+        const u = new URL('/signin', config.appOrigin);
+        u.searchParams.set('error', err.code);
+        res.redirect(302, u.toString());
+        return;
+      }
+      next(err);
+    }
+  });
+
+  /**
+   * Ask for a sign-in link. POST, because it has a side effect: it sends mail.
+   *
+   * ALWAYS 202, and always with the same body. Not an oversight — the response
+   * is identical whether the address belongs to a provisioned firm, to a firm
+   * that has not enabled this method, to a suspended firm, or to nobody at
+   * all. Any difference between those turns this endpoint into a customer list
+   * and a user directory, enumerable one address at a time by anyone who can
+   * reach it. The reasons are not lost, they are emitted as security events
+   * where an operator can see them and the caller cannot.
+   *
+   * Rate limited harder than the rest of /auth: every call here sends mail to
+   * an address the caller chose, so an unthrottled endpoint points our domain
+   * and our sending reputation at whoever they name. magicLink.issue() also
+   * throttles per ADDRESS, because rotating source IPs past a per-IP limit is
+   * the actual abuse shape and the victim is the owner of the inbox.
+   */
+  r.post('/magic/start',
+    rateLimit({ name: 'magicLink', limit: config.rateLimits.magicLink, windowMs: 60_000 }),
+    async (req, res, next) => {
+      try {
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+        if (email) {
+          await magicLink.issue({
+            email,
+            redirectTo: req.body?.next,
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+          });
+        }
+        // Even an empty or malformed address gets the same answer, for the
+        // same reason.
+        res.status(202).json({ sent: true });
+      } catch (err) { next(err); }
+    });
+
+  /**
+   * The mailed link lands here.
+   *
+   * GET, because it is a plain navigation out of a mail client, which means
+   * the token is in the URL and therefore in browser history and any referrer
+   * the SPA later sends. That is survivable only because the token is claimed
+   * on first use and dead immediately after — see magicLink.claim(), where
+   * the claim is the UPDATE that finds the row rather than a read followed by
+   * a write. Mail clients prefetch links; without that, a prefetch would burn
+   * the link and the human would arrive to a refusal.
+   */
+  r.get('/magic/callback', async (req, res, next) => {
+    try {
+      const result = await login.completeMagicLink({
+        token: req.query.token,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      // A firm with Duo gets Duo on this path too, exactly as on the SSO path.
+      if (result.kind === 'mfa') {
+        res.cookie(PENDING_COOKIE, result.nonce, pendingCookieOptions());
+        res.redirect(302, result.url);
+        return;
+      }
+
+      res.cookie(config.session.cookieName, result.token,
+        session.cookieOptions(config.session.ttlMs));
+      res.redirect(302, new URL(result.redirectTo, config.appOrigin).toString());
+    } catch (err) {
+      if (err instanceof login.LoginError) {
+        securityEvent(KIND.LOGIN_FAILED, {
+          code: err.code, domain: err.domain, ip: req.ip,
+        });
         const u = new URL('/signin', config.appOrigin);
         u.searchParams.set('error', err.code);
         res.redirect(302, u.toString());

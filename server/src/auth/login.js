@@ -7,6 +7,7 @@ const { broker } = require('./broker');
 const session = require('./session');
 const { emailDomain, securityEvent, KIND } = require('../obs/securityLog');
 const mfa = require('./mfa');
+const magicLink = require('./magicLink');
 
 /**
  * The login handshake: where a tenant is DECIDED.
@@ -280,6 +281,110 @@ async function complete({ state, code, ip, userAgent }) {
 }
 
 /**
+ * Finish a login that began as a mailed link.
+ *
+ * Deliberately lands in the SAME place complete() does — the tenant checks,
+ * then challengeDuo() or issueSession(). Writing a parallel ending for this
+ * path is how the two drift: a policy added to one and not the other is a
+ * policy that is enforced for SSO users and silently absent for everyone who
+ * signed in by email, and nothing would fail to announce it.
+ *
+ * What it does NOT reuse is the identity half. There is no state row, no code
+ * exchange, no organization id and no IdP assertion. The claimed link carries
+ * the tenant (frozen when the link was issued) and the address it was sent to,
+ * and those two are the entire identity on this path.
+ */
+async function completeMagicLink({ token, ip, userAgent }) {
+  let link;
+  try {
+    link = await magicLink.claim(token);
+  } catch (err) {
+    if (err instanceof magicLink.MagicLinkError) {
+      throw new LoginError(err.code, err.message, err.status);
+    }
+    throw err;
+  }
+
+  const email = String(link.email).toLowerCase();
+  const domain = email.slice(email.lastIndexOf('@') + 1);
+
+  // Re-read the tenant rather than trusting anything cached from issue time.
+  const { rows } = await authPool.query(
+    `SELECT id, slug, name, status, require_mfa, auth_methods FROM tenants WHERE id = $1`,
+    [link.tenant_id],
+  );
+  const tenant = rows[0];
+  if (!tenant) {
+    throw new LoginError('unknown_org', 'Your organization is not provisioned.', 403, { domain });
+  }
+
+  // Suspension, the method being revoked, and the MFA-without-Duo refusal, all
+  // re-evaluated HERE. A link lives for fifteen minutes and a firm can change
+  // its posture inside that window; the check that counts is the one at the
+  // moment of admission, not the one at the moment of sending.
+  try {
+    await magicLink.assertMagicLinkAllowed(tenant);
+  } catch (err) {
+    if (err instanceof magicLink.MagicLinkError) {
+      throw new LoginError(err.code, err.message, err.status, { domain });
+    }
+    throw err;
+  }
+
+  // And the domain must STILL be verified for this tenant. The tenant id was
+  // frozen into the link, so without this a domain un-verified after the link
+  // was sent — an offboarded firm, a correction to a mistaken verification —
+  // would still admit anyone holding an unexpired link.
+  const { rows: domainRows } = await authPool.query(
+    `SELECT 1 FROM tenant_domains
+      WHERE tenant_id = $1 AND lower(domain) = $2 AND verified_at IS NOT NULL`,
+    [tenant.id, domain],
+  );
+  if (!domainRows.length) {
+    throw new LoginError('domain_not_verified',
+      'Your email domain is not verified for this organization.', 403, { domain });
+  }
+
+  // Just-in-time provisioning, inside the tenant context, as on the SSO path.
+  // external_id is left alone: there is no IdP subject here, and writing one
+  // would bind the account to a value no directory issued.
+  const { user } = await withTenant(tenant.id, null, async (db) => {
+    const { rows: userRows } = await db.query(
+      `INSERT INTO users (tenant_id, email, name, last_login_at)
+            VALUES ($1, $2, NULL, now())
+       ON CONFLICT (tenant_id, email) DO UPDATE SET last_login_at = now()
+       RETURNING id, email, name, role`,
+      [tenant.id, email],
+    );
+    return { user: userRows[0] };
+  });
+
+  const context = {
+    tenant,
+    user,
+    redirectTo: link.redirect_to || '/',
+    ip,
+    userAgent,
+    domain,
+    idp: null,
+    connectionId: null,
+    authMethod: 'magic_link',
+    // Not null, and not true. A mailed link is positive evidence that NO
+    // identity provider asserted a factor, which is a different statement from
+    // "we were not told" and is recorded as such.
+    idpMfaAsserted: false,
+  };
+
+  // A firm with Duo gets Duo on this path too. That is what lets an
+  // MFA-required tenant enable magic links at all; see the refusal in
+  // magicLink.assertMagicLinkAllowed().
+  const duoRow = await mfa.configFor(tenant.id);
+  if (duoRow) return challengeDuo(duoRow, context);
+
+  return issueSession(context, { mfaFactor: null });
+}
+
+/**
  * Send the browser to Duo, or decide what to do because we cannot.
  *
  * The health check is a real round trip on every login for a Duo tenant, and it
@@ -497,4 +602,7 @@ async function auditAuth(tenantId, userId, action, detail, ip) {
   });
 }
 
-module.exports = { begin, complete, completeDuo, consumeState, discoverTenant, LoginError };
+module.exports = {
+  begin, complete, completeDuo, completeMagicLink, consumeState, discoverTenant,
+  LoginError,
+};

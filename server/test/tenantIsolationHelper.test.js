@@ -220,6 +220,12 @@ test('the policy set of every pre-existing table is unchanged by migration 010',
     'deals.tenant_isolation',
     'firm_defaults.owner_access',
     'firm_defaults.tenant_isolation',
+    // Added by migration 011. Deliberately NOT tenant_isolation: looking a
+    // sign-in link up is how the tenant is discovered, so the same reasoning
+    // as sessions and mfa_pending applies and apply_tenant_isolation() must
+    // not be used here. This snapshot is what noticed the new table.
+    'login_links.auth_login_link_access',
+    'login_links.owner_access',
     'mfa_pending.auth_mfa_pending_access',
     'mfa_pending.owner_access',
     'scim_tokens.auth_scim_token_access',

@@ -166,6 +166,7 @@ async function list() {
              (SELECT count(*) FROM users u WHERE u.tenant_id = t.id)  AS users,
              (SELECT count(*) FROM deals dl WHERE dl.tenant_id = t.id
                 AND dl.deleted_at IS NULL)                            AS deals,
+             t.auth_methods,
              (SELECT array_agg(d.domain ORDER BY d.domain) FROM tenant_domains d
                 WHERE d.tenant_id = t.id AND d.verified_at IS NOT NULL) AS domains
         FROM tenants t ORDER BY t.created_at`);
@@ -186,6 +187,54 @@ async function setStatus({ slug, status }) {
       subjectType: 'tenant',
       subjectId: slug,
       detail: { slug, status },
+    });
+    return rows[0];
+  });
+}
+
+/**
+ * Choose which sign-in methods a firm may use.
+ *
+ * An audited, deliberate act, which is the whole reason it is a command rather
+ * than a column someone sets in psql. `tenants.auth_methods` defaults to
+ * {sso}: a firm that bought a product where the only way in is their own
+ * directory does not get a weaker door added by an upgrade, and turning one on
+ * should leave a row in the audit log saying who did it.
+ *
+ * Refuses to produce a tenant nobody can sign in to; that is what `suspend`
+ * is for, and a suspension expressed two ways can be lifted in one place and
+ * not the other.
+ *
+ * Note what this does NOT override: a firm with require_mfa and no Duo
+ * integration still cannot be entered by a link, however this is set. That
+ * refusal lives in auth/magicLink.js, at the moment of admission, because a
+ * policy enforced only where it is configured is a policy that a later
+ * configuration change silently removes.
+ */
+const METHODS = ['sso', 'magic_link'];
+
+async function setAuthMethods({ slug, methods }) {
+  const wanted = String(methods || '').split(',').map((m) => m.trim()).filter(Boolean);
+  if (!wanted.length) {
+    throw new Error(`--methods is required, from: ${METHODS.join(', ')}`);
+  }
+  const unknown = wanted.filter((m) => !METHODS.includes(m));
+  if (unknown.length) {
+    throw new Error(`unknown sign-in method(s): ${unknown.join(', ')}. `
+      + `Known: ${METHODS.join(', ')}`);
+  }
+  return withOwner(async (db) => {
+    const { rows } = await db.query(
+      'UPDATE tenants SET auth_methods = $2 WHERE slug = $1 RETURNING slug, auth_methods',
+      [slug, wanted],
+    );
+    if (!rows[0]) throw new Error(`no tenant with slug ${slug}`);
+    await recordAdmin(db, {
+      tenantId: null,
+      action: 'tenant.auth_methods_set',
+      subjectType: 'tenant',
+      subjectId: slug,
+      detail: { slug, methods: wanted },
     });
     return rows[0];
   });
@@ -218,8 +267,8 @@ async function revokeSessions({ slug }) {
 }
 
 module.exports = {
-  create, verifyDomain, list, setStatus, revokeSessions, recordAdmin,
-  __internals: { SLUG, DOMAIN },
+  create, verifyDomain, list, setStatus, setAuthMethods, revokeSessions, recordAdmin,
+  __internals: { SLUG, DOMAIN, METHODS },
 };
 
 if (require.main === module) {
@@ -232,10 +281,13 @@ if (require.main === module) {
     suspend: () => setStatus({ ...args, status: 'suspended' }),
     activate: () => setStatus({ ...args, status: 'active' }),
     'revoke-sessions': () => revokeSessions(args),
+    'auth-methods': () => setAuthMethods(args),
   }[command];
 
   if (!run) {
-    console.error('commands: create | verify-domain | list | suspend | activate | revoke-sessions');
+    console.error('commands: create | verify-domain | list | suspend | activate '
+      + '| revoke-sessions | auth-methods');
+    console.error('  auth-methods --slug <slug> --methods sso,magic_link');
     process.exit(2);
   }
   run()

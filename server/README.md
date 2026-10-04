@@ -67,6 +67,52 @@ active tenant, and the email's domain **verified for that tenant**. The last is
 the backstop against a misconfigured SSO connection dropping an outside address
 into a client firm.
 
+## Sign-in links, for firms with no identity provider
+
+A second way in, enabled **per tenant** and off by default:
+
+```sh
+npm run tenants -- auth-methods --slug acme --methods sso,magic_link
+```
+
+`tenants.auth_methods` defaults to `{sso}`, so no existing firm is opted into a
+weaker door by a migration. Enabling it is audited.
+
+What makes it safe is where the tenant comes from, and it is worth being
+explicit because this path has strictly less to work with than SSO:
+
+| | SSO | sign-in link |
+|---|---|---|
+| tenant resolved by | the broker's organization id | the verified email domain |
+| second, independent check | the verified email domain | *there isn't one* |
+
+So the domain stops being a backstop and becomes the whole control. Hence:
+a verified domain may belong to **one** firm (migration 011 adds the unique
+index, and `magicLink.resolveTenantForEmail` refuses an ambiguous one anyway);
+the tenant is frozen into the link when it is issued; and the domain, the
+firm's status and its sign-in policy are **all re-checked when the link is
+claimed**, because a link lives fifteen minutes and a firm can change posture
+inside that window.
+
+**A firm requiring MFA cannot be entered by a link unless it has Duo.**
+`tenants.require_mfa` means "the identity provider asserted a second factor",
+and a mailed link asserts nothing. Without that refusal, turning this feature
+on would silently become the way to skip MFA — the policy is enforced in
+`login.complete()` against the IdP's assertion, and that code never runs here.
+A firm with Duo configured gets Duo on this path too.
+
+`/auth/magic/start` always answers `202 {sent:true}` — for a real address, an
+unknown one, a firm that has not opted in, and a suspended firm alike. Any
+difference turns it into a customer list and a user directory, enumerable one
+address at a time. The reasons are emitted as security events instead.
+
+**No mail vendor is bundled.** `auth/mailer.js` is an interface with a stub for
+tests, a `log` provider for local development, and a lazily-required SES
+adapter that needs `npm i @aws-sdk/client-sesv2`. Pick a transport before
+enabling this for a real firm; `MAIL_PROVIDER`, `MAIL_FROM` and
+`MAGIC_LINK_CALLBACK_URL` are validated at first send rather than at boot, so a
+deployment whose firms all use SSO never has to configure them.
+
 ## Running the tests
 
 They need a real Postgres — RLS has several documented ways to silently not
