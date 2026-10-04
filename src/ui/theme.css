@@ -540,6 +540,43 @@ select.inp { cursor: pointer; }
 .signin-button:hover:not(:disabled) { filter: brightness(1.08); }
 .signin-button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/*
+ * The second way in. Visually secondary to .signin-button because SSO is the
+ * route most firms take, but a real button rather than a text link: it has a
+ * side effect (it sends mail), and a control that sends mail should not look
+ * like navigation.
+ */
+.signin-alt {
+  width: 100%;
+  height: 34px;
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.signin-alt:hover:not(:disabled) { border-color: var(--accent); }
+.signin-alt:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/*
+ * A confirmation, not an alert. Distinct from .signin-error on purpose: this
+ * is the answer to a successful request, and the one place the UI must stay
+ * deliberately vague — it cannot say whether the address can actually sign in
+ * this way without leaking what the server withholds.
+ */
+.signin-note {
+  background: var(--panel-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin-top: 14px;
+}
+
 /* An alert, not a decoration: it carries the reason a sign-in was refused. */
 .signin-error {
   background: rgba(220, 38, 38, 0.09);

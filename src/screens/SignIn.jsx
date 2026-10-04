@@ -37,6 +37,16 @@ const ERRORS = {
   mfa_failed: 'We could not complete the second security step. Please try again, or contact '
     + 'your IT team if it keeps happening.',
   mfa_denied: 'The second security step was declined or timed out. Please try again.',
+  // Reached from the sign-in-link callback. One message for "never existed",
+  // "already used" and "expired", matching the single code the server returns:
+  // three messages would tell the holder of a guessed token which half of the
+  // guess was wrong, and tell anyone whether an address has a link outstanding.
+  link_invalid: 'That sign-in link has expired or was already used. Please request a new one.',
+  bad_token: 'That sign-in link is not valid. Please request a new one.',
+  method_not_allowed: 'Your organization signs in through its identity provider. '
+    + 'Use the sign-in button above.',
+  ambiguous_domain: 'Your email domain is configured for more than one organization. '
+    + 'Contact your administrator.',
 };
 
 /** A shape check only. Whether the address exists is the directory's business. */
@@ -45,6 +55,9 @@ const LOOKS_LIKE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export default function SignIn({ status }) {
   const [email, setEmail] = useState('');
   const [touched, setTouched] = useState(false);
+  /** 'idle' | 'sending' | 'sent' | 'failed'. 'failed' means the request never
+   *  landed, never that the address was refused — see api.requestSignInLink. */
+  const [linkState, setLinkState] = useState('idle');
 
   const params = new URLSearchParams(window.location.search);
   const errorCode = params.get('error');
@@ -88,7 +101,7 @@ export default function SignIn({ status }) {
             type="email"
             className="signin-input"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => { setEmail(e.target.value); setLinkState('idle'); }}
             onBlur={() => setTouched(true)}
             placeholder="you@yourfirm.com"
             autoComplete="username email"
@@ -110,11 +123,56 @@ export default function SignIn({ status }) {
           >
             Continue with SSO
           </button>
+
+          {/*
+            Offered to EVERYONE, unconditionally, and that is not laziness.
+            The server will not say whether a given firm has this method
+            enabled — /auth/magic/start answers identically for a real address,
+            an unknown one and an opted-out firm — so hiding or showing this
+            button per address would leak from the client precisely what the
+            server refuses to leak. A firm that has not enabled it simply never
+            receives a mail, and the person sees the same confirmation either
+            way.
+          */}
+          <button
+            type="button"
+            className="signin-alt"
+            disabled={unreachable || linkState === 'sending' || !valid}
+            onClick={async () => {
+              setTouched(true);
+              if (!valid || unreachable) return;
+              setLinkState('sending');
+              try {
+                await api.requestSignInLink({ email: value, next: '/' });
+                setLinkState('sent');
+              } catch {
+                // Only a transport failure reaches here. Saying "check your
+                // inbox" when the request never arrived is the one genuinely
+                // misleading answer available on this screen.
+                setLinkState('failed');
+              }
+            }}
+          >
+            {linkState === 'sending' ? 'Sending…' : 'Email me a sign-in link'}
+          </button>
         </form>
 
+        {linkState === 'sent' ? (
+          <div className="signin-note" role="status">
+            If that address can sign in this way, a link is on its way. It works
+            once and expires in 15 minutes.
+          </div>
+        ) : null}
+        {linkState === 'failed' ? (
+          <div className="signin-error" role="alert">
+            We could not reach the service to send that link. Please try again.
+          </div>
+        ) : null}
+
         <p className="signin-foot">
-          Your deals are visible only to your firm. Some firms add a second
-          security step after this.
+          Your deals are visible only to your firm. Some firms sign in through
+          their own identity provider and some add a second security step; both
+          routes above end in the same place.
         </p>
       </div>
     </div>

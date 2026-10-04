@@ -109,6 +109,27 @@ export function click(el) {
 }
 
 /**
+ * Click, and flush what the handler awaits.
+ *
+ * click() above wraps a SYNCHRONOUS act(), which is correct for a handler that
+ * sets state and returns. An async handler sets its state after its first
+ * await — by which time act() has already exited, so the assertion runs
+ * against a DOM that has not updated and React warns about a state update
+ * outside act(). Awaiting an async act() lets the microtask queue drain
+ * inside the batch before it exits.
+ *
+ * Use this for any control that awaits something (an API call, a dynamic
+ * import); use click() for everything else, because an unnecessary async act
+ * hides ordering bugs by giving the component extra ticks to settle.
+ */
+export async function clickAsync(el) {
+  if (!el) throw new Error('clickAsync: no element');
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+/**
  * Set a form control's value the way React's synthetic onChange expects.
  *
  * Assigning `el.value` directly does not notify React 18, because it caches the

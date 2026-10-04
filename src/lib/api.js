@@ -112,6 +112,32 @@ export const api = {
     window.location.assign(u.toString());
   },
 
+  /**
+   * Ask for a single-use sign-in link by email.
+   *
+   * fetch, not a navigation, because nothing leaves this page: the person
+   * stays here and goes to their inbox. The opposite of signIn() above, where
+   * seeing the identity provider's own page is the point.
+   *
+   * ALWAYS RESOLVES THE SAME WAY when the server answers, and the caller must
+   * not try to infer more. The server returns 202 {sent:true} for a real
+   * address, an unknown one, a firm that has not enabled this method and a
+   * suspended firm alike — any difference would make it a customer list and a
+   * user directory, readable one address at a time. A UI that rendered
+   * "unknown address" would reintroduce from the client exactly what the
+   * server refuses to leak.
+   *
+   * It still throws on a TRANSPORT failure, which is a different thing: the
+   * server said nothing at all, and telling someone their link is coming when
+   * the request never arrived is the one genuinely misleading answer.
+   */
+  async requestSignInLink({ email, next } = {}) {
+    const body = { email };
+    if (next && next.startsWith('/') && !next.startsWith('//')) body.next = next;
+    await request('/auth/magic/start', { method: 'POST', body });
+    return { sent: true };
+  },
+
   async signOut() {
     await request('/auth/logout', { method: 'POST' });
     setCsrfToken(null);
