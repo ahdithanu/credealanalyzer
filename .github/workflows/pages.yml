@@ -1,0 +1,98 @@
+name: Deploy to GitHub Pages
+
+# Path A of docs/runbooks/deploy.md, automated: the single-user build, on a
+# static host, for $0. It publishes the SPA only. There is no API here and no
+# database — see the REACT_APP_API_URL note below for what that means.
+#
+# Deliberately a separate workflow from ci.yml rather than a job inside it:
+# ci.yml is the merge gate and runs on every branch under
+# `permissions: contents: read`, while publishing needs `pages: write` and
+# `id-token: write`. Widening the gate's token for every branch so that one
+# job on main can deploy is the wrong trade.
+on:
+  push:
+    branches: [main]
+  # So a deploy can be re-run without an empty commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy half-published. Queue instead: `cancel-in-progress:
+# true` here can leave Pages serving the artefact of a run that was killed
+# between upload and activation.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      # This workflow re-runs the suite instead of trusting that CI passed on
+      # the same commit. A deploy that does not verify what it is publishing
+      # will eventually publish a broken bundle — and the alternative,
+      # chaining off `workflow_run`, checks out the default branch rather than
+      # the commit that triggered it unless you wire the SHA through by hand,
+      # which is a subtlety that fails silently in the direction of shipping
+      # the wrong code.
+      - run: npm test
+        env:
+          CI: true
+
+      - name: Build
+        run: npm run build
+        env:
+          # THE NAME MATTERS. api.js reads `process.env.REACT_APP_API_URL`,
+          # which vite.config.js maps from the REACT_APP_ prefix — it is NOT
+          # Vite's VITE_API_URL convention, deliberately (see the comment
+          # there). An unset or misspelled value does not fail the build: it
+          # starts the app in SINGLE-USER mode against localStorage while the
+          # operator believes it is talking to their API.
+          #
+          # Unset by default, which is correct for Pages: there is no backend
+          # at this URL. To point the static build at a deployed API, set the
+          # repository variable REACT_APP_API_URL and it is picked up here.
+          REACT_APP_API_URL: ${{ vars.REACT_APP_API_URL }}
+
+      # The same assertion ci.yml makes, for the same reason: the CloudFront
+      # CSP has no 'unsafe-inline' on script-src, so one inline <script> ships
+      # a blank page with a console error and nothing else fails first. Pages
+      # does not send that CSP, but the two hosts must serve an identical
+      # artefact or testing on one proves nothing about the other.
+      - name: Assert the bundle carries no inline script
+        run: |
+          BAD=$(grep -o '<script[^>]*>' build/index.html | grep -v 'src=' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::build/index.html carries an inline script; the CSP will block it"
+            printf '%s\n' "$BAD"
+            exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+      # vite.config.js sets `base: './'` so the bundle references ./assets/...
+      # rather than /assets/... . That is what lets one artefact serve from a
+      # domain root AND from the /credealanalyzer/ subpath a Pages project
+      # site is published under. Absolute paths 404 here.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,339 @@
+'use strict';
+
+const express = require('express');
+const config = require('../config');
+const login = require('../auth/login');
+const session = require('../auth/session');
+const { requireSession, readCookie } = require('../middleware/requireSession');
+const { broker } = require('../auth/broker');
+const { securityEvent, KIND } = require('../obs/securityLog');
+const { rateLimit } = require('../middleware/rateLimit');
+const magicLink = require('../auth/magicLink');
+
+/**
+ * Authentication routes.
+ *
+ * The browser is redirected through the identity provider and comes back here.
+ * No password is ever seen by this application, which is most of the point of
+ * SSO: there is no credential here to leak, and offboarding in the firm's
+ * directory offboards them here.
+ */
+/**
+ * The handle that survives the Duo round trip.
+ *
+ * Named distinctly from the session cookie so nothing can confuse one for the
+ * other, and it is NOT a session: it names no user, carries no claim, and is
+ * worthless without the matching row.
+ *
+ * SameSite=Lax, like the session cookie and for the same reason — Duo returns
+ * the browser here by a top-level navigation, and Strict would withhold the
+ * cookie on exactly that request, which would make every Duo login fail.
+ */
+const PENDING_COOKIE = 'cre_mfa_pending';
+
+function pendingCookieOptions(maxAge = config.duo.pendingTtlMs) {
+  return {
+    httpOnly: true,
+    secure: config.isProd,
+    sameSite: 'lax',
+    path: '/auth',
+    maxAge,
+  };
+}
+
+function authRoutes() {
+  const r = express.Router();
+
+  /**
+   * Start a login. GET, because it is a plain navigation from a link or form.
+   *
+   * Accepts `?email=` as well as `?org=`, which is what makes the sign-in page
+   * a portal rather than a form asking people to know their own tenant slug.
+   * The resolution is HOME REALM DISCOVERY: the domain half of the address
+   * decides which identity provider to redirect to.
+   *
+   * What it is not, and the distinction matters: the email is a ROUTING hint
+   * and nothing more. It does not put anyone in a tenant. The tenant still
+   * comes from the provider's assertion, and the verified-domain check in
+   * login.complete() is still the thing standing between an address and a
+   * firm's data. Typing a competitor's address here sends you to a directory
+   * that will refuse to authenticate you.
+   *
+   * A domain that maps to no tenant is NOT told so. It is sent down the same
+   * path as an unhinted login, where the provider asks which organization —
+   * because answering "we have never heard of that firm" turns this into a
+   * customer list anyone can read one domain at a time.
+   */
+  r.get('/start', async (req, res, next) => {
+    try {
+      let tenantHint = req.query.org;
+      if (!tenantHint && req.query.email) {
+        tenantHint = await login.discoverTenant(req.query.email);
+      }
+      const { url } = await login.begin({
+        tenantHint,
+        redirectTo: req.query.next,
+        ip: req.ip,
+      });
+      res.redirect(302, url);
+    } catch (err) { next(err); }
+  });
+
+  // The identity provider returns the browser here.
+  r.get('/callback', async (req, res, next) => {
+    try {
+      const { code, state } = req.query;
+      const result = await login.complete({
+        state, code, ip: req.ip, userAgent: req.headers['user-agent'],
+      });
+
+      // The firm requires a second factor we enforce. No session exists yet and
+      // none will until Duo answers; the browser carries only an opaque handle.
+      if (result.kind === 'mfa') {
+        res.cookie(PENDING_COOKIE, result.nonce, pendingCookieOptions());
+        res.redirect(302, result.url);
+        return;
+      }
+
+      res.cookie(config.session.cookieName, result.token,
+        session.cookieOptions(config.session.ttlMs));
+      // Back into the SPA. `redirectTo` was constrained to a relative path when
+      // the handshake began, so this cannot be turned into an open redirect.
+      res.redirect(302, new URL(result.redirectTo, config.appOrigin).toString());
+    } catch (err) {
+      if (err instanceof login.LoginError) {
+        // Every refused handshake, in one place. `code` is the whole point:
+        // a rise in `domain_not_verified` is a misconfigured SSO connection or
+        // someone pointed at the wrong organization, and a rise in `bad_state`
+        // is a replay attempt. Both are alarmed in infra/lib/platform.js.
+        securityEvent(KIND.LOGIN_FAILED, {
+          code: err.code,
+          orgId: err.orgId,
+          domain: err.domain,
+          ip: req.ip,
+        });
+        // The reason reaches the user as a code the SPA renders, never as a
+        // stack trace and never echoing anything from the provider's response.
+        const u = new URL('/signin', config.appOrigin);
+        u.searchParams.set('error', err.code);
+        res.redirect(302, u.toString());
+        return;
+      }
+      next(err);
+    }
+  });
+
+  /**
+   * Duo returns the browser here.
+   *
+   * Everything this handler trusts comes from the `mfa_pending` row it claims.
+   * The request supplies three opaque values — a state, a cookie and an
+   * authorization code — and nothing else it says is read. There is no user id
+   * in the URL to tamper with because there is no user id in the URL.
+   */
+  r.get('/duo/callback', async (req, res, next) => {
+    const nonce = readCookie(req, PENDING_COOKIE);
+    // Cleared on every outcome. A pending handle that outlives its single use
+    // is a handle sitting in a browser for no reason.
+    res.clearCookie(PENDING_COOKIE, pendingCookieOptions(0));
+    try {
+      const result = await login.completeDuo({
+        state: req.query.state,
+        nonce,
+        code: req.query.duo_code,
+        // Duo reports a denied push or a timeout as an error parameter rather
+        // than a code.
+        error: req.query.error || req.query.error_description || null,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      res.cookie(config.session.cookieName, result.token,
+        session.cookieOptions(config.session.ttlMs));
+      res.redirect(302, new URL(result.redirectTo, config.appOrigin).toString());
+    } catch (err) {
+      if (err instanceof login.LoginError) {
+        securityEvent(KIND.LOGIN_FAILED, { code: err.code, ip: req.ip });
+        const u = new URL('/signin', config.appOrigin);
+        u.searchParams.set('error', err.code);
+        res.redirect(302, u.toString());
+        return;
+      }
+      next(err);
+    }
+  });
+
+  /**
+   * Ask for a sign-in link. POST, because it has a side effect: it sends mail.
+   *
+   * ALWAYS 202, and always with the same body. Not an oversight — the response
+   * is identical whether the address belongs to a provisioned firm, to a firm
+   * that has not enabled this method, to a suspended firm, or to nobody at
+   * all. Any difference between those turns this endpoint into a customer list
+   * and a user directory, enumerable one address at a time by anyone who can
+   * reach it. The reasons are not lost, they are emitted as security events
+   * where an operator can see them and the caller cannot.
+   *
+   * Rate limited harder than the rest of /auth: every call here sends mail to
+   * an address the caller chose, so an unthrottled endpoint points our domain
+   * and our sending reputation at whoever they name. magicLink.issue() also
+   * throttles per ADDRESS, because rotating source IPs past a per-IP limit is
+   * the actual abuse shape and the victim is the owner of the inbox.
+   */
+  r.post('/magic/start',
+    rateLimit({ name: 'magicLink', limit: config.rateLimits.magicLink, windowMs: 60_000 }),
+    async (req, res, next) => {
+      try {
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+        if (email) {
+          await magicLink.issue({
+            email,
+            redirectTo: req.body?.next,
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+          });
+        }
+        // Even an empty or malformed address gets the same answer, for the
+        // same reason.
+        res.status(202).json({ sent: true });
+      } catch (err) { next(err); }
+    });
+
+  /**
+   * The mailed link lands here.
+   *
+   * GET, because it is a plain navigation out of a mail client, which means
+   * the token is in the URL and therefore in browser history and any referrer
+   * the SPA later sends. That is survivable only because the token is claimed
+   * on first use and dead immediately after — see magicLink.claim(), where
+   * the claim is the UPDATE that finds the row rather than a read followed by
+   * a write. Mail clients prefetch links; without that, a prefetch would burn
+   * the link and the human would arrive to a refusal.
+   */
+  r.get('/magic/callback', async (req, res, next) => {
+    try {
+      const result = await login.completeMagicLink({
+        token: req.query.token,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+
+      // A firm with Duo gets Duo on this path too, exactly as on the SSO path.
+      if (result.kind === 'mfa') {
+        res.cookie(PENDING_COOKIE, result.nonce, pendingCookieOptions());
+        res.redirect(302, result.url);
+        return;
+      }
+
+      res.cookie(config.session.cookieName, result.token,
+        session.cookieOptions(config.session.ttlMs));
+      res.redirect(302, new URL(result.redirectTo, config.appOrigin).toString());
+    } catch (err) {
+      if (err instanceof login.LoginError) {
+        securityEvent(KIND.LOGIN_FAILED, {
+          code: err.code, domain: err.domain, ip: req.ip,
+        });
+        const u = new URL('/signin', config.appOrigin);
+        u.searchParams.set('error', err.code);
+        res.redirect(302, u.toString());
+        return;
+      }
+      next(err);
+    }
+  });
+
+  // Who am I. The SPA calls this on load to decide whether to show the app.
+  r.get('/me', requireSession(), (req, res) => {
+    const s = req.session;
+    res.json({
+      user: { id: s.userId, email: s.email, name: s.name, role: s.role },
+      tenant: s.tenant,
+      // Handed over here so the SPA can echo it on writes. Safe to expose to
+      // the legitimate page and unforgeable without the server key.
+      csrfToken: session.csrfToken(s.sessionId),
+      expiresAt: s.expiresAt,
+    });
+  });
+
+  r.post('/logout', requireSession(), async (req, res, next) => {
+    try {
+      await session.revoke(req.session.sessionId);
+      res.clearCookie(config.session.cookieName, session.cookieOptions(0));
+      res.status(204).end();
+    } catch (err) { next(err); }
+  });
+
+  /**
+   * The fake identity provider's page. LOCAL DEMOS ONLY.
+   *
+   * Registered only when the stub provider is active, and config.js refuses to
+   * boot in production with the stub selected — so this route cannot exist on a
+   * real deployment. Both guards are deliberate: this page mints an identity
+   * from a form field, which is a total authentication bypass, and one guard is
+   * one mistake away from shipping it.
+   *
+   * It exists because the stub used to redirect to an unresolvable host, which
+   * is right for unit tests and meant nobody could click through a login to see
+   * the product work.
+   */
+  if (config.sso.provider === 'stub' && !config.isProd) {
+    r.get('/stub', (req, res) => {
+      const { state, code, organization } = req.query;
+      const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.send(`<!doctype html><meta charset="utf-8">
+<title>Demo identity provider</title>
+<style>
+ body{background:#0f111c;color:#e8e9f0;font:14px/1.5 -apple-system,system-ui,sans-serif;
+      display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+ .c{background:#171a28;border:1px solid #252938;border-radius:10px;padding:30px;width:360px}
+ h1{font-size:16px;margin:0 0 4px} p{color:#8b8fa3;font-size:12px;margin:0 0 18px}
+ label{font-size:11px;color:#8b8fa3;display:block;margin-bottom:5px}
+ input{width:100%;height:32px;background:#0f111c;border:1px solid #252938;border-radius:5px;
+       color:#e8e9f0;padding:0 9px;font:inherit;font-size:13px;box-sizing:border-box}
+ button{width:100%;height:34px;margin-top:16px;background:#9184d9;border:0;border-radius:5px;
+        color:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+ .w{margin-top:18px;padding-top:14px;border-top:1px solid #252938;font-size:11px;color:#8b8fa3}
+</style>
+<div class="c">
+ <h1>Demo identity provider</h1>
+ <p>Stands in for Okta, Entra ID or Google Workspace.</p>
+ <form method="POST" action="/auth/stub">
+  <input type="hidden" name="state" value="${esc(state)}">
+  <input type="hidden" name="code" value="${esc(code)}">
+  <label for="e">Email address</label>
+  <input id="e" name="email" value="analyst@firmx.com" autocomplete="off" spellcheck="false">
+  <label for="o" style="margin-top:12px">Organization</label>
+  <input id="o" name="organization" value="${esc(organization || 'org_firm_x')}" spellcheck="false">
+  <button type="submit">Sign in</button>
+ </form>
+ <div class="w">This page mints an identity from a form field. It is registered
+ only when SSO_PROVIDER=stub and never in production.</div>
+</div>`);
+    });
+
+    r.post('/stub', express.urlencoded({ extended: false }), (req, res) => {
+      const { state, code, email, organization } = req.body;
+      // Stage what the fake IdP asserts, then hand the browser back to the real
+      // callback — which runs every check a live provider's callback runs:
+      // single-use state, provisioned tenant, verified domain.
+      broker().__setProfile(code, {
+        organizationId: organization,
+        email,
+        emailVerified: true,
+        externalId: `stub|${email}`,
+        name: email.split('@')[0],
+        connectionId: 'conn_stub',
+        idpName: 'DemoIdP',
+      });
+      const u = new URL('/auth/callback', config.sso.stubBase);
+      u.searchParams.set('state', state);
+      u.searchParams.set('code', code);
+      res.redirect(302, u.toString());
+    });
+  }
+
+  return r;
+}
+
+module.exports = { authRoutes };

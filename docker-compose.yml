@@ -1,0 +1,78 @@
+# One command to run the whole multi-tenant stack locally:
+#
+#   docker compose up --build
+#   open http://localhost:3000
+#
+# Sign in as analyst@firmx.com (firm: firm-x) and analyst@firmy.com
+# (firm: firm-y) in two different browser windows. The pipelines are disjoint,
+# which is the claim the product is built on.
+#
+# NOT A PRODUCTION TOPOLOGY. The passwords are literals, TLS is absent, and the
+# identity provider is a fake page that mints an identity from a form field.
+# All three are what make it runnable in one command with no accounts to create;
+# all three are why server/src/config.js refuses to boot with NODE_ENV=production
+# and SSO_PROVIDER=stub. The AWS deployment in infra/ is the real one.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cre_owner
+      POSTGRES_PASSWORD: local_dev_only
+      POSTGRES_DB: cre
+    ports: ['5432:5432']
+    healthcheck:
+      # The API and the migrator both wait on this. Without it they race the
+      # database's first-boot initialisation and fail on a connection refused
+      # that looks like a configuration error.
+      test: ['CMD-SHELL', 'pg_isready -U cre_owner -d cre']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes: ['cre_pgdata:/var/lib/postgresql/data']
+
+  # Migrations run as the OWNER, in a one-shot container. The API never holds
+  # this credential: an owner bypasses its own row level security policies, so
+  # the whole isolation design depends on those being different roles.
+  migrate:
+    build: ./server
+    command: sh -c "node src/db/migrate.js && node src/admin/seedDemo.js"
+    environment:
+      DATABASE_MIGRATION_URL: postgres://cre_owner:local_dev_only@db:5432/cre
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    build: ./server
+    environment:
+      NODE_ENV: development
+      PORT: 8080
+      APP_ORIGIN: http://localhost:3000
+      # Two roles, two connection strings. app_user serves tenant data and
+      # cannot read the sessions table; auth_user authenticates and cannot see
+      # a single deal. Created by the migrations.
+      DATABASE_URL: postgres://app_user@db:5432/cre
+      AUTH_DATABASE_URL: postgres://auth_user@db:5432/cre
+      SESSION_SIGNING_SECRET: local-development-only-secret-not-for-production
+      SSO_PROVIDER: stub
+      STUB_IDP_BASE: http://localhost:8080
+    ports: ['8080:8080']
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Baked at BUILD time, not run time: Create React App inlines
+        # REACT_APP_* into the bundle. Setting it as a runtime environment
+        # variable here would do nothing at all, silently, and the app would
+        # come up in single-user mode wondering where the login screen went.
+        REACT_APP_API_URL: http://localhost:8080
+    ports: ['3000:80']
+    depends_on: [api]
+
+volumes:
+  cre_pgdata:

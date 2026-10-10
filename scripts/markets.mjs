@@ -1,0 +1,412 @@
+#!/usr/bin/env node
+/**
+ * Replace the market table's invented demographics with Census figures.
+ *
+ *   npm run markets                      # dry run: report what would change
+ *   npm run markets -- --write           # write src/lib/marketsSourced.js
+ *   npm run markets -- --only=columbus-oh
+ *   npm run markets -- --check-key       # is CENSUS_API_KEY the right shape?
+ *
+ * Fills three of the nine fields on every market record — population, median
+ * household income, and a five-year population CAGR — from ACS 5-year estimates
+ * at CBSA level. Free, no key, nationwide.
+ *
+ * THE FIRST RUN IS A VERIFICATION RUN, and it has two jobs.
+ *
+ * api.census.gov is not reachable from the environment this was written in, so
+ * no call here has ever been made. And the CBSA codes are from memory: a wrong
+ * one does not fail, it answers with a real metro that is not yours. So the
+ * report prints the name the Census returned beside the city the record claims
+ * to be, and prints the old value beside the new one. Read both columns before
+ * passing --write.
+ *
+ * What it will NOT fix: employment growth, supply pipeline, rent growth,
+ * traffic counts and cap rates have no free source. Those stay seed data, and
+ * because a record's dataQuality is its weakest field, every record stays
+ * 'seed' after this runs. That is correct.
+ */
+
+import { writeFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { markets, fieldQuality } from '../src/lib/markets.js';
+import {
+  sourceMarket, CBSA, DEFAULT_VINTAGES, SOURCEABLE_FIELDS, renderSourcedModule, describeKey,
+  ADVISORY_FIELDS,
+} from '../src/lib/ingest/acsMarkets.js';
+import { discoverLayers, countiesInCbsa } from '../src/lib/ingest/cbsaCounties.js';
+
+const C = {
+  dim: (s) => `\x1b[2m${s}\x1b[0m`,
+  bold: (s) => `\x1b[1m${s}\x1b[0m`,
+  ok: (s) => `\x1b[32m${s}\x1b[0m`,
+  warn: (s) => `\x1b[33m${s}\x1b[0m`,
+};
+
+const args = process.argv.slice(2);
+const write = args.includes('--write');
+const only = (args.find((a) => a.startsWith('--only=')) || '').split('=')[1];
+
+/**
+ * Check the key without calling anything.
+ *
+ * Exists because the alternative is a shell one-liner, and a shell one-liner is
+ * how you find out that macOS zsh does not treat # as a comment interactively
+ * and has just passed your comment to wc as three filenames. This takes no
+ * quoting, no pipes and no network, and it prints the shape rather than the
+ * key.
+ */
+/**
+ * Confirm the county crosswalk against the live service before trusting it.
+ *
+ * Every layer id here is discovered rather than hardcoded, and none of it has
+ * been run against census.gov from where it was written. This prints what it
+ * bound to and the county list it got, which is the whole verification: a
+ * metro whose county list looks wrong is a metro whose growth is wrong.
+ */
+if (args.includes('--probe-counties')) {
+  const target = (args.find((a) => a.startsWith('--probe-counties=')) || '').split('=')[1]
+    || '18140';
+  try {
+    const layers = await discoverLayers();
+    /**
+     * Print the feature count and how many identically-named layers it was
+     * chosen from. A service can offer twenty-one layers called "Counties",
+     * and a probe that says only "bound to id 86" reads as more certain than
+     * it is.
+     */
+    const describe = (l) => `${C.ok(String(l.id))} ${C.dim(l.name)}`
+      + (l.features ? C.dim(`  ${l.features.toLocaleString()} features`) : '')
+      + (l.pickedFrom > 1 ? C.dim(`, chosen from ${l.pickedFrom} with that name`) : '')
+      + `\n      ${C.dim(l.service.replace('https://tigerweb.geo.census.gov/arcgis/rest/services/', ''))}`;
+    process.stdout.write(`\n${C.bold('TIGERweb layers')}\n`
+      + `  counties  ${describe(layers.counties)}\n`
+      + `  CBSA      ${describe(layers.cbsa)}\n\n`);
+
+    const r = await countiesInCbsa(target, { layers });
+    process.stdout.write(`${C.bold(r.cbsaName || target)} ${C.dim(`(CBSA ${target})`)}\n`
+      + `  ${r.counties.length} counties: `
+      + `${r.counties.map((c) => c.name).join(', ')}\n`
+      + C.dim(`  ${r.bordering} bordering counties intersected and were excluded by centroid\n\n`)
+      + C.ok('  The crosswalk works. Growth will be computed over a fixed county set.\n\n'));
+    process.exit(0);
+  } catch (err) {
+    process.stdout.write(`\n${C.warn(`crosswalk probe failed: ${err.message}`)}\n`
+      + C.dim('  Without this, growth falls back to the whole-metro difference, which is\n'
+        + '  shown but never written. Levels are unaffected.\n\n'));
+    process.exit(1);
+  }
+}
+
+if (args.includes('--check-key')) {
+  const k = describeKey();
+  if (!k.present) {
+    process.stdout.write(`\n${C.warn('CENSUS_API_KEY is not set in this shell.')}\n`
+      + C.dim('  export CENSUS_API_KEY=<the 40 hex characters from the email>\n')
+      + C.dim('  Note it is per-shell: a key exported in another tab is not set here.\n\n'));
+    process.exit(1);
+  }
+  if (k.looksLikePlaceholder) {
+    process.stdout.write(`\n${C.warn('CENSUS_API_KEY is set to a placeholder, not a key.')}\n`
+      + C.dim('  The documentation writes the export line with a stand-in value; that is\n'
+        + '  the part to replace. Your real key is in the Census signup email — 40\n'
+        + '  hexadecimal characters.\n\n')
+      + `  ${C.bold('export CENSUS_API_KEY=<the 40 characters from the email>')}\n\n`);
+    process.exit(1);
+  }
+
+  process.stdout.write(`\n${C.bold('CENSUS_API_KEY')}\n`
+    + `  length            ${k.length}${k.length === 40 ? C.ok('  ✓') : C.warn('  ✗ expected 40')}\n`
+    + `  40 hex characters ${k.looksValid ? C.ok('yes') : C.warn('no')}\n`
+    + `  wrapped in quotes ${k.looksQuoted ? C.warn('YES — strip them') : C.dim('no')}\n`
+    + `  stray whitespace  ${k.hadSurroundingWhitespace
+      ? C.dim('yes, trimmed automatically') : C.dim('no')}\n\n`);
+
+  process.stdout.write(k.looksValid
+    ? C.dim('  The shape is right, which is all this can tell you — only the Census\n'
+      + '  can say whether the key works. If it is refused, it is almost certainly\n'
+      + '  not activated: click the link in the confirmation email.\n\n')
+    : C.warn('  This is not a Census key. Check for a truncated paste or stray quotes.\n\n'));
+  process.exit(k.looksValid ? 0 : 1);
+}
+
+const targets = markets.filter((m) => !only || m.key === only);
+if (!targets.length) {
+  process.stderr.write(`no market matches --only=${only}\n`);
+  process.exit(2);
+}
+
+const asOf = `ACS 5-year ${DEFAULT_VINTAGES.to}`;
+
+/**
+ * Bind the TIGERweb layers once and share the per-state population cache.
+ *
+ * Without this, thirty-six metros rediscover the same two layers thirty-six
+ * times and refetch Texas eight times per vintage. A failure here is not fatal:
+ * every market then falls back to the whole-metro difference, which is shown
+ * and not written, and the summary says how many did.
+ */
+let layers = null;
+let crosswalkError = null;
+const cache = new Map();
+try {
+  layers = await discoverLayers();
+  process.stdout.write(C.dim(`County crosswalk: TIGERweb layers `
+    + `${layers.counties.id} (${layers.counties.name}) and `
+    + `${layers.cbsa.id} (${layers.cbsa.name})\n\n`));
+} catch (err) {
+  /**
+   * Printed ONCE, here, and then suppressed per market.
+   *
+   * The first real run emitted this same paragraph — a forty-layer list — under
+   * every one of thirty-six markets, which buried the numbers the run exists to
+   * show. A failure that is the same for every row is a property of the run.
+   */
+  crosswalkError = err;
+  process.stdout.write(`${C.warn('County crosswalk unavailable, growth will not be written')}\n`
+    + C.dim(`  ${err.message.split('. Layers seen:')[0]}\n`)
+    + C.dim('  Run --probe-counties for the full layer list.\n')
+    + C.dim('  Levels are unaffected; the whole-metro difference is shown but NOT written.\n\n'));
+}
+const out = {};
+let reached = 0;
+let failed = 0;
+let keyProblem = null;
+let advisoryOnly = 0;
+
+process.stdout.write(
+  `\n${C.bold('Sourcing')} ${C.dim(`${targets.length} markets from Census ACS `
+    + `(${DEFAULT_VINTAGES.from} → ${DEFAULT_VINTAGES.to}, non-overlapping)`)}\n`
+  + `${C.dim(`Writes: ${SOURCEABLE_FIELDS.join(', ')}.`)}\n`
+  + `${C.dim('Growth is summed over each metro\'s FIXED county list, so a county joining '
+    + 'or leaving\nthe CBSA cannot read as people arriving or leaving. Where that list '
+    + 'cannot be built,\nthe whole-metro difference is shown and NOT written.')}\n`
+  + `${C.dim('The remaining six fields have no free source and stay seed data.')}\n\n`,
+);
+
+for (const market of targets) {
+  const label = `${market.city}, ${market.state}`;
+  let result;
+  try {
+    result = await sourceMarket(market.key, {
+      cbsa: CBSA[market.key],
+      layers,
+      cache,
+      // Already established for the whole run; retrying per market would be
+      // thirty-six identical failures.
+      countyGrowth: !crosswalkError,
+    });
+  } catch (err) {
+    failed += 1;
+    process.stdout.write(`${C.bold(label.padEnd(22))} ${C.warn(`failed: ${err.message}`)}\n`);
+    /**
+     * A 403 is almost never the Census refusing you — it has no auth and no
+     * rate limit that answers this way. It is the egress policy of wherever
+     * this is running, and saying so saves an hour spent debugging a URL that
+     * is correct.
+     */
+    if (err.code === 'missing_key' || err.code === 'invalid_key') {
+      // Printed once, then the run is abandoned: thirty-six identical
+      // failures scrolling past is not more informative than one.
+      keyProblem = err.code;
+      break;
+    }
+    if (err.status === 403) {
+      process.stdout.write(`  ${C.dim('· 403 usually means api.census.gov is not on this '
+        + 'environment\'s egress allowlist, not that the request was wrong.')}\n`);
+    }
+    continue;
+  }
+
+  /**
+   * The name check, printed first because it is the one that catches the
+   * failure this script cannot detect for itself. "Columbus, GA Metro Area"
+   * against a record that says Columbus, OH is a transposed code, and the
+   * population that came back with it is a real number about the wrong place.
+   */
+  const name = result.cbsaName || '(no name returned)';
+  const plausible = result.cbsaName
+    && result.cbsaName.toLowerCase().includes(market.city.toLowerCase())
+    && result.cbsaName.toLowerCase().includes(market.state.toLowerCase());
+  process.stdout.write(
+    `${C.bold(label.padEnd(22))} ${C.dim(`CBSA ${result.cbsa || '—'}`)} `
+    + `${plausible ? C.ok(name) : C.warn(`${name}  ← CHECK THIS CODE`)}\n`,
+  );
+
+  const changes = Object.entries(result.fields).filter(([k]) => k !== 'populationBasis');
+  for (const [key, value] of changes) {
+    const before = market[key];
+    const delta = Number.isFinite(before) && before !== 0
+      ? ` ${C.dim(`(${value > before ? '+' : ''}${(((value / before) - 1) * 100).toFixed(0)}%)`)}`
+      : '';
+    const fmt = (n) => (typeof n === 'number' ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(n));
+    process.stdout.write(
+      `  ${key.padEnd(16)} ${C.dim(`${fmt(before)} (${fieldQuality(market, key)})`)}`
+      + `  →  ${C.ok(fmt(value))}${delta}\n`,
+    );
+  }
+  if (result.fields.populationBasis && result.fields.populationBasis !== market.populationBasis) {
+    process.stdout.write(
+      `  ${C.warn('!')} population basis ${market.populationBasis} → ${result.fields.populationBasis}: `
+      + `${C.dim('this record was a submarket carrying a city figure and now carries its metro\'s. '
+        + 'Every submarket of one metro will score identically on Market Scale.')}\n`,
+    );
+  }
+  /**
+   * Growth, shown and not written.
+   *
+   * Printed with the two populations it came from, because the number on its
+   * own is not checkable and this is the field where an unchecked number does
+   * the most damage: it is percentile-ranked across every market, so one
+   * boundary artifact re-sorts the whole column.
+   */
+  if (result.growth?.method === 'fixed-county-set') {
+    const g = result.growth;
+    process.stdout.write(
+      C.dim(`  ${'via'.padEnd(16)} ${g.countyCount} counties `)
+      + C.dim(`(${g.counties.map((c) => c.name).slice(0, 6).join(', ')}`)
+      + C.dim(`${g.countyCount > 6 ? `, +${g.countyCount - 6} more` : ''}) `)
+      + C.dim(`${g.earlierTotal.toLocaleString()} → ${g.latestTotal.toLocaleString()}\n`),
+    );
+  }
+
+  if (result.advisory) {
+    advisoryOnly += 1;
+    const a = result.advisory;
+    const sign = a.popGrowth5y > 0 ? '+' : '';
+    process.stdout.write(
+      `  ${C.dim('popGrowth5y'.padEnd(16))} ${C.warn('whole-metro diff, NOT written')}  `
+      + `${a.earlierPopulation.toLocaleString()} → ${a.latestPopulation.toLocaleString()}`
+      + `  ${sign}${a.totalChangePct.toFixed(1)}% over 5y`
+      + ` (${sign}${a.popGrowth5y.toFixed(2)}%/yr)\n`,
+    );
+    if (a.implausible) {
+      process.stdout.write(
+        `  ${C.warn('!')} ${C.warn('a metro does not change size by that much in five years')} `
+        + C.dim('— a county moved in or out of this CBSA between the two vintages, '
+          + 'so this is a boundary change, not growth.\n'),
+      );
+    }
+  }
+
+  for (const n of result.notes) {
+    // A note carrying a layer inventory is a paragraph; the run-level message
+    // already said it once.
+    const short = n.length > 200 ? `${n.slice(0, 197)}…` : n;
+    process.stdout.write(`  ${C.dim(`· ${short}`)}\n`);
+  }
+
+  if (changes.length) {
+    reached += 1;
+    out[market.key] = {
+      cbsa: result.cbsa,
+      cbsaName: result.cbsaName,
+      asOf,
+      fields: result.fields,
+    };
+  } else {
+    failed += 1;
+  }
+  process.stdout.write('\n');
+}
+
+process.stdout.write(`${C.bold(`${reached} sourced`)}${failed ? C.warn(`, ${failed} not`) : ''}\n`
+  + (advisoryOnly
+    ? C.warn(`  ${advisoryOnly} market(s) fell back to the whole-metro difference for growth;\n`)
+      + C.dim('  those figures are shown above and NOT written. Run --probe-counties to see why.\n')
+    : C.dim('  Growth came from each metro\'s fixed county list throughout.\n')));
+
+if (keyProblem) {
+  process.stdout.write(
+    `\n${C.warn(keyProblem === 'missing_key'
+      ? 'The Census needs an API key for this dataset.'
+      : 'The Census rejected the API key in CENSUS_API_KEY.')}\n`
+    + C.dim('  It answers a keyless request with an HTML page at HTTP 200, so this\n'
+      + '  arrives looking like a call that returned no data rather than one that\n'
+      + '  was refused.\n\n'),
+  );
+
+  if (keyProblem === 'invalid_key') {
+    /**
+     * A rejected key has two completely different causes with identical
+     * symptoms, and only one of them is about the key's contents. Checking the
+     * SHAPE separates them: a well-formed key the Census refuses is almost
+     * always one that was never activated from the confirmation email.
+     */
+    const k = describeKey();
+    if (k.looksLikePlaceholder) {
+      process.stdout.write(
+        `  ${C.warn('CENSUS_API_KEY is set to a placeholder, not a key.')}\n`
+        + C.dim('  Replace the stand-in value from the docs with the 40 hexadecimal\n'
+          + '  characters in your Census signup email.\n\n'),
+      );
+    } else if (!k.looksValid) {
+      process.stdout.write(
+        `  ${C.warn('The key does not look like a Census key.')} `
+        + C.dim(`Expected 40 hexadecimal characters; got ${k.length}`)
+        + `${k.looksQuoted ? C.dim(', wrapped in quotes') : ''}.\n`
+        + C.dim('  Check for a truncated paste, or quotes carried in from a .env file.\n\n'),
+      );
+    } else {
+      process.stdout.write(
+        `  ${C.bold('The key is well-formed, so this is almost certainly activation.')}\n`
+        + C.dim('  The Census emails a confirmation link when you sign up, and the key is\n'
+          + '  rejected until you click it. Check that email — including spam — before\n'
+          + '  requesting another key.\n\n'),
+      );
+    }
+    process.exit(2);
+  }
+
+  process.stdout.write(
+    '  1. Sign up (free, instant): https://api.census.gov/data/key_signup.html\n'
+    + '  2. Click the activation link in the confirmation email. The key does not\n'
+    + '     work until you do.\n'
+    + `  3. ${C.bold('export CENSUS_API_KEY=<the 40 hex characters from the email>')}\n`
+    + '  4. Re-run. Keep the key out of the repo; it is read from the environment\n'
+    + '     and masked in every message this prints.\n\n',
+  );
+  process.exit(2);
+}
+
+/**
+ * Nothing was sourced, so there is nothing to write.
+ *
+ * This used to write regardless. On a run where every market failed it
+ * rendered an overlay of `{}` over whatever was on disk and exited 0 — so a
+ * key that expired, or a Census outage, would silently delete thirty-six
+ * sourced records and report success. The file being empty when the bug
+ * shipped is the only reason it cost nothing.
+ */
+if (!reached) {
+  process.stdout.write(C.warn('\nNothing sourced, so nothing written.\n')
+    + C.dim('  The overlay on disk is left exactly as it was.\n\n'));
+  process.exit(1);
+}
+
+if (!write) {
+  process.stdout.write(C.dim('\nDry run. Check the CBSA names above, then re-run with --write.\n\n'));
+  process.exit(0);
+}
+
+// Merge into what is on disk rather than replacing it. A --only run touches
+// one market and must not drop the other thirty-five; a full run that reached
+// only some of them must not drop the ones it could not reach this time.
+const { SOURCED: existing } = await import('../src/lib/marketsSourced.js');
+const merged = { ...existing, ...out };
+
+const lost = Object.keys(existing).filter((k) => !(k in merged));
+if (lost.length) {
+  // Unreachable with a spread merge, and asserted rather than assumed: this
+  // is the invariant the bug above violated, and it is cheap to keep checking.
+  process.stdout.write(C.warn(`\nRefusing to write: would drop ${lost.join(', ')}.\n\n`));
+  process.exit(1);
+}
+
+const here = dirname(fileURLToPath(import.meta.url));
+const target = resolve(here, '../src/lib/marketsSourced.js');
+writeFileSync(target, renderSourcedModule(merged, { vintages: DEFAULT_VINTAGES }));
+process.stdout.write(C.dim(`\n→ ${target}\n`)
+  + C.dim(`  ${Object.keys(merged).length} markets in the overlay.\n`)
+  + C.dim('  Now run the suite: the markets test asserts nothing claims to be\n'
+    + '  sourced, and it is meant to fail the first time this succeeds.\n\n'));

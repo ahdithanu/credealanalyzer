@@ -1,0 +1,30 @@
+{
+  "name": "cre-analyzer-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Multi-tenant API for the CRE Deal Analyzer. Tenant isolation is enforced by Postgres row level security, not by application code.",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node src/db/migrate.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "seed": "node src/admin/seedDemo.js",
+    "tenants": "node src/admin/tenants.js",
+    "sso:check": "node src/admin/ssoCheck.js",
+    "audit:verify": "node src/admin/verifyAudit.js",
+    "loadtest": "node src/admin/loadtest.js",
+    "sbom": "npm sbom --sbom-format cyclonedx --omit=dev",
+    "scim-tokens": "node src/auth/provisioning.js",
+    "duo": "node src/admin/duo.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/rds-signer": "^3.700.0"
+  }
+}
