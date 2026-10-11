@@ -115,6 +115,22 @@ deployment whose firms all use SSO never has to configure them.
 
 ## Running the tests
 
+`npm test` carries `--test-timeout=60000`, and the number is not arbitrary.
+
+This suite hung in CI for six hours on every run for months — "Set up job" and
+"Initialize containers" both succeeded, `npm ci` succeeded, and then `Tests`
+sat there until GitHub's maximum job runtime killed it and reported the job as
+*cancelled*. Cancelled reads as "somebody stopped it", so nobody looked, and
+the tenant isolation suite — the one thing standing between two client firms'
+data — had never once actually run on a merge.
+
+The whole suite finishes in about 16 seconds locally, so any single test taking
+a minute is wedged. With the timeout, a hang fails as a NAMED test in a minute
+instead of a silent six-hour cancellation. That does not fix whatever hangs; it
+makes the hang say which test it is, which is the part that was missing.
+
+
+
 They need a real Postgres — RLS has several documented ways to silently not
 apply, and a mock would confirm whatever the implementation believes.
 
