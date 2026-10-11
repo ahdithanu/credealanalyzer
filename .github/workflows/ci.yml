@@ -73,12 +73,20 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: cre_owner
+          # `postgres`, NOT cre_owner, and this is the whole reason the server
+          # suite never ran here. test/helpers.js creates cre_owner as an
+          # ORDINARY role and demotes any existing one, because FORCE ROW LEVEL
+          # SECURITY does not bind to a superuser — so a cre_owner that stays
+          # superuser means the isolation tests pass over the one connection no
+          # deployed caller uses. A role cannot be demoted out from under the
+          # session using it, so naming the service's superuser cre_owner made
+          # that demotion fail, and the fixture then hung for six hours.
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U cre_owner"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +107,8 @@ jobs:
           PGHOST_DIR: localhost
           PGPORT: 5432
           PGPASSWORD: ci_only
-          TEST_PG_USER: cre_owner
+          # Must match POSTGRES_USER above, and must not be cre_owner.
+          TEST_PG_USER: postgres
 
   infra:
     name: Infrastructure

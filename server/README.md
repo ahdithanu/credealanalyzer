@@ -124,25 +124,33 @@ sat there until GitHub's maximum job runtime killed it and reported the job as
 the tenant isolation suite — the one thing standing between two client firms'
 data — had never once actually run on a merge.
 
-The whole suite finishes in about 16 seconds locally, so any single test taking
-a minute is wedged. With the timeout, a hang fails as a NAMED test in a minute
-instead of a silent six-hour cancellation. That does not fix whatever hangs; it
-makes the hang say which test it is, which is the part that was missing.
+The timeout is what named it, and three separate faults were behind it:
 
+1. **CI's Postgres service was created with `POSTGRES_USER: cre_owner`**, and
+   the fixture connected as that role. `cre_owner` has to end up an ORDINARY
+   role, because `FORCE ROW LEVEL SECURITY` does not bind to a superuser — and
+   a role cannot be demoted out from under the session using it. So the
+   demotion was refused, and had it instead succeeded, every isolation test
+   would have passed over a connection that bypasses the policies entirely.
+2. **A failed bootstrap left its pg client open**, and an open socket keeps the
+   event loop alive. That is what turned a sixty-millisecond error into six
+   hours of silence.
+3. **`app_user` and `auth_user` were created `NOLOGIN` and without passwords.**
+   Only a superuser may set `NOSUPERUSER`, so migration 001 could not correct
+   the attributes itself and refused the run — correctly. And CI reaches
+   Postgres over TCP, where the official image authenticates, so a
+   passwordless role could not connect at all.
 
+All three are fixed, and the fixture now VERIFIES `cre_owner`'s attributes
+rather than assuming the `ALTER` took, so the "green because row level
+security was never binding" outcome cannot recur silently. Checked both ways
+before being believed: against TCP with password authentication and a
+superuser named `postgres` (CI's shape), and against a unix socket with trust
+(the local shape).
 
-They need a real Postgres — RLS has several documented ways to silently not
-apply, and a mock would confirm whatever the implementation believes.
-
-```sh
-initdb -D /tmp/pgdata --auth=trust          # as an unprivileged user
-pg_ctl -D /tmp/pgdata -o "-p 5433 -k /tmp" start
-npm test
-```
-
-Run **serially** (already set in `package.json`). Each file gets its own
-database, but Postgres roles are cluster-wide, so the role statements in the
-migrations collide across parallel files.
+The whole suite finishes in about 16 seconds, so any single test taking a
+minute is wedged, and the timeout keeps a future hang to a named failure in a
+minute rather than a silent six-hour cancellation.
 
 ## Environment
 
