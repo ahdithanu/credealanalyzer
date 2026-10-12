@@ -40,6 +40,8 @@
  * Point it at a running stack (docker compose up) with --base.
  */
 
+const config = require('../config');
+
 const DEFAULTS = {
   base: process.env.LOADTEST_BASE || 'http://127.0.0.1:8080',
   duration: 20,
@@ -113,15 +115,21 @@ function percentile(sorted, p) {
 
 /** Sign in through the stub identity provider and come back with a session. */
 async function signIn(base) {
-  const jar = [];
+  const jar = new Map();
   const capture = (res) => {
     const set = res.headers.getSetCookie?.() || [];
-    for (const c of set) jar.push(c.split(';')[0]);
+    for (const c of set) {
+      const pair = c.split(';')[0];
+      const name = pair.slice(0, pair.indexOf('='));
+      if (/(?:^|;)\s*Max-Age=0(?:;|$)/i.test(c)) jar.delete(name);
+      else jar.set(name, pair);
+    }
   };
-  const cookie = () => jar.join('; ');
+  const cookie = () => [...jar.values()].join('; ');
 
   // /auth/start issues the state and redirects at the identity provider.
   const start = await fetch(`${base}/auth/start?next=/`, { redirect: 'manual' });
+  capture(start);
   const idp = new URL(start.headers.get('location'), base);
   const state = idp.searchParams.get('state');
   const code = idp.searchParams.get('code') || `load-${Math.random().toString(36).slice(2)}`;
@@ -135,12 +143,14 @@ async function signIn(base) {
   });
   const posted = await fetch(`${base}/auth/stub`, {
     method: 'POST', body, redirect: 'manual',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: cookie() },
   });
   const callback = new URL(posted.headers.get('location'), base);
-  const done = await fetch(`${base}${callback.pathname}${callback.search}`, { redirect: 'manual' });
+  const done = await fetch(`${base}${callback.pathname}${callback.search}`, {
+    redirect: 'manual', headers: { cookie: cookie() },
+  });
   capture(done);
-  if (!jar.length) throw new Error('sign-in produced no session cookie');
+  if (!jar.has(config.session.cookieName)) throw new Error('sign-in produced no session cookie');
 
   const me = await fetch(`${base}/auth/me`, { headers: { cookie: cookie() } });
   if (!me.ok) throw new Error(`/auth/me returned ${me.status} after sign-in`);
@@ -332,4 +342,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, summarise, percentile, THRESHOLDS };
+module.exports = { run, signIn, summarise, percentile, THRESHOLDS };

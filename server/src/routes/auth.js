@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { timingSafeEqual } = require('crypto');
 const config = require('../config');
 const login = require('../auth/login');
 const session = require('../auth/session');
@@ -30,6 +31,31 @@ const magicLink = require('../auth/magicLink');
  * cookie on exactly that request, which would make every Duo login fail.
  */
 const PENDING_COOKIE = 'cre_mfa_pending';
+
+// The production prefix forbids Domain cookies and sibling-host injection.
+// Lax permits the provider's top-level GET callback; Strict would break SSO.
+const stateCookiePrefix = () => config.isProd ? '__Host-cre_sso_state_' : 'cre_sso_state_';
+const validState = (state) => typeof state === 'string' && /^[A-Za-z0-9_-]{43}$/.test(state);
+const stateCookieName = (state) => validState(state) ? `${stateCookiePrefix()}${state}` : null;
+const stateCookieOptions = () => session.cookieOptions(config.sso.stateTtlMs);
+const MAX_PENDING_LOGINS = 8;
+
+function setBrowserState(req, res, state) {
+  // One cookie per attempt lets separate tabs return in either order, even
+  // when their starts race. Bound the cookie jar so it cannot crowd out sessions.
+  const names = (req.headers.cookie || '').split(';').map((c) => c.split('=')[0].trim());
+  const pending = [...new Set(names.filter((name) => name.startsWith(stateCookiePrefix())
+    && validState(name.slice(stateCookiePrefix().length))))];
+  for (const name of pending.slice(0, Math.max(0, pending.length - MAX_PENDING_LOGINS + 1))) {
+    res.clearCookie(name, stateCookieOptions());
+  }
+  res.cookie(stateCookieName(state), state, stateCookieOptions());
+}
+
+function browserStateMatches(state, cookie) {
+  if (!validState(state) || !validState(cookie)) return false;
+  return timingSafeEqual(Buffer.from(state), Buffer.from(cookie));
+}
 
 function pendingCookieOptions(maxAge = config.duo.pendingTtlMs) {
   return {
@@ -70,19 +96,31 @@ function authRoutes() {
       if (!tenantHint && req.query.email) {
         tenantHint = await login.discoverTenant(req.query.email);
       }
-      const { url } = await login.begin({
+      const { url, state } = await login.begin({
         tenantHint,
         redirectTo: req.query.next,
         ip: req.ip,
       });
+      setBrowserState(req, res, state);
       res.redirect(302, url);
     } catch (err) { next(err); }
   });
 
   // The identity provider returns the browser here.
   r.get('/callback', async (req, res, next) => {
+    const cookieName = stateCookieName(req.query.state);
+    const browserState = cookieName ? readCookie(req, cookieName) : null;
+    // Clear only this attempt on every outcome, including provider failures.
+    // Malformed URL state cannot name a cookie; other tabs remain untouched.
+    // Atomic server consumption prevents replay even with a restored cookie.
+    if (cookieName) res.clearCookie(cookieName, stateCookieOptions());
     try {
       const { code, state } = req.query;
+      if (!browserStateMatches(state, browserState)) {
+        // Check BEFORE consuming server state or exchanging the code. A foreign
+        // browser must neither sign in nor burn the legitimate browser's login.
+        throw new login.LoginError('bad_state', 'This browser did not start the sign-in.');
+      }
       const result = await login.complete({
         state, code, ip: req.ip, userAgent: req.headers['user-agent'],
       });

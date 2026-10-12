@@ -68,8 +68,9 @@ async function discoverTenant(email) {
  * refuse to authenticate them.
  */
 async function begin({ tenantHint, redirectTo, ip }) {
-  // 32 bytes of CSPRNG. The state parameter is what ties the callback to a
-  // login THIS browser started: without it an attacker can run a handshake with
+  // 32 bytes of CSPRNG tie the callback to this login attempt. The HTTP route
+  // also binds state to an HttpOnly cookie: server state alone cannot identify
+  // the receiving browser. Without that binding, an attacker can sign in with
   // their own credentials and hand the victim the resulting callback URL,
   // silently logging the victim into the attacker's account and any deal they
   // then enter goes into the attacker's tenant. Recorded server-side and

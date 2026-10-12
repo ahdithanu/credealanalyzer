@@ -622,11 +622,20 @@ function setCookies(res) {
   return out;
 }
 
+async function beginBrowserLogin() {
+  const res = await fetch(`${base}/auth/start`, { redirect: 'manual' });
+  assert.equal(res.status, 302);
+  const url = new URL(res.headers.get('location'));
+  const cookie = res.headers.getSetCookie().find((c) => c.startsWith('cre_sso_state_'));
+  assert.ok(cookie, 'SSO start did not bind this browser');
+  return { state: url.searchParams.get('state'), cookie: cookie.split(';')[0] };
+}
+
 test('the callback redirects to Duo and sets an httpOnly pending cookie', async () => {
   await startApi();
   await enableDuo();
 
-  const begun = await login.begin({ redirectTo: '/' });
+  const begun = await beginBrowserLogin();
   const code = `c-${crypto.randomUUID()}`;
   stub.__setProfile(code, {
     organizationId: 'org_x', email: `analyst@${seed.a.domain}`,
@@ -635,7 +644,7 @@ test('the callback redirects to Duo and sets an httpOnly pending cookie', async 
 
   const res = await fetch(
     `${base}/auth/callback?state=${encodeURIComponent(begun.state)}&code=${code}`,
-    { redirect: 'manual' });
+    { redirect: 'manual', headers: { cookie: begun.cookie } });
 
   assert.equal(res.status, 302);
   const location = res.headers.get('location');
@@ -662,7 +671,7 @@ test('the Duo callback exchanges the cookie for a session, and clears it', async
   await startApi();
   await enableDuo();
 
-  const begun = await login.begin({ redirectTo: '/' });
+  const begun = await beginBrowserLogin();
   const code = `c-${crypto.randomUUID()}`;
   stub.__setProfile(code, {
     organizationId: 'org_x', email: `analyst@${seed.a.domain}`,
@@ -670,7 +679,7 @@ test('the Duo callback exchanges the cookie for a session, and clears it', async
   });
   const first = await fetch(
     `${base}/auth/callback?state=${encodeURIComponent(begun.state)}&code=${code}`,
-    { redirect: 'manual' });
+    { redirect: 'manual', headers: { cookie: begun.cookie } });
   const pending = setCookies(first).cre_mfa_pending.value;
   const duoState = new URL(first.headers.get('location')).searchParams.get('state');
 
@@ -694,7 +703,7 @@ test('a Duo callback with no cookie gets no session', async () => {
   await startApi();
   await enableDuo();
 
-  const begun = await login.begin({ redirectTo: '/' });
+  const begun = await beginBrowserLogin();
   const code = `c-${crypto.randomUUID()}`;
   stub.__setProfile(code, {
     organizationId: 'org_x', email: `analyst@${seed.a.domain}`,
@@ -702,7 +711,7 @@ test('a Duo callback with no cookie gets no session', async () => {
   });
   const first = await fetch(
     `${base}/auth/callback?state=${encodeURIComponent(begun.state)}&code=${code}`,
-    { redirect: 'manual' });
+    { redirect: 'manual', headers: { cookie: begun.cookie } });
   const duoState = new URL(first.headers.get('location')).searchParams.get('state');
 
   // The whole callback URL, from a browser that never started the handshake.
@@ -720,7 +729,7 @@ test('a denied push comes back as a refusal, not a session', async () => {
   await startApi();
   await enableDuo();
 
-  const begun = await login.begin({ redirectTo: '/' });
+  const begun = await beginBrowserLogin();
   const code = `c-${crypto.randomUUID()}`;
   stub.__setProfile(code, {
     organizationId: 'org_x', email: `analyst@${seed.a.domain}`,
@@ -728,7 +737,7 @@ test('a denied push comes back as a refusal, not a session', async () => {
   });
   const first = await fetch(
     `${base}/auth/callback?state=${encodeURIComponent(begun.state)}&code=${code}`,
-    { redirect: 'manual' });
+    { redirect: 'manual', headers: { cookie: begun.cookie } });
   const pending = setCookies(first).cre_mfa_pending.value;
   const duoState = new URL(first.headers.get('location')).searchParams.get('state');
 
@@ -771,7 +780,7 @@ test('the pending handle is accepted ONLY from the cookie, never from the URL', 
   await startApi();
   await enableDuo();
 
-  const begun = await login.begin({ redirectTo: '/' });
+  const begun = await beginBrowserLogin();
   const code = `c-${crypto.randomUUID()}`;
   stub.__setProfile(code, {
     organizationId: 'org_x', email: `analyst@${seed.a.domain}`,
@@ -779,7 +788,7 @@ test('the pending handle is accepted ONLY from the cookie, never from the URL', 
   });
   const first = await fetch(
     `${base}/auth/callback?state=${encodeURIComponent(begun.state)}&code=${code}`,
-    { redirect: 'manual' });
+    { redirect: 'manual', headers: { cookie: begun.cookie } });
   const pending = setCookies(first).cre_mfa_pending.value;
   const duoState = new URL(first.headers.get('location')).searchParams.get('state');
 

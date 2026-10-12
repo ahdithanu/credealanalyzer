@@ -13,23 +13,218 @@ const { freshDatabase, seedTwoTenants } = require('./helpers');
 
 process.env.SSO_PROVIDER = 'stub';
 
-let env, seed, login, brokerMod, stub, pool;
+let env, seed, login, brokerMod, stub, pool, server, base;
 
 test.before(async () => {
   env = await freshDatabase('auth');
   seed = await seedTwoTenants(env.ownerUrl);
   process.env.DATABASE_URL = env.appUrl;
   process.env.AUTH_DATABASE_URL = env.authUrl;
+  process.env.APP_ORIGIN = 'http://localhost:3000';
   // Required after DATABASE_URL is set: config and pool capture it on load.
   login = require('../src/auth/login');
   brokerMod = require('../src/auth/broker');
   pool = require('../src/db/pool');
   stub = brokerMod.broker();
+  require('../src/config').rateLimits.auth = 200;
+  server = require('../src/app').createApp().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  base = `http://127.0.0.1:${server.address().port}`;
 });
 
 test.after(async () => {
+  if (server) await new Promise((r) => server.close(r));
   if (pool) { await pool.pool.end(); await pool.authPool.end(); }
   if (env) await env.drop();
+});
+
+function cookies(res) {
+  return res.headers.getSetCookie().map((c) => c.split(';')[0]);
+}
+
+async function browserLogin() {
+  const start = await fetch(`${base}/auth/start?org=firm-x&next=/pipeline`, { redirect: 'manual' });
+  assert.equal(start.status, 302);
+  const provider = new URL(start.headers.get('location'));
+  const state = provider.searchParams.get('state');
+  const code = provider.searchParams.get('code');
+  stub.__setProfile(code, goodProfile());
+  return { start, state, cookie: cookies(start)[0],
+    callback: `${base}/auth/callback?state=${state}&code=${code}` };
+}
+
+const callback = (url, cookie) => fetch(url, {
+  redirect: 'manual', headers: cookie ? { cookie } : {},
+});
+
+test('HTTP SSO sets a browser cookie and completes only in that browser', async () => {
+  const begun = await browserLogin();
+  const header = begun.start.headers.getSetCookie()[0];
+  assert.match(header, /^cre_sso_state_[A-Za-z0-9_-]{43}=[A-Za-z0-9_-]{43};/);
+  assert.match(header, /HttpOnly/);
+  assert.match(header, /SameSite=Lax/);
+  assert.match(header, /Path=\//);
+  assert.match(header, new RegExp(`Max-Age=${Math.floor(require('../src/config').sso.stateTtlMs / 1000)}(?:;|$)`));
+  const res = await callback(begun.callback, begun.cookie);
+  assert.equal(res.headers.get('location'), 'http://localhost:3000/pipeline');
+  assert.ok(cookies(res).some((c) => /^cre_session=.+/.test(c)));
+  assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
+});
+
+test('HTTP SSO rejects foreign browsers before consuming state or exchanging the code', async () => {
+  const begun = await browserLogin();
+  const other = await browserLogin();
+  const exchange = stub.exchange;
+  let exchanges = 0;
+  stub.exchange = async (...args) => { exchanges += 1; return exchange(...args); };
+  try {
+    for (const cookie of [undefined, other.cookie, `${begun.cookie.split('=')[0]}=malformed`, `${begun.cookie.split('=')[0]}=%E0%A4%A`]) {
+      const res = await callback(`${begun.callback}&browserState=${begun.state}`, cookie);
+      assert.match(res.headers.get('location'), /\/signin\?error=bad_state$/);
+      assert.ok(!cookies(res).some((c) => /^cre_session=/.test(c)));
+      assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
+    }
+    assert.equal(exchanges, 0, 'a refused browser reached the provider exchange');
+    const good = await callback(begun.callback, begun.cookie);
+    assert.equal(good.headers.get('location'), 'http://localhost:3000/pipeline');
+    assert.equal(exchanges, 1, 'the legitimate browser could not finish');
+  } finally { stub.exchange = exchange; }
+});
+
+test('HTTP SSO rejects absent and ambiguous URL state even with a browser cookie', async () => {
+  const begun = await browserLogin();
+  for (const url of [begun.callback.replace(`state=${begun.state}&`, ''),
+    `${begun.callback}&state=${begun.state}`]) {
+    const res = await callback(url, begun.cookie);
+    assert.match(res.headers.get('location'), /\/signin\?error=bad_state$/);
+    assert.ok(!cookies(res).some((c) => /^cre_session=/.test(c)));
+  }
+});
+
+test('HTTP SSO replay fails even when the original browser cookie is restored', async () => {
+  const begun = await browserLogin();
+  const first = await callback(begun.callback, begun.cookie);
+  assert.ok(cookies(first).some((c) => /^cre_session=.+/.test(c)));
+  for (const cookie of [undefined, begun.cookie]) {
+    const replay = await callback(begun.callback, cookie);
+    assert.match(replay.headers.get('location'), /\/signin\?error=bad_state$/);
+    assert.ok(!cookies(replay).some((c) => /^cre_session=/.test(c)));
+  }
+});
+
+test('HTTP SSO atomically rejects concurrent callback replay', async () => {
+  const begun = await browserLogin();
+  const responses = await Promise.all([
+    callback(begun.callback, begun.cookie), callback(begun.callback, begun.cookie),
+  ]);
+  assert.equal(responses.filter((res) => cookies(res).some((c) => /^cre_session=.+/.test(c))).length, 1);
+  assert.equal(responses.filter((res) => /error=bad_state$/.test(res.headers.get('location'))).length, 1);
+});
+
+test('separate tab logins can complete in either order without clearing each other', async () => {
+  for (const reverse of [false, true]) {
+    const attempts = await Promise.all([browserLogin(), browserLogin()]);
+    assert.notEqual(attempts[0].cookie.split('=')[0], attempts[1].cookie.split('=')[0]);
+    const jar = attempts.map((a) => a.cookie).join('; ');
+    if (reverse) attempts.reverse();
+    for (const attempt of attempts) {
+      const res = await callback(attempt.callback, jar);
+      assert.equal(res.headers.get('location'), 'http://localhost:3000/pipeline');
+      const cleared = cookies(res).filter((c) => /^cre_sso_state_/.test(c));
+      assert.deepEqual(cleared, [`${attempt.cookie.split('=')[0]}=`]);
+      assert.ok(cookies(res).some((c) => /^cre_session=.+/.test(c)));
+    }
+  }
+});
+
+test('SSO bounds outstanding browser cookies while preserving the newest attempts', async () => {
+  const jar = Array.from({ length: 8 }, (_, i) => {
+    const state = String.fromCharCode(97 + i).repeat(43);
+    return `cre_sso_state_${state}=${state}`;
+  });
+  const res = await fetch(`${base}/auth/start`, { redirect: 'manual', headers: { cookie: jar.join('; ') } });
+  assert.equal(res.status, 302);
+  const set = res.headers.getSetCookie();
+  assert.equal(set.length, 2, 'start must remove one old attempt and add one new attempt');
+  assert.ok(set[0].startsWith(`${jar[0].split('=')[0]}=;`));
+  assert.match(set[0], /Max-Age=0/);
+  assert.match(set[1], /^cre_sso_state_[A-Za-z0-9_-]{43}=[A-Za-z0-9_-]{43};/);
+});
+
+test('HTTP SSO clears browser state when server state expires or the provider exchange fails', async () => {
+  const expired = await browserLogin();
+  await pool.authPool.query(
+    "UPDATE sso_states SET expires_at = now() - interval '1 minute' WHERE state = $1", [expired.state]);
+  const begun = await browserLogin();
+  const exchange = stub.exchange;
+  try {
+    stub.exchange = async () => { throw Object.assign(new Error('provider unavailable'), { status: 502 }); };
+    for (const [attempt, expected] of [[expired, 302], [begun, 502]]) {
+      const res = await callback(attempt.callback, attempt.cookie);
+      assert.equal(res.status, expected);
+      assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
+      assert.ok(!cookies(res).some((c) => /^cre_session=/.test(c)));
+    }
+  } finally { stub.exchange = exchange; }
+});
+
+test('a WorkOS callback completes through the browser state check and real broker parser', async () => {
+  const config = require('../src/config');
+  const originalProvider = config.sso.provider;
+  const originalWorkos = config.sso.workos;
+  const realFetch = global.fetch;
+  const exchanges = [];
+  config.sso.provider = 'workos';
+  config.sso.workos = { ...originalWorkos, apiKey: 'sk_test', clientId: 'client_test',
+    redirectUri: `${base}/auth/callback` };
+  brokerMod.__reset();
+  global.fetch = async (url, init) => {
+    if (String(url) !== 'https://api.workos.com/sso/token') return realFetch(url, init);
+    exchanges.push(new URLSearchParams(init.body).get('code'));
+    return { ok: true, status: 200, json: async () => ({ profile: {
+      organization_id: 'org_x', email: 'analyst@firmx.com', id: 'profile_test',
+      connection_id: 'conn_test', connection_type: 'OktaSAML',
+    } }) };
+  };
+  try {
+    const start = await fetch(`${base}/auth/start?org=firm-x&next=/pipeline`, { redirect: 'manual' });
+    const url = new URL(start.headers.get('location'));
+    assert.equal(url.origin + url.pathname, 'https://api.workos.com/sso/authorize');
+    assert.equal(url.searchParams.get('organization'), 'org_x');
+    const callbackUrl = `${base}/auth/callback?state=${url.searchParams.get('state')}&code=workos_code`;
+    const foreign = await callback(callbackUrl);
+    assert.match(foreign.headers.get('location'), /error=bad_state$/);
+    assert.deepEqual(exchanges, []);
+    const good = await callback(callbackUrl, cookies(start)[0]);
+    assert.equal(good.headers.get('location'), 'http://localhost:3000/pipeline');
+    assert.ok(cookies(good).some((c) => /^cre_session=.+/.test(c)));
+    assert.deepEqual(exchanges, ['workos_code']);
+  } finally {
+    global.fetch = realFetch;
+    config.sso.provider = originalProvider;
+    config.sso.workos = originalWorkos;
+    brokerMod.__reset();
+    stub = brokerMod.broker();
+  }
+});
+
+test('production SSO uses a Secure host-prefixed cookie and ignores the development cookie', async () => {
+  const config = require('../src/config');
+  const wasProd = config.isProd;
+  config.isProd = true;
+  try {
+    const begun = await browserLogin();
+    const header = begun.start.headers.getSetCookie()[0];
+    assert.match(header, /^__Host-cre_sso_state_[A-Za-z0-9_-]{43}=/);
+    assert.match(header, /; Secure(?:;|$)/);
+    assert.match(header, /; Path=\/(?:;|$)/);
+    assert.ok(!/; Domain=/i.test(header));
+    const bad = await callback(begun.callback, begun.cookie.replace('__Host-', ''));
+    assert.match(bad.headers.get('location'), /error=bad_state$/);
+    const good = await callback(begun.callback, begun.cookie);
+    assert.ok(cookies(good).some((c) => /^cre_session=.+/.test(c)));
+    assert.ok(good.headers.getSetCookie().some((c) => /^__Host-cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
+  } finally { config.isProd = wasProd; }
 });
 
 /** Drive a full handshake, staging whatever the fake IdP should assert. */

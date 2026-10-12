@@ -95,19 +95,15 @@ function requireSession() {
       }
 
       // Rotate a long-lived session so a stolen cookie has a short useful life.
-      // The old row is revoked, so the stolen copy stops working rather than
-      // continuing beside the new one.
+      // Replace the old token hash atomically. Retaining the row ID preserves
+      // the SPA's CSRF token across rotation, including other open tabs.
       if (session.shouldRotate(s)) {
-        const rotated = await session.issue(null, {
-          userId: s.userId,
-          tenantId: s.tenantId,
-          ip: req.ip,
-          userAgent: req.headers['user-agent'],
-        });
-        await session.revoke(s.sessionId);
-        res.cookie(config.session.cookieName, rotated.token,
-          session.cookieOptions(config.session.ttlMs));
-        s.sessionId = (await session.resolve(rotated.token)).sessionId;
+        const rotated = await session.rotate(s.sessionId, token);
+        if (rotated) {
+          res.cookie(config.session.cookieName, rotated.token,
+            session.cookieOptions(rotated.expiresAt.getTime() - Date.now()));
+          s.issuedAt = rotated.issuedAt;
+        }
       }
 
       req.session = s;
