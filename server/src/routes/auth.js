@@ -34,13 +34,26 @@ const PENDING_COOKIE = 'cre_mfa_pending';
 
 // The production prefix forbids Domain cookies and sibling-host injection.
 // Lax permits the provider's top-level GET callback; Strict would break SSO.
-const stateCookieName = () => config.isProd ? '__Host-cre_sso_state' : 'cre_sso_state';
+const stateCookiePrefix = () => config.isProd ? '__Host-cre_sso_state_' : 'cre_sso_state_';
+const validState = (state) => typeof state === 'string' && /^[A-Za-z0-9_-]{43}$/.test(state);
+const stateCookieName = (state) => validState(state) ? `${stateCookiePrefix()}${state}` : null;
 const stateCookieOptions = () => session.cookieOptions(config.sso.stateTtlMs);
+const MAX_PENDING_LOGINS = 8;
+
+function setBrowserState(req, res, state) {
+  // One cookie per attempt lets separate tabs return in either order, even
+  // when their starts race. Bound the cookie jar so it cannot crowd out sessions.
+  const names = (req.headers.cookie || '').split(';').map((c) => c.split('=')[0].trim());
+  const pending = [...new Set(names.filter((name) => name.startsWith(stateCookiePrefix())
+    && validState(name.slice(stateCookiePrefix().length))))];
+  for (const name of pending.slice(0, Math.max(0, pending.length - MAX_PENDING_LOGINS + 1))) {
+    res.clearCookie(name, stateCookieOptions());
+  }
+  res.cookie(stateCookieName(state), state, stateCookieOptions());
+}
 
 function browserStateMatches(state, cookie) {
-  if (typeof state !== 'string' || typeof cookie !== 'string'
-      || !/^[A-Za-z0-9_-]{43}$/.test(state)
-      || !/^[A-Za-z0-9_-]{43}$/.test(cookie)) return false;
+  if (!validState(state) || !validState(cookie)) return false;
   return timingSafeEqual(Buffer.from(state), Buffer.from(cookie));
 }
 
@@ -88,17 +101,19 @@ function authRoutes() {
         redirectTo: req.query.next,
         ip: req.ip,
       });
-      res.cookie(stateCookieName(), state, stateCookieOptions());
+      setBrowserState(req, res, state);
       res.redirect(302, url);
     } catch (err) { next(err); }
   });
 
   // The identity provider returns the browser here.
   r.get('/callback', async (req, res, next) => {
-    const browserState = readCookie(req, stateCookieName());
-    // Clear on every outcome, including provider failures. Server-side state
-    // consumption remains atomic, so restoring a spent cookie cannot replay it.
-    res.clearCookie(stateCookieName(), stateCookieOptions());
+    const cookieName = stateCookieName(req.query.state);
+    const browserState = cookieName ? readCookie(req, cookieName) : null;
+    // Clear only this attempt on every outcome, including provider failures.
+    // Malformed URL state cannot name a cookie; other tabs remain untouched.
+    // Atomic server consumption prevents replay even with a restored cookie.
+    if (cookieName) res.clearCookie(cookieName, stateCookieOptions());
     try {
       const { code, state } = req.query;
       if (!browserStateMatches(state, browserState)) {

@@ -626,7 +626,7 @@ async function beginBrowserLogin() {
   const res = await fetch(`${base}/auth/start`, { redirect: 'manual' });
   assert.equal(res.status, 302);
   const url = new URL(res.headers.get('location'));
-  const cookie = res.headers.getSetCookie().find((c) => c.startsWith('cre_sso_state='));
+  const cookie = res.headers.getSetCookie().find((c) => c.startsWith('cre_sso_state_'));
   assert.ok(cookie, 'SSO start did not bind this browser');
   return { state: url.searchParams.get('state'), cookie: cookie.split(';')[0] };
 }

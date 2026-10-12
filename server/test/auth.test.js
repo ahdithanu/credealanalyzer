@@ -26,6 +26,7 @@ test.before(async () => {
   brokerMod = require('../src/auth/broker');
   pool = require('../src/db/pool');
   stub = brokerMod.broker();
+  require('../src/config').rateLimits.auth = 200;
   server = require('../src/app').createApp().listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -59,7 +60,7 @@ const callback = (url, cookie) => fetch(url, {
 test('HTTP SSO sets a browser cookie and completes only in that browser', async () => {
   const begun = await browserLogin();
   const header = begun.start.headers.getSetCookie()[0];
-  assert.match(header, /^cre_sso_state=[A-Za-z0-9_-]{43};/);
+  assert.match(header, /^cre_sso_state_[A-Za-z0-9_-]{43}=[A-Za-z0-9_-]{43};/);
   assert.match(header, /HttpOnly/);
   assert.match(header, /SameSite=Lax/);
   assert.match(header, /Path=\//);
@@ -67,7 +68,7 @@ test('HTTP SSO sets a browser cookie and completes only in that browser', async 
   const res = await callback(begun.callback, begun.cookie);
   assert.equal(res.headers.get('location'), 'http://localhost:3000/pipeline');
   assert.ok(cookies(res).some((c) => /^cre_session=.+/.test(c)));
-  assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state=;/.test(c) && /Max-Age=0/.test(c)));
+  assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
 });
 
 test('HTTP SSO rejects foreign browsers before consuming state or exchanging the code', async () => {
@@ -77,11 +78,11 @@ test('HTTP SSO rejects foreign browsers before consuming state or exchanging the
   let exchanges = 0;
   stub.exchange = async (...args) => { exchanges += 1; return exchange(...args); };
   try {
-    for (const cookie of [undefined, other.cookie, 'cre_sso_state=malformed', 'cre_sso_state=%E0%A4%A']) {
+    for (const cookie of [undefined, other.cookie, `${begun.cookie.split('=')[0]}=malformed`, `${begun.cookie.split('=')[0]}=%E0%A4%A`]) {
       const res = await callback(`${begun.callback}&browserState=${begun.state}`, cookie);
       assert.match(res.headers.get('location'), /\/signin\?error=bad_state$/);
       assert.ok(!cookies(res).some((c) => /^cre_session=/.test(c)));
-      assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state=;/.test(c) && /Max-Age=0/.test(c)));
+      assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
     }
     assert.equal(exchanges, 0, 'a refused browser reached the provider exchange');
     const good = await callback(begun.callback, begun.cookie);
@@ -120,6 +121,36 @@ test('HTTP SSO atomically rejects concurrent callback replay', async () => {
   assert.equal(responses.filter((res) => /error=bad_state$/.test(res.headers.get('location'))).length, 1);
 });
 
+test('separate tab logins can complete in either order without clearing each other', async () => {
+  for (const reverse of [false, true]) {
+    const attempts = await Promise.all([browserLogin(), browserLogin()]);
+    assert.notEqual(attempts[0].cookie.split('=')[0], attempts[1].cookie.split('=')[0]);
+    const jar = attempts.map((a) => a.cookie).join('; ');
+    if (reverse) attempts.reverse();
+    for (const attempt of attempts) {
+      const res = await callback(attempt.callback, jar);
+      assert.equal(res.headers.get('location'), 'http://localhost:3000/pipeline');
+      const cleared = cookies(res).filter((c) => /^cre_sso_state_/.test(c));
+      assert.deepEqual(cleared, [`${attempt.cookie.split('=')[0]}=`]);
+      assert.ok(cookies(res).some((c) => /^cre_session=.+/.test(c)));
+    }
+  }
+});
+
+test('SSO bounds outstanding browser cookies while preserving the newest attempts', async () => {
+  const jar = Array.from({ length: 8 }, (_, i) => {
+    const state = String.fromCharCode(97 + i).repeat(43);
+    return `cre_sso_state_${state}=${state}`;
+  });
+  const res = await fetch(`${base}/auth/start`, { redirect: 'manual', headers: { cookie: jar.join('; ') } });
+  assert.equal(res.status, 302);
+  const set = res.headers.getSetCookie();
+  assert.equal(set.length, 2, 'start must remove one old attempt and add one new attempt');
+  assert.ok(set[0].startsWith(`${jar[0].split('=')[0]}=;`));
+  assert.match(set[0], /Max-Age=0/);
+  assert.match(set[1], /^cre_sso_state_[A-Za-z0-9_-]{43}=[A-Za-z0-9_-]{43};/);
+});
+
 test('HTTP SSO clears browser state when server state expires or the provider exchange fails', async () => {
   const expired = await browserLogin();
   await pool.authPool.query(
@@ -131,7 +162,7 @@ test('HTTP SSO clears browser state when server state expires or the provider ex
     for (const [attempt, expected] of [[expired, 302], [begun, 502]]) {
       const res = await callback(attempt.callback, attempt.cookie);
       assert.equal(res.status, expected);
-      assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state=;/.test(c) && /Max-Age=0/.test(c)));
+      assert.ok(res.headers.getSetCookie().some((c) => /^cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
       assert.ok(!cookies(res).some((c) => /^cre_session=/.test(c)));
     }
   } finally { stub.exchange = exchange; }
@@ -184,7 +215,7 @@ test('production SSO uses a Secure host-prefixed cookie and ignores the developm
   try {
     const begun = await browserLogin();
     const header = begun.start.headers.getSetCookie()[0];
-    assert.match(header, /^__Host-cre_sso_state=/);
+    assert.match(header, /^__Host-cre_sso_state_[A-Za-z0-9_-]{43}=/);
     assert.match(header, /; Secure(?:;|$)/);
     assert.match(header, /; Path=\/(?:;|$)/);
     assert.ok(!/; Domain=/i.test(header));
@@ -192,7 +223,7 @@ test('production SSO uses a Secure host-prefixed cookie and ignores the developm
     assert.match(bad.headers.get('location'), /error=bad_state$/);
     const good = await callback(begun.callback, begun.cookie);
     assert.ok(cookies(good).some((c) => /^cre_session=.+/.test(c)));
-    assert.ok(good.headers.getSetCookie().some((c) => /^__Host-cre_sso_state=;/.test(c) && /Max-Age=0/.test(c)));
+    assert.ok(good.headers.getSetCookie().some((c) => /^__Host-cre_sso_state_[A-Za-z0-9_-]{43}=;/.test(c) && /Max-Age=0/.test(c)));
   } finally { config.isProd = wasProd; }
 });
 

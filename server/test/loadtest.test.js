@@ -17,7 +17,52 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { summarise, percentile, THRESHOLDS } = require('../src/admin/loadtest');
+const { signIn, summarise, percentile, THRESHOLDS } = require('../src/admin/loadtest');
+
+test('load test login returns the start cookie and discards spent state cookies', async () => {
+  const original = global.fetch;
+  const stateCookie = `cre_sso_state_${'a'.repeat(43)}=${'a'.repeat(43)}`;
+  const response = (status, headers = {}, body) => new Response(body ? JSON.stringify(body) : null, { status, headers });
+  const calls = [];
+  global.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    calls.push(path);
+    if (path === '/auth/start') return response(302, {
+      location: '/auth/stub?state=test&code=test', 'set-cookie': `${stateCookie}; Path=/; HttpOnly`,
+    });
+    if (path === '/auth/stub') {
+      assert.equal(init.headers.cookie, stateCookie);
+      return response(302, { location: '/auth/callback?state=test&code=test' });
+    }
+    if (path === '/auth/callback') {
+      assert.equal(init.headers.cookie, stateCookie, 'the callback lost the initiating cookie');
+      const headers = new Headers({ location: '/' });
+      headers.append('set-cookie', `${stateCookie.split('=')[0]}=; Path=/; Max-Age=0`);
+      headers.append('set-cookie', 'cre_session=session_test; Path=/; HttpOnly');
+      return response(302, headers);
+    }
+    assert.equal(path, '/auth/me');
+    assert.equal(init.headers.cookie, 'cre_session=session_test');
+    return response(200, {}, { csrfToken: 'csrf_test' });
+  };
+  try {
+    assert.deepEqual(await signIn('http://localhost:8080'), { cookie: 'cre_session=session_test', csrfToken: 'csrf_test' });
+    assert.deepEqual(calls, ['/auth/start', '/auth/stub', '/auth/callback', '/auth/me']);
+  } finally { global.fetch = original; }
+});
+
+test('load test login refuses a callback that sets no session despite a start cookie', async () => {
+  const original = global.fetch;
+  global.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    const headers = { location: '/auth/callback?state=test&code=test' };
+    if (path === '/auth/start') headers['set-cookie'] = 'cre_sso_state_test=test; Path=/';
+    return new Response(null, { status: 302, headers });
+  };
+  try {
+    await assert.rejects(() => signIn('http://localhost:8080'), /sign-in produced no session cookie/);
+  } finally { global.fetch = original; }
+});
 
 /** n samples of a given latency, as the runner collects them. */
 const flat = (n, ms) => Array.from({ length: n }, () => ms);
