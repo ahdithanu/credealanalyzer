@@ -141,6 +141,25 @@ async function revoke(sessionId) {
   );
 }
 
+/**
+ * Replace the bearer credential while retaining the session's CSRF binding.
+ * The old token hash is replaced atomically, so a stolen cookie stops working.
+ * Comparing that hash lets only one concurrent request rotate it and set a
+ * cookie; losers must not overwrite the winner with another credential.
+ * Keep the original absolute expiry and authentication provenance intact.
+ */
+async function rotate(sessionId, oldToken) {
+  const token = crypto.randomBytes(TOKEN_BYTES).toString('base64url');
+  const { rows } = await authPool.query(
+    `UPDATE sessions SET token_hash = $1, issued_at = now(), last_seen_at = now()
+      WHERE id = $2 AND token_hash = $3 AND revoked_at IS NULL AND expires_at > now()
+      RETURNING issued_at, expires_at`,
+    [hashToken(token), sessionId, hashToken(oldToken)],
+  );
+  if (!rows[0]) return null;
+  return { token, issuedAt: new Date(rows[0].issued_at), expiresAt: new Date(rows[0].expires_at) };
+}
+
 /** Every session for a user — offboarding, or a suspected compromise. */
 async function revokeAllForUser(userId) {
   const { rowCount } = await authPool.query(
@@ -214,7 +233,7 @@ const shouldRotate = (session) =>
   Date.now() - session.issuedAt.getTime() > config.session.rotateAfterMs;
 
 module.exports = {
-  issue, resolve, revoke, revokeAllForUser,
+  issue, resolve, revoke, revokeAllForUser, rotate,
   cookieOptions, csrfToken, csrfValid, shouldRotate,
   __internals: { hashToken, safeEqual },
 };

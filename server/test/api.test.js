@@ -86,6 +86,71 @@ test('a forged session cookie is refused', async () => {
   }
 });
 
+test('session rotation preserves CSRF across subsequent saves and invalidates the old cookie', async () => {
+  const x = await signIn('org_x', 'analyst@firmx.com');
+  const session = require('../src/auth/session');
+  const originalToken = decodeURIComponent(x.cookie.split('=')[1]);
+  const before = await session.resolve(originalToken);
+  await pool.authPool.query(
+    "UPDATE sessions SET issued_at = now() - interval '31 minutes' WHERE id = $1", [before.sessionId]);
+  const save = (cookie, csrf) => fetch(`${base}/api/deals/${seed.a.dealId}`, {
+    method: 'PUT', headers: { cookie, 'x-csrf-token': csrf,
+      origin: 'http://localhost:3000', 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Firm X Tower', stage: 'Screening', payload: { purchasePrice: 1000000 } }),
+  });
+  const first = await save(x.cookie, x.csrf);
+  assert.equal(first.status, 200);
+  const rotatedCookie = first.headers.getSetCookie().find((c) => c.startsWith('cre_session=')).split(';')[0];
+  assert.notEqual(rotatedCookie, x.cookie);
+  const after = await session.resolve(decodeURIComponent(rotatedCookie.split('=')[1]));
+  assert.equal(after.sessionId, before.sessionId, 'the CSRF binding changed');
+  assert.equal(after.expiresAt.getTime(), before.expiresAt.getTime(), 'rotation extended absolute lifetime');
+  assert.equal(await session.resolve(originalToken), null, 'the old credential survived rotation');
+  for (let i = 0; i < 2; i += 1) {
+    assert.equal((await save(rotatedCookie, x.csrf)).status, 200, 'an open tab lost the ability to save');
+  }
+  assert.equal((await save(rotatedCookie, 'forged')).status, 403);
+  const y = await signIn('org_y', 'analyst@firmy.com');
+  assert.equal((await save(rotatedCookie, y.csrf)).status, 403, 'another session CSRF token was accepted');
+});
+
+test('rotation on a read preserves the CSRF token already held by the SPA', async () => {
+  const x = await signIn('org_x', 'analyst@firmx.com');
+  const session = require('../src/auth/session');
+  const s = await session.resolve(decodeURIComponent(x.cookie.split('=')[1]));
+  await pool.authPool.query(
+    "UPDATE sessions SET issued_at = now() - interval '31 minutes' WHERE id = $1", [s.sessionId]);
+  const res = await x.call('/api/deals');
+  assert.equal(res.status, 200);
+  const cookie = res.headers.getSetCookie().find((c) => c.startsWith('cre_session=')).split(';')[0];
+  const me = await (await fetch(`${base}/auth/me`, { headers: { cookie } })).json();
+  assert.equal(me.csrfToken, x.csrf);
+  const logout = await fetch(`${base}/auth/logout`, {
+    method: 'POST', headers: { cookie, 'x-csrf-token': x.csrf, origin: 'http://localhost:3000' },
+  });
+  assert.equal(logout.status, 204);
+  assert.equal(await session.resolve(decodeURIComponent(cookie.split('=')[1])), null);
+});
+
+test('concurrent rotation has one winner and preserves authentication provenance', async () => {
+  const session = require('../src/auth/session');
+  const { token } = await session.issue(null, { userId: seed.a.userId, tenantId: seed.a.tenantId,
+    authMethod: 'sso', mfaAsserted: true, mfaFactor: 'duo', ip: '198.51.100.1', userAgent: 'test' });
+  const before = await session.resolve(token);
+  const results = await Promise.all([session.rotate(before.sessionId, token), session.rotate(before.sessionId, token)]);
+  assert.equal(results.filter(Boolean).length, 1);
+  const winner = results.find(Boolean);
+  assert.equal(await session.resolve(token), null);
+  const after = await session.resolve(winner.token);
+  assert.equal(after.sessionId, before.sessionId);
+  assert.equal(after.authMethod, 'sso');
+  assert.equal(after.mfaAsserted, true);
+  const row = await pool.authPool.query('SELECT mfa_factor FROM sessions WHERE id = $1', [after.sessionId]);
+  assert.equal(row.rows[0].mfa_factor, 'duo');
+  await session.revoke(after.sessionId);
+  assert.equal(await session.rotate(after.sessionId, winner.token), null, 'rotation resurrected a revoked session');
+});
+
 test('each firm sees only its own deals through the API', async () => {
   const x = await signIn('org_x', 'analyst@firmx.com');
   const y = await signIn('org_y', 'analyst@firmy.com');

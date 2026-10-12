@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { timingSafeEqual } = require('crypto');
 const config = require('../config');
 const login = require('../auth/login');
 const session = require('../auth/session');
@@ -30,6 +31,18 @@ const magicLink = require('../auth/magicLink');
  * cookie on exactly that request, which would make every Duo login fail.
  */
 const PENDING_COOKIE = 'cre_mfa_pending';
+
+// The production prefix forbids Domain cookies and sibling-host injection.
+// Lax permits the provider's top-level GET callback; Strict would break SSO.
+const stateCookieName = () => config.isProd ? '__Host-cre_sso_state' : 'cre_sso_state';
+const stateCookieOptions = () => session.cookieOptions(config.sso.stateTtlMs);
+
+function browserStateMatches(state, cookie) {
+  if (typeof state !== 'string' || typeof cookie !== 'string'
+      || !/^[A-Za-z0-9_-]{43}$/.test(state)
+      || !/^[A-Za-z0-9_-]{43}$/.test(cookie)) return false;
+  return timingSafeEqual(Buffer.from(state), Buffer.from(cookie));
+}
 
 function pendingCookieOptions(maxAge = config.duo.pendingTtlMs) {
   return {
@@ -70,19 +83,29 @@ function authRoutes() {
       if (!tenantHint && req.query.email) {
         tenantHint = await login.discoverTenant(req.query.email);
       }
-      const { url } = await login.begin({
+      const { url, state } = await login.begin({
         tenantHint,
         redirectTo: req.query.next,
         ip: req.ip,
       });
+      res.cookie(stateCookieName(), state, stateCookieOptions());
       res.redirect(302, url);
     } catch (err) { next(err); }
   });
 
   // The identity provider returns the browser here.
   r.get('/callback', async (req, res, next) => {
+    const browserState = readCookie(req, stateCookieName());
+    // Clear on every outcome, including provider failures. Server-side state
+    // consumption remains atomic, so restoring a spent cookie cannot replay it.
+    res.clearCookie(stateCookieName(), stateCookieOptions());
     try {
       const { code, state } = req.query;
+      if (!browserStateMatches(state, browserState)) {
+        // Check BEFORE consuming server state or exchanging the code. A foreign
+        // browser must neither sign in nor burn the legitimate browser's login.
+        throw new login.LoginError('bad_state', 'This browser did not start the sign-in.');
+      }
       const result = await login.complete({
         state, code, ip: req.ip, userAgent: req.headers['user-agent'],
       });
