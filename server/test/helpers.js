@@ -110,6 +110,11 @@ async function freshDatabase(name, { applyMigrations = true } = {}) {
       CREATE ROLE auth_user NOLOGIN;
     END IF;
   END $$`);
+  // The migration role cannot set NOSUPERUSER/NOBYPASSRLS itself on Postgres 16,
+  // even with ADMIN OPTION. Establish the safe attributes as the bootstrap
+  // superuser; migrations still verify and refuse unsafe roles independently.
+  await bootstrap.query('ALTER ROLE app_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS');
+  await bootstrap.query('ALTER ROLE auth_user LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS');
   await bootstrap.query('GRANT app_user, auth_user TO cre_owner WITH ADMIN OPTION');
   await bootstrap.query(`GRANT ALL ON SCHEMA public TO cre_owner`);
   await bootstrap.query(`ALTER SCHEMA public OWNER TO cre_owner`);
