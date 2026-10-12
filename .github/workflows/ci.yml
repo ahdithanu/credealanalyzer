@@ -73,12 +73,15 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: cre_owner
+          # The fixtures demote cre_owner. Bootstrap must be a separate superuser.
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: postgres
+          # Ephemeral CI only: migration-created roles intentionally have no passwords.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U cre_owner"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +102,7 @@ jobs:
           PGHOST_DIR: localhost
           PGPORT: 5432
           PGPASSWORD: ci_only
-          TEST_PG_USER: cre_owner
+          TEST_PG_USER: postgres
 
   infra:
     name: Infrastructure
