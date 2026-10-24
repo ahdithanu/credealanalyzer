@@ -218,7 +218,13 @@ jobs:
       - name: Build the API image
         run: docker build -t cre-api:ci ./server
       - name: Scan for OS and library vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        # The tag is v-PREFIXED. The previous pin here was a bare `0.28.0`,
+        # which GitHub could not resolve — the job failed at "Prepare all
+        # required actions", before a single step ran, on every push for
+        # months. An unresolvable action ref fails the job without ever
+        # saying the scan did not happen, which is the same shape of
+        # problem as an alarm written against a pattern nothing emits.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cre-api:ci
           format: table
