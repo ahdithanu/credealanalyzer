@@ -146,12 +146,26 @@ than anything in the suite:
    attributes and refused the run — behaving exactly as designed, while the
    fixture was the thing not holding up its end.
 
-Fault 1 is fixed on the branch behind PR #2, which is what finally made this
-job go green. Faults 2 and 3, and a check that VERIFIES `cre_owner` ended up an
-ordinary role rather than assuming the `ALTER` took, are still to land — they
-touch the same lines and are being kept out of the way until that merges. The
-timeout stays regardless: it is what makes the next hang a named failure in a
-minute rather than another six silent hours.
+All three are fixed here, and the fixture now VERIFIES that `cre_owner` ended
+up an ordinary role rather than assuming the `ALTER` took — so the quiet
+failure, a green suite over a connection that bypasses every policy, cannot
+recur without saying so.
+
+PR #2 fixes fault 1 independently and by the same means. Whichever of the two
+lands second will conflict here trivially; either side's version of the service
+configuration is correct, so take one. What is only in this version is the
+try/finally and the verification.
+
+Checked three ways rather than one, because the failure mode was a suite that
+passed while proving nothing:
+
+- CI's shape — a FRESH cluster holding none of these roles, over TCP with
+  trust, superuser `postgres`: 315 pass, and `cre_owner` ends NOSUPERUSER and
+  NOBYPASSRLS.
+- The local shape — unix socket, trust: 315 pass.
+- The old broken shape — superuser named `cre_owner`: fails in under a second
+  with a message naming the cause and the fix, where it used to hang for six
+  hours.
 
 
 

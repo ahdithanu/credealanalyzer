@@ -81,39 +81,95 @@ async function freshDatabase(name, { applyMigrations = true } = {}) {
    */
   const bootstrap = new Client({ connectionString: ownerUrl });
   await bootstrap.connect();
-  // CREATEROLE because the migrations create app_user and auth_user themselves;
-  // a schema that cannot be applied to an empty cluster is not a schema.
-  await bootstrap.query(`DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cre_owner') THEN
-      CREATE ROLE cre_owner LOGIN NOSUPERUSER CREATEROLE NOBYPASSRLS;
-    END IF;
-  END $$`);
-  // Stated unconditionally: roles are cluster-wide, so an existing cre_owner
-  // from an earlier run keeps whatever attributes it had and the IF NOT EXISTS
-  // above quietly skips it. The same trap that left app_user NOLOGIN once.
-  await bootstrap.query('ALTER ROLE cre_owner LOGIN NOSUPERUSER CREATEROLE NOBYPASSRLS');
-  // pgcrypto is an operator-installed extension, not an application one: on RDS
-  // it takes rds_superuser, and a role that could install arbitrary extensions
-  // is a role that could install one containing a C function. Creating it here
-  // mirrors that division rather than handing the migration role the privilege.
-  await bootstrap.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
-  // The application roles are cluster-wide and outlive any one test database,
-  // so on the second run they already exist and were created by the superuser.
-  // Since Postgres 16 a CREATEROLE role may only alter roles it holds ADMIN
-  // OPTION on, so without this the migrations fail with "permission denied to
-  // alter role" — on a cluster where the very same migration succeeded once.
-  await bootstrap.query(`DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
-      CREATE ROLE app_user NOLOGIN;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth_user') THEN
-      CREATE ROLE auth_user NOLOGIN;
-    END IF;
-  END $$`);
-  await bootstrap.query('GRANT app_user, auth_user TO cre_owner WITH ADMIN OPTION');
-  await bootstrap.query(`GRANT ALL ON SCHEMA public TO cre_owner`);
-  await bootstrap.query(`ALTER SCHEMA public OWNER TO cre_owner`);
-  await bootstrap.end();
+  // try/finally, because an open pg socket keeps the event loop alive: a
+  // bootstrap that threw left `node --test` with nothing to do and no reason
+  // to exit, so the file ran to GitHub's six-hour job ceiling and was reported
+  // CANCELLED rather than failed. Six hours of silence for a sixty-millisecond
+  // error, and "cancelled" reads as "somebody stopped it", so nobody looked.
+  try {
+    // CREATEROLE because the migrations create app_user and auth_user themselves;
+    // a schema that cannot be applied to an empty cluster is not a schema.
+    await bootstrap.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cre_owner') THEN
+        CREATE ROLE cre_owner LOGIN NOSUPERUSER CREATEROLE NOBYPASSRLS;
+      END IF;
+    END $$`);
+    // Stated unconditionally: roles are cluster-wide, so an existing cre_owner
+    // from an earlier run keeps whatever attributes it had and the IF NOT EXISTS
+    // above quietly skips it. The same trap that left app_user NOLOGIN once.
+    // Postgres refuses this outright when the connection is itself cre_owner —
+    // a role cannot be demoted out from under its own session — and that is
+    // exactly how CI was configured, so it never took there.
+    let alterRefused = null;
+    try {
+      await bootstrap.query('ALTER ROLE cre_owner LOGIN NOSUPERUSER CREATEROLE NOBYPASSRLS');
+    } catch (err) {
+      alterRefused = err.message;
+    }
+
+    /**
+     * SET, THEN VERIFY — the discipline migration 001 applies to app_user.
+     *
+     * This ALTER is the only thing making cre_owner an ordinary role, and an
+     * ordinary role is the only reason FORCE ROW LEVEL SECURITY binds to the
+     * table owner. If it does not take, every isolation test in this directory
+     * still passes — over a connection that bypasses the policies entirely.
+     * That outcome is worse than the hang and far quieter, and nothing checked
+     * for it.
+     */
+    const { rows: ownerRows } = await bootstrap.query(
+      `SELECT rolsuper, rolbypassrls, rolcanlogin
+         FROM pg_roles WHERE rolname = 'cre_owner'`,
+    );
+    const owner = ownerRows[0] || {};
+    if (alterRefused || owner.rolsuper || owner.rolbypassrls || !owner.rolcanlogin) {
+      throw new Error(
+        (alterRefused ? `Postgres refused to set cre_owner's attributes (${alterRefused}). ` : '')
+        + 'cre_owner must be LOGIN, NOSUPERUSER and NOBYPASSRLS, and it is not '
+        + `(super=${owner.rolsuper}, bypassrls=${owner.rolbypassrls}, `
+        + `login=${owner.rolcanlogin}). Row level security does not bind to a `
+        + 'superuser or a BYPASSRLS role — FORCE included — so the isolation '
+        + 'suite would pass over the one connection no deployed caller uses. '
+        + 'This happens when the fixture connects AS cre_owner: set TEST_PG_USER '
+        + "(and the server's POSTGRES_USER) to a DIFFERENT superuser, such as "
+        + 'postgres, and let the fixture create cre_owner as an ordinary role.',
+      );
+    }
+    // pgcrypto is an operator-installed extension, not an application one: on RDS
+    // it takes rds_superuser, and a role that could install arbitrary extensions
+    // is a role that could install one containing a C function. Creating it here
+    // mirrors that division rather than handing the migration role the privilege.
+    await bootstrap.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+    // The application roles are cluster-wide and outlive any one test database,
+    // so on the second run they already exist and were created by the superuser.
+    // Since Postgres 16 a CREATEROLE role may only alter roles it holds ADMIN
+    // OPTION on, so without this the migrations fail with "permission denied to
+    // alter role" — on a cluster where the very same migration succeeded once.
+    await bootstrap.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+        CREATE ROLE app_user;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth_user') THEN
+        CREATE ROLE auth_user;
+      END IF;
+    END $$`);
+    // Set HERE, by the superuser, because only a superuser may set NOSUPERUSER —
+    // which is precisely what migration 001 says when it refuses: "Fix it as a
+    // superuser". Created NOLOGIN instead, as this did, the migration's own
+    // ALTER is refused, its EXCEPTION handler swallows the refusal, and its
+    // verification then fails the whole run. The migration was behaving as
+    // designed; the fixture was the thing not holding up its end.
+    for (const role of ['app_user', 'auth_user']) {
+      await bootstrap.query(
+        `ALTER ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`,
+      );
+    }
+    await bootstrap.query('GRANT app_user, auth_user TO cre_owner WITH ADMIN OPTION');
+    await bootstrap.query(`GRANT ALL ON SCHEMA public TO cre_owner`);
+    await bootstrap.query(`ALTER SCHEMA public OWNER TO cre_owner`);
+  } finally {
+    await bootstrap.end();
+  }
 
   const migrationUrl = url('cre_owner', db);
   if (applyMigrations) await migrate(migrationUrl, { log: () => {} });
