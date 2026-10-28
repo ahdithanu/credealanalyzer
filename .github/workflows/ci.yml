@@ -73,12 +73,23 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: cre_owner
+          # `postgres`, NOT cre_owner, and this is why the server suite never
+          # ran here. test/helpers.js creates cre_owner as an ORDINARY role and
+          # demotes any existing one, because FORCE ROW LEVEL SECURITY does not
+          # bind to a superuser. A role cannot be demoted out from under the
+          # session using it, so naming the service's superuser cre_owner made
+          # that demotion fail — and the fixture then hung for six hours.
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: postgres
+          # The roles the fixture and the migrations create carry no passwords,
+          # and CI reaches Postgres over TCP, where the official image
+          # authenticates. Trust is right for a container that exists for one
+          # job and is reachable only from it.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U cre_owner"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +110,8 @@ jobs:
           PGHOST_DIR: localhost
           PGPORT: 5432
           PGPASSWORD: ci_only
-          TEST_PG_USER: cre_owner
+          # Must match POSTGRES_USER above, and must not be cre_owner.
+          TEST_PG_USER: postgres
 
   infra:
     name: Infrastructure
@@ -218,7 +230,13 @@ jobs:
       - name: Build the API image
         run: docker build -t cre-api:ci ./server
       - name: Scan for OS and library vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        # The tag is v-PREFIXED. The previous pin here was a bare `0.28.0`,
+        # which GitHub could not resolve — the job failed at "Prepare all
+        # required actions", before a single step ran, on every push for
+        # months. An unresolvable action ref fails the job without ever
+        # saying the scan did not happen, which is the same shape of
+        # problem as an alarm written against a pattern nothing emits.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cre-api:ci
           format: table

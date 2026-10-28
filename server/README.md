@@ -115,6 +115,60 @@ deployment whose firms all use SSO never has to configure them.
 
 ## Running the tests
 
+`npm test` carries `--test-timeout=60000`, and the number is not arbitrary.
+
+This suite hung in CI for six hours on every run for months — "Set up job" and
+"Initialize containers" both succeeded, `npm ci` succeeded, and then `Tests`
+sat there until GitHub's maximum job runtime killed it and reported the job as
+*cancelled*. Cancelled reads as "somebody stopped it", so nobody looked, and
+the tenant isolation suite — the one thing standing between two client firms'
+data — had never once actually run on a merge.
+
+The whole suite finishes in about 16 seconds locally, so any single test taking
+a minute is wedged. With the timeout, a hang fails as a NAMED test in a minute
+instead of a silent six-hour cancellation.
+
+It named it immediately, and the answer was three faults in the fixture rather
+than anything in the suite:
+
+1. **CI's Postgres service was created with `POSTGRES_USER: cre_owner`**, and
+   the fixture connected as that role. `cre_owner` has to end up an ORDINARY
+   role, because `FORCE ROW LEVEL SECURITY` does not bind to a superuser — and
+   a role cannot be demoted out from under the session using it, so the
+   demotion was refused. Note the alternative: had it instead succeeded
+   silently, every isolation test here would have passed over a connection that
+   bypasses the policies entirely, which is worse than the hang and quieter.
+2. **A failed bootstrap left its pg client open**, and an open socket keeps the
+   event loop alive. That is what turned a sixty-millisecond error into six
+   hours of nothing.
+3. **`app_user` and `auth_user` were created `NOLOGIN` and passwordless.** Only
+   a superuser may set `NOSUPERUSER`, so migration 001 could not correct the
+   attributes and refused the run — behaving exactly as designed, while the
+   fixture was the thing not holding up its end.
+
+All three are fixed here, and the fixture now VERIFIES that `cre_owner` ended
+up an ordinary role rather than assuming the `ALTER` took — so the quiet
+failure, a green suite over a connection that bypasses every policy, cannot
+recur without saying so.
+
+PR #2 fixes fault 1 independently and by the same means. Whichever of the two
+lands second will conflict here trivially; either side's version of the service
+configuration is correct, so take one. What is only in this version is the
+try/finally and the verification.
+
+Checked three ways rather than one, because the failure mode was a suite that
+passed while proving nothing:
+
+- CI's shape — a FRESH cluster holding none of these roles, over TCP with
+  trust, superuser `postgres`: 315 pass, and `cre_owner` ends NOSUPERUSER and
+  NOBYPASSRLS.
+- The local shape — unix socket, trust: 315 pass.
+- The old broken shape — superuser named `cre_owner`: fails in under a second
+  with a message naming the cause and the fix, where it used to hang for six
+  hours.
+
+
+
 They need a real Postgres — RLS has several documented ways to silently not
 apply, and a mock would confirm whatever the implementation believes.
 
