@@ -44,8 +44,36 @@ already sets `base: './'` so one artefact serves both a domain root and the
 Two steps cannot be done from a workflow file and have to be done once, by
 hand, in the repository's settings:
 
-1. **Settings → Pages → Source → GitHub Actions.** Until this is set the
-   workflow runs green and publishes nothing.
+1. **Settings → Pages → Build and deployment → Source → GitHub Actions.**
+   Until this is set the workflow **fails**, at `actions/configure-pages`,
+   with:
+
+   ```
+   Get Pages site failed. Please verify that the repository has Pages
+   enabled and configured to build using GitHub Actions
+   HttpError: Not Found
+   ```
+
+   It fails *late*: `npm ci`, `npm test`, the build and the inline-script
+   assertion all pass first, so the run is red for a reason that has nothing
+   to do with the code. Read the step name, not the conclusion.
+
+   This step cannot be automated. `actions/configure-pages` takes an
+   `enablement: true` parameter that asks it to create the site, and it was
+   tried here; the run answered `Create Pages site failed. Error: Resource
+   not accessible by integration`. Creating a Pages site needs
+   administration rights on the repository, which `GITHUB_TOKEN` does not
+   have and cannot be granted through `permissions:` — `pages: write` covers
+   publishing to a site that exists, not bringing one into being. A
+   personal access token with `administration: write` would do it, which
+   means storing a long-lived credential with repository-admin rights in
+   order to save one click, once. Not worth it. Click it.
+
+   Once Pages is on, a deploy can be published without waiting for the next
+   push to `main`: **Actions → Deploy to GitHub Pages → Run workflow**, on
+   `main`. The `github-pages` environment GitHub creates alongside the site
+   restricts deployments to the default branch, so a dispatch on a feature
+   branch builds the artefact and then stops without activating it.
 2. **Make sure `main` holds the code you want served.** This is the one that
    actually bites: a host serves the branch it is pointed at, so moving hosts
    changes nothing if `main` is behind. Check with
