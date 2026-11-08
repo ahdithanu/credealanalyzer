@@ -78,7 +78,18 @@ jobs:
             exit 1
           fi
 
+      # `enablement: true` lets this step CREATE the Pages site, with GitHub
+      # Actions as the source, using the `pages: write` token granted above.
+      # The default is `enablement: false`, which only reads the existing site
+      # config and fails with "Get Pages site failed ... Not Found" on a
+      # repository where Pages has never been turned on. That is exactly how
+      # the first run of this workflow died: it installed, tested, built and
+      # passed the inline-script assertion, then stopped here with nothing
+      # published. Turning Pages on by hand in Settings works too; doing it
+      # here means the deploy does not depend on a human remembering to.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       # vite.config.js sets `base: './'` so the bundle references ./assets/...
       # rather than /assets/... . That is what lets one artefact serve from a
       # domain root AND from the /credealanalyzer/ subpath a Pages project
