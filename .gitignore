@@ -5,3 +5,8 @@ coverage/
 .env.local
 .env.*.local
 npm-debug.log*
+
+# Eval corpus: public filings, refetchable with `npm run edgar`.
+# The manifest (labels included) is tracked; the documents are not.
+corpus/**
+!corpus/**/manifest.json

@@ -21,6 +21,7 @@
     "test": "vitest run",
     "buybox": "node scripts/buybox.mjs",
     "enrich": "node scripts/enrich.mjs",
-    "markets": "node scripts/markets.mjs"
+    "markets": "node scripts/markets.mjs",
+    "edgar": "node scripts/edgar.mjs"
   }
 }
