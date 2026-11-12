@@ -92,7 +92,10 @@ subject's name as the property table prints it, and answers for that property.
 sorts the population by an FNV-1a hash of `entryId|name` and takes a prefix.
 The first six per filing are the **dev** set (24 items). The next three are
 the **holdout** (12 items). They were drawn and labelled after the extractor
-was frozen, and committed before it ran on them. `assertDrawn` refuses a
+was frozen, and committed before it ran on them. Positions 9 to 13 are
+**holdout2** (20 items), drawn and labelled the same way after v2 was frozen.
+Once a version's failures on a set have been read, that set is spent: it is
+development data for the next version, never evidence about it. `assertDrawn` refuses a
 manifest whose labelled subjects differ from the draw. The population lists
 live in the manifest so the draw can be recomputed.
 
@@ -300,6 +303,61 @@ These defects are the v2 list. Fixing them against this holdout would spend
 it: v2 needs a fresh draw (the next subjects in hash order) labelled before it
 is scored.
 
+### v2, on a fresh draw
+
+v2 fixes the four defects above (commit cf32743). It was built against dev and
+the v1 holdout, which v1's failures had already spent. Then it was frozen.
+Only after the freeze was **holdout2** drawn (positions 9 to 13 per filing:
+20 properties, 67 stated fields, 93 absent). It was labelled and committed
+(bbef63c) before either version ran on it. v1 is kept byte-for-byte as
+`tableReaderV1.js`, so both versions are scored on the same fresh data.
+
+| holdout2 (20) | answerAccuracy | coverage | hallucinationRate | groundedness | calibration.ece |
+| --- | --- | --- | --- | --- | --- |
+| abstainAlways | null | 0.000 | 0.000 | null | null |
+| guessAlways | 0.045 | 1.000 | 1.000 | null | 0.481 |
+| tableReader v1 | 0.982 (54/55) | 0.821 (55/67; CI 0.71–0.89) | 0.000 (0/93) | 1.000 | 0.082 |
+| **tableReader v2** | **0.985** (65/66; 0.92–1.00) | **0.985** (66/67; 0.92–1.00) | **0.000** (0/93; 0.00–0.04) | **1.000** (66/66) | **0.102** |
+
+Paired on the same fields, v2 gets right 11 that v1 did not and gets wrong
+none that v1 got right (exact McNemar p = 0.001). The coverage gain is real.
+
+**Read it narrowly, because:**
+
+- **All 11 gains are in one filing.** They are BRT's spanned occupancy columns,
+  its heading-stated type, and its prose price. Holdout2 draws new properties
+  from the same four filings, so it shows v2 generalises to new ROWS of table
+  layouts it was built on. It says nothing about a fifth filing's layout,
+  which is what an OM is. That is now the largest untested assumption.
+- **The fix for v1's hallucination is untested on fresh data.** No numbered
+  property name with a location suffix was drawn into holdout2. The fix is
+  exercised by tests and by the spent sets only.
+- **The one error is grounded, again.** Rosslyn Plaza's row carries an extra
+  footnote cell after occupancy, which shifts every later cell one column, and
+  v2 read 304,000 (square feet under development) as the total, 989,000. The
+  citation holds 304,000, so it counts as grounded, at 0.9 confidence. That is
+  two holdouts in a row where groundedness was 1.000 beside a wrong answer.
+- **The one miss is the disputable label.** Plaza El Segundo's year comes from
+  falling through Item 2's range "2006-2007" to Schedule III's "2006/2007/ 2016".
+  If that label were null, v2's abstention would be correct.
+- **Prices: one of two stated.** Holdout2 has a single stated price (Oaks at
+  Victory), and v2 read it. Across all 56 labelled properties the filings state
+  two prices, and no NOI or cap rate.
+- **Calibration still means little.** 61 of 66 answers sit in the 0.8 to 1.0
+  bucket (mean 0.894, accuracy 0.984). The other 5 are heading-derived types at
+  0.75, and all are right.
+
+Before freezing, v2 was also swept over the 284 unlabelled subjects outside
+every labelled and reserved draw position. It emitted two purchase prices
+(Virginia Gateway $215.0 million, Pinole Vista Crossing $60.0 million). Both
+were checked by hand as genuine single-property prices. The sweep is not a
+score, because nobody labelled those subjects. It is a check that the new
+prose reader does not spray prices.
+
+**v3 list:** footnote cells that shift columns (strip a bare "(n)" cell before
+aligning); a holdout from a fifth filing whose layout v2 has never seen; a
+second labeller on the disputable labels.
+
 ## Status
 
 - [x] Schema, comparators and tolerances — `src/extraction/schema.js`
@@ -307,10 +365,11 @@ is scored.
 - [x] Corpus sourcing and the unlabelled guard — `src/extraction/edgar.js`
 - [x] Mutation-verified: ten deliberate breaks, ten caught
 - [x] Fetch a corpus: four 10-Ks, office / industrial / multifamily / retail
-- [x] Hand-label it: 36 drawn properties, 288 field labels, every stated value evidenced
+- [x] Hand-label it: 56 drawn properties, 448 field labels, every stated value evidenced
 - [x] Baselines recorded before any extractor
 - [x] A first extractor (tableReader) that beats both degenerates on held-out data
-- [x] Mutation check covers corpus guards and extractor: 19/19, `scripts/mutation-check.py`
-- [ ] v2: the four defects above, scored on a fresh holdout draw
+- [x] Mutation check covers corpus guards and extractor: 27/27, `scripts/mutation-check.py`
+- [x] v2: the four defects above, scored on a fresh holdout draw (holdout2)
+- [ ] v3: footnote-cell column shift; a holdout from a filing v2 has never seen
 - [ ] A second labeller on a subset, to measure label agreement
 - [ ] Real OMs
