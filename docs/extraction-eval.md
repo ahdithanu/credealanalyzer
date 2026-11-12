@@ -500,6 +500,34 @@ is fetched.
 - **The bar** (from the fifth filing): beat zero coverage on a layout the
   extractor was not developed on, at zero hallucination.
 
+### Model-based extractor: built, not yet run
+
+`src/extraction/modelExtractor.js` builds the request and parses the response,
+and makes no network calls. `scripts/extract-model.mjs` sends the requests and
+caches each response in `eval/predictions/claude-opus-5-5.json`.
+`npm run eval` scores the cache and never calls the API. A model run is scored
+on a set only when every item of that set is cached; otherwise it is reported
+as not run.
+
+It has not been run. Requests to `api.anthropic.com` need an API key, this
+environment has none, and keys for Anthropic's own hosts cannot be stored as
+network secrets here. So no number from this extractor exists yet, and none is
+quoted. To run it:
+
+1. Add `CREDEALANALYZER_ANTHROPIC_API_KEY` as an environment variable in the
+   `credealanalyzer` cloud environment's settings, and start a new session. A
+   dedicated name keeps it from changing how anything else authenticates.
+2. `npm run extract-model -- --dry-run` prints the estimated cost and calls
+   nothing. The estimate at commit time is about $11 for all 68 development
+   items and $2 to $4 per holdout run, at list prices.
+3. `npm run extract-model` runs the five development filings. Read the
+   failures, revise the prompt if warranted, and re-run: a new prompt hash
+   starts a new cached run, and old runs stay for comparison.
+4. Freeze: set `FROZEN_PROMPT_SHA` to `promptSha()` and commit.
+5. Fetch the sixth filing per the pre-registration, label it, and commit.
+6. `npm run extract-model -- --set=filing6 --run=run1`, then `--run=run2`,
+   then `npm run eval`.
+
 ## Status
 
 - [x] Schema, comparators and tolerances — `src/extraction/schema.js`
@@ -513,6 +541,8 @@ is fetched.
 - [x] Mutation check covers corpus guards and extractor: 37/37, `scripts/mutation-check.py`
 - [x] v2: the four defects above, scored on a fresh holdout draw (holdout2)
 - [x] v3: footnote-cell column shift; scored on a pre-registered fifth filing it had never seen (coverage 0.000)
-- [ ] v4 or a model-based extractor, held out on a pre-registered sixth filing
+- [x] Model-based extractor pre-registered (e304b71) and built; mutation-checked
+- [ ] Run it: needs `CREDEALANALYZER_ANTHROPIC_API_KEY` in the environment (see above)
+- [ ] Freeze its prompt, then the pre-registered sixth filing as its holdout
 - [ ] A second labeller on a subset, to measure label agreement
 - [ ] Real OMs

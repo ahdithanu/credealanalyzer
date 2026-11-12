@@ -24,6 +24,7 @@
     "enrich": "node scripts/enrich.mjs",
     "markets": "node scripts/markets.mjs",
     "edgar": "node scripts/edgar.mjs",
-    "eval": "node scripts/eval.mjs"
+    "eval": "node scripts/eval.mjs",
+    "extract-model": "NODE_USE_ENV_PROXY=1 node scripts/extract-model.mjs"
   }
 }

@@ -97,6 +97,17 @@ MUTATIONS = [
      "a second evidence fragment is not checked against the document"),
     (X + "labels.js", "        alternateTruth: item.alternateTruth || null,", "        alternateTruth: null,",
      "the alternate labelling is silently dropped"),
+    # model-based extractor
+    (X + "modelExtractor.js", "citation: at >= 0 ? { page: 1, start: at, end: at + quote.length } : null,",
+     "citation: { page: 1, start: 0, end: text.length },", "a quote not in the document still yields a citation"),
+    (X + "modelExtractor.js", "  if (record.stopReason === 'refusal') {", "  if (false) {",
+     "a refusal is not recorded as one"),
+    (X + "modelExtractor.js", "  if (record.servedModel && record.servedModel !== MODEL) {", "  if (false) {",
+     "another model's answer is scored as this extractor's"),
+    (X + "modelExtractor.js", "  if (!FROZEN_PROMPT_SHA) {", "  if (false) {",
+     "the holdout runs before the prompt is frozen"),
+    (X + "modelExtractor.js", "cache_control: { type: 'ephemeral' } },", "},",
+     "the filing is not cached across a filing's properties"),
 ]
 
 

@@ -34,6 +34,7 @@ import { FIELD_NAMES } from '../src/extraction/schema.js';
 import { extractFromFiling } from '../src/extraction/tableReader.js';
 import { extractFromFiling as extractV1 } from '../src/extraction/tableReaderV1.js';
 import { extractFromFiling as extractV2 } from '../src/extraction/tableReaderV2.js';
+import { MODEL, parseRecord } from '../src/extraction/modelExtractor.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CORPUS = join(ROOT, 'corpus/edgar');
@@ -41,7 +42,7 @@ const CORPUS = join(ROOT, 'corpus/edgar');
 const args = process.argv.slice(2);
 const flag = (n) => args.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 const json = args.includes('--json');
-const sets = flag('set') ? [flag('set')] : ['dev', 'holdout', 'holdout2', 'filing5'];
+const sets = flag('set') ? [flag('set')] : ['dev', 'holdout', 'holdout2', 'filing5', 'filing6'];
 
 /**
  * The guess the degenerate guesser makes for every field. Constant and
@@ -101,6 +102,11 @@ function perField(docScores) {
   return out;
 }
 
+const PREDICTIONS = join(ROOT, 'eval/predictions', `${MODEL}.json`);
+function loadPredictions() {
+  return existsSync(PREDICTIONS) ? JSON.parse(readFileSync(PREDICTIONS, 'utf8')) : { runs: {} };
+}
+
 function run() {
   const { manifest, texts } = loadCorpus();
   const report = {};
@@ -120,14 +126,35 @@ function run() {
       continue;
     }
     report[set] = { items: items.length, extractors: {} };
-    for (const [name, extract] of Object.entries(EXTRACTORS)) {
+    // Model runs are read from the committed response cache, never called
+    // here. A run that has not answered every item of a set is reported as
+    // not run on it: a partial run scored as if complete is a number over a
+    // corpus it skipped.
+    const modelRuns = {};
+    const modelErrors = {};
+    for (const [key, r] of Object.entries(loadPredictions().runs || {})) {
+      const missing = items.filter((i) => !r.items[i.id]).length;
+      if (missing) {
+        report[set].notRun = { ...(report[set].notRun || {}), [`${MODEL}:${key}`]: `${items.length - missing}/${items.length} cached` };
+        continue;
+      }
+      modelErrors[`${MODEL}:${key}`] = {};
+      modelRuns[`${MODEL}:${key}`] = ({ text, item }) => {
+        const parsed = parseRecord(r.items[item.id], text);
+        if (parsed.error) modelErrors[`${MODEL}:${key}`][item.id] = parsed.error;
+        return parsed.prediction;
+      };
+    }
+
+    for (const [name, extract] of Object.entries({ ...EXTRACTORS, ...modelRuns })) {
       const docScores = items.map((item) => {
         const text = texts[item.entryId];
-        const predicted = extract({ text, subject: item.subject });
+        const predicted = extract({ text, subject: item.subject, item });
         return { item: item.id, ...scoreDocument({ predicted, truth: item.truth, pageText: pageReader(text) }) };
       });
       const corpus = scoreCorpus(docScores);
       report[set].extractors[name] = {
+        ...(modelErrors[name] ? { responseErrors: modelErrors[name] } : {}),
         answerAccuracy: corpus.answerAccuracy,
         coverage: corpus.coverage,
         hallucinationRate: corpus.hallucinationRate,
@@ -154,8 +181,11 @@ function print(report) {
     console.log(`\n=== ${set}: ${r.items} (filing, property) items x ${FIELD_NAMES.length} fields`);
     if (!r.extractors) { console.log(`  ${r.note}`); continue; }
     console.log('  extractor        accuracy coverage halluc.  grounded  ece    | hit err miss hall abst');
+    for (const [k, v] of Object.entries(r.notRun || {})) console.log(`  ${k}: not run on this set (${v})`);
     for (const [name, m] of Object.entries(r.extractors)) {
       const c = m.counts;
+      const errs = Object.keys(m.responseErrors || {}).length;
+      if (errs) console.log(`  ${name}: ${errs} response(s) scored as abstention: ${[...new Set(Object.values(m.responseErrors))].join(', ')}`);
       console.log(`  ${name.padEnd(16)} ${fmt(m.answerAccuracy)}    ${fmt(m.coverage)}    ${fmt(m.hallucinationRate)}    ${fmt(m.groundedness)}    ${fmt(m.ece)}  | `
         + `${c.hit} ${c.error} ${c.miss} ${c.hallucination} ${c.correct_abstention}`);
     }
