@@ -358,6 +358,27 @@ prose reader does not spray prices.
 aligning); a holdout from a fifth filing whose layout v2 has never seen; a
 second labeller on the disputable labels.
 
+### v3 pre-registration: a fifth-filing holdout
+
+Committed before any v3 code is written, and before the fifth filing is
+fetched or opened.
+
+- **Development data for v3:** dev, holdout and holdout2, all spent.
+- **The fifth filing** is the first of these whose latest 10-K has a
+  per-property table of at least 20 rows: Easterly Government Properties
+  (CIK 1622194, government-leased office), then Universal Health Realty
+  Income Trust (CIK 798783, healthcare), then One Liberty Properties (CIK
+  712770, net lease). Eligibility is decided by a script that prints row
+  counts, not rows.
+- **When:** fetched only after v3 is frozen and committed.
+- **Sample:** 12 subjects drawn by `sampleSubjects` from the table's rows,
+  labelled under the rules above and committed before v1, v2 or v3 runs on
+  them. Where the new layout raises a case the rules do not settle, the
+  decision is written into the rules and noted on the label, before scoring.
+- **Reported:** all three versions and both baselines on the fifth filing,
+  with the full metric set. v3 is not changed after its fifth-filing score is
+  seen; anything learned from it is the v4 list.
+
 ## Status
 
 - [x] Schema, comparators and tolerances — `src/extraction/schema.js`
