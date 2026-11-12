@@ -395,6 +395,71 @@ fetched or opened.
   with the full metric set. v3 is not changed after its fifth-filing score is
   seen; anything learned from it is the v4 list.
 
+### v3, on a fifth filing it had never seen
+
+v3 (d37c626) fixes v2's holdout2 error (footnote cells that shift columns),
+reads Schedule III through unambiguous shorter names, and knows common header
+synonyms. On the spent sets it is near-perfect, which is expected and is not
+evidence. The fifth filing, Easterly Government Properties, was
+pre-registered (b211833), fetched after the freeze, and labelled and
+committed (15c4f25) before any version ran on it.
+
+| fifth filing (12 properties; 21 stated, 75 absent) | answerAccuracy | coverage | hallucinationRate | groundedness | calibration.ece |
+| --- | --- | --- | --- | --- | --- |
+| abstainAlways | null | 0.000 | 0.000 | null | null |
+| guessAlways | 0.000 | 1.000 | 1.000 | null | 0.500 |
+| tableReader v1 | null | 0.000 | 0.160 (12/75) | 1.000 | 0.900 |
+| tableReader v2 | null | 0.000 | 0.160 (12/75) | 1.000 | 0.900 |
+| **tableReader v3** | **null** | **0.000** (0/21; CI 0.00–0.16) | **0.000** (0/75) | **null** | **null** |
+| *alternate labels (leased SF counted as size; 33 stated):* | | | | | |
+| tableReader v1 / v2 | 1.000 (12/12) | 0.364 (12/33) | 0.000 | 1.000 | 0.100 |
+| tableReader v3 | null | 0.000 (0/33) | 0.000 | null | null |
+
+**On a layout it was not built against, v3 reads nothing.** It does not
+hallucinate either: it abstains on every field. The 0.985 coverage on
+holdout2 measured how well its rules fit four filings' tables, not an ability
+to read a property table. This is the result the whole eval exists to
+produce, and the earlier numbers should be read in its light.
+
+Why each field was missed:
+
+- **Type (12 misses):** Easterly states types as codes ("SF") defined in a
+  legend. No version reads legends.
+- **Year (9 misses):** Easterly's Schedule III keys rows by city and type
+  code ("Tracy, CA | W"), not by property name. The subject's own row carries
+  both ("FEMA - Tracy | Tracy, CA | W"), so a join through the subject row's
+  location and code was there to be made. v3's only location join is BRT's
+  "Name — City, ST" pattern.
+- **Square feet:** the only figure is "Leased Square Feet". v1 and v2 read it
+  as size; v3 abstains, because its exclusion list (written for Federal
+  Realty's lease-expiry table) includes "leased square".
+
+**On the one field where the versions differ, the score is set by a
+labelling convention, not by reading.** Under the strict rule (leased square
+feet is not size), v1 and v2 hallucinate 12 times and v3 is clean. Under the
+alternate rule, v1 and v2 score 12 hits and v3 has 12 misses. The extractors
+did the same thing in both rows. Only the label moved. That is why the
+alternate labelling is scored and shown rather than chosen between quietly.
+
+**Groundedness, a third time.** v1 and v2's 12 strict-rule hallucinations
+all carry grounded citations: the cell really does hold the number. Across
+three holdouts, every wrong or disputed answer has been grounded.
+Groundedness checks pointers. It does not check reading, and it must not be
+read as a hallucination guard.
+
+**What this means for the product.** A rule-based table reader is a fine
+baseline and a poor bet. Each new layout costs a round of rules, and an OM is
+always a new layout. The bar for the next extractor, whether model-based or
+not, is set here: it must beat zero coverage on the fifth filing without
+giving up the zero hallucination rate.
+
+**v4 list** (not applied to v3, per the pre-registration): read type codes
+through a legend; join Schedule III through the subject row's own location
+and code cells; decide whether the leased-square-feet exclusion belongs in
+the extractor or only in the labels; and a model-based extractor scored on
+the same five filings, with a sixth filing, pre-registered the same way, as
+its holdout.
+
 ## Status
 
 - [x] Schema, comparators and tolerances — `src/extraction/schema.js`
@@ -402,11 +467,12 @@ fetched or opened.
 - [x] Corpus sourcing and the unlabelled guard — `src/extraction/edgar.js`
 - [x] Mutation-verified: ten deliberate breaks, ten caught
 - [x] Fetch a corpus: four 10-Ks, office / industrial / multifamily / retail
-- [x] Hand-label it: 56 drawn properties, 448 field labels, every stated value evidenced
+- [x] Hand-label it: 68 drawn properties across five filings, 544 field labels, every stated value evidenced
 - [x] Baselines recorded before any extractor
 - [x] A first extractor (tableReader) that beats both degenerates on held-out data
-- [x] Mutation check covers corpus guards and extractor: 27/27, `scripts/mutation-check.py`
+- [x] Mutation check covers corpus guards and extractor: 37/37, `scripts/mutation-check.py`
 - [x] v2: the four defects above, scored on a fresh holdout draw (holdout2)
-- [ ] v3: footnote-cell column shift; a holdout from a filing v2 has never seen
+- [x] v3: footnote-cell column shift; scored on a pre-registered fifth filing it had never seen (coverage 0.000)
+- [ ] v4 or a model-based extractor, held out on a pre-registered sixth filing
 - [ ] A second labeller on a subset, to measure label agreement
 - [ ] Real OMs
