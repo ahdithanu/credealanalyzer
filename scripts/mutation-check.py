@@ -46,6 +46,18 @@ MUTATIONS = [
      "if (hits.length >= 3) return 'mixed-use';", "two stated uses no longer map to mixed-use"),
     (X + "score.js", "if (fieldName && fieldByName(fieldName).kind === 'enum') {",
      "if (false) {", "enum citations judged literally"),
+    (X + "tableReader.js", "if (dates.length !== 2) return;", "if (dates.length < 1) return;",
+     "a lone Schedule III date is guessed into a column"),
+    (X + "tableReader.js", "!/leased|per occupied|rent/i.test(label)", "true",
+     "Percentage Leased read as occupancy"),
+    (X + "tableReader.js", "if (locRows.length === 1 && subjectRows.length === 1) {",
+     "if (locRows.length >= 1) {", "ambiguous location-only rows joined"),
+    (X + "tableReader.js", "if (!out[field]) out[field] = answer;", "out[field] = answer;",
+     "a later statement (Schedule III) overrides the primary table"),
+    (X + "tableReader.js", "const cell = built < acquired ? dates[0] : dates[1];",
+     "const cell = dates[0];", "Schedule III date order ignored"),
+    (X + "tableReader.js", "const m = String(s).trim().match(/^(\\d{4})(?!\\s*-\\s*\\d)/);",
+     "const m = String(s).trim().match(/^(\\d{4})/);", "a year range read as a single year"),
 ]
 
 
