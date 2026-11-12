@@ -35,7 +35,10 @@ import { classifyPropertyType } from './schema.js';
 const FOOTNOTES = /(\s*\(\d+\))+\s*$/;
 const DATA_NUMBER = /^[$(]?-?\d{1,3}(,\d{3})+(\.\d+)?\)?$|^-?\d+\.\d+%?$|^\d+%$/;
 
-const norm = (s) => s.replace(FOOTNOTES, '').replace(/\s*\([A-Za-z ]+\)\s*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+// " / " and "/" are the same separator: "Plaza El Segundo / The Point" in
+// Item 2 is "PLAZA EL SEGUNDO/THE POINT" in Schedule III.
+const norm = (s) => s.replace(FOOTNOTES, '').replace(/\s*\([A-Za-z ]+\)\s*$/, '')
+  .replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim().toLowerCase();
 
 /** Split the text into lines with their offsets, and each line into cells with theirs. */
 function index(text) {
@@ -125,28 +128,69 @@ const sourced = (value, cell, confidence) => ({
   value, quality: 'sourced', confidence, citation: { page: 1, start: cell.start, end: cell.end },
 });
 
+/**
+ * The header cell that names properties. A property/description/address
+ * column first; failing that, a name/building/facility/asset column, which
+ * other REITs use. "Location" is deliberately not on the list: it is as often
+ * the city column beside the name as the name itself.
+ */
+function propertyColumn(hcells) {
+  const first = hcells.findIndex((c) => /property|description|address/i.test(c.text));
+  if (first >= 0) return first;
+  return hcells.findIndex((c) => /\bname\b|\bbuilding\b|\bfacility\b|\basset\b/i.test(c.text));
+}
+
+/**
+ * A row with MORE cells than its header has picked up extra cells from
+ * somewhere, and the usual source is a footnote marker typeset in its own
+ * cell: Rosslyn Plaza's "22.5% | (3) | 685,000" shifted every later cell one
+ * column, and v2 read under-development square feet as the total. Drop bare
+ * "(n)" cells, but only as many as the excess, and never the subject's own.
+ * A row with no excess keeps its "(n)" cells: there the marker usually STANDS
+ * IN for a value ("(5)" in the occupancy column meaning "under development"),
+ * and removing it would shift the row the other way.
+ */
+function dropExcessFootnotes(row, subjectIdx, hcells, propIdx) {
+  let excess = (row.cells.length - subjectIdx) - (hcells.length - propIdx);
+  const cells = [];
+  row.cells.forEach((c, i) => {
+    if (excess > 0 && i > subjectIdx && /^\(\d+\)$/.test(c.text.trim())) { excess--; return; }
+    cells.push(c);
+  });
+  return { cells, subjectIdx };
+}
+
+// Header vocabulary. Synonyms are ones REIT filings commonly use; "rentable"
+// must not be excluded by a rent filter, which v2's /rent/ would have done.
+const SQFT_LABEL = /total property|square\s*f(?:ee|oo)t|\bsq\.?\s*ft\b|rentable area|\bnra\b|\bgla\b|gross leasable area/i;
+const SQFT_EXCLUDE = /\bper\b|\brent\b|annualized|share|\$|leased\s+square|expiring/i;
+const OCC_LABEL = /occupan|%\s*occupied|percent(?:age)?\s+occupied/i;
+const OCC_EXCLUDE = /leased|per occupied|\brent/i;
+const YEAR_LABEL = /year built|year completed|year constructed|date of construction|built/i;
+
 function readAligned(row, subjectIdx, header, out) {
   const hcells = header.primary.cells;
-  const propIdx = hcells.findIndex((c) => /property|description|address/i.test(c.text));
+  const propIdx = propertyColumn(hcells);
   if (propIdx < 0) return;
-  const offset = propIdx - subjectIdx;
-  for (let i = 0; i < row.cells.length; i++) {
+  const cleaned = dropExcessFootnotes(row, subjectIdx, hcells, propIdx);
+  const offset = propIdx - cleaned.subjectIdx;
+  for (let i = 0; i < cleaned.cells.length; i++) {
     const h = hcells[i + offset];
     if (!h) continue;
     const label = h.text;
-    const cell = row.cells[i];
+    const cell = cleaned.cells[i];
     const v = cell.text.trim();
 
-    if (/total property/i.test(label) || (/square\s*f(?:ee|oo)t/i.test(label) && !/per|rent|share/i.test(label))) {
+    if (SQFT_LABEL.test(label) && !SQFT_EXCLUDE.test(label)) {
       const n = /units?/i.test(v) ? null : parseCount(v);
       if (n !== null) set(out, 'squareFeet', sourced(n, cell, 0.9));
-    } else if (/occupan/i.test(label) && !/leased|per occupied|rent/i.test(label)) {
+    } else if (OCC_LABEL.test(label) && !OCC_EXCLUDE.test(label)) {
       const p = parsePercent(v);
       if (p !== null) set(out, 'occupancy', sourced(p, cell, 0.9));
     } else if (/\btype\b/i.test(label)) {
       const t = classifyPropertyType(v);
       if (t) set(out, 'propertyType', sourced(t, cell, 0.9));
-    } else if (/year built|year completed|date of construction|built/i.test(label)) {
+    } else if (YEAR_LABEL.test(label)) {
       const y = parseYear(v);
       if (y !== null) set(out, 'yearBuilt', sourced(y, cell, 0.9));
     } else if (/address/i.test(label) && looksLikeStreet(v)) {
@@ -311,17 +355,27 @@ export function extractFromFiling(text, subject) {
   const keys = nameKeys(subject);
   const out = {};
 
-  // Longest matching key wins, so a short prefix never shadows the full name.
+  // The full name first. Shorter name forms ("Plaza El Segundo/The Point" for
+  // "...El Segundo, CA 90245") reach other tables, chiefly Schedule III, that
+  // drop the city; v1 and v2 stopped at the first key that matched anything,
+  // so for a name-and-city subject Schedule III was never read. A shorter form
+  // is used only when it is UNAMBIGUOUS: exactly one row's first cell starts
+  // with it. "Santana Row" is a prefix of both "Santana Row San Jose" and
+  // "Santana Row Residential San Jose", so it is refused for either.
+  const firstCells = lines.filter((l) => l.cells.length >= 4).map((l) => norm(l.cells[0].text));
   const matches = [];
-  for (const key of keys) {
+  keys.forEach((key, k) => {
+    if (k > 0) {
+      const starters = new Set(firstCells.filter((c) => c.startsWith(`${key} `)));
+      if (starters.size !== 1) return;
+    }
     for (let i = 0; i < lines.length; i++) {
       const row = lines[i];
       if (row.cells.length < 4) continue;
       const idx = row.cells.slice(0, 2).findIndex((c) => norm(c.text) === key);
       if (idx >= 0 && !matches.some((m) => m.i === i)) matches.push({ i, idx, key });
     }
-    if (matches.length && key === keys[0]) break;
-  }
+  });
   matches.sort((a, b) => a.i - b.i);
   let headingFound = null;
 
@@ -336,7 +390,7 @@ export function extractFromFiling(text, subject) {
     // The subject cell itself is a street address, under a property/address
     // column. Judge the header cell the subject ALIGNS with, not the header's
     // first cell: a table that leads with "Market" still names properties.
-    const propIdx = header.primary.cells.findIndex((c) => /property|description|address/i.test(c.text));
+    const propIdx = propertyColumn(header.primary.cells);
     if (looksLikeStreet(subject) && !out.address && propIdx >= 0 && propIdx >= idx) {
       const cell = row.cells[idx];
       set(out, 'address', sourced(cell.text.replace(FOOTNOTES, '').trim(), cell, 0.95));

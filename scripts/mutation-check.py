@@ -48,7 +48,7 @@ MUTATIONS = [
      "if (false) {", "enum citations judged literally"),
     (X + "tableReader.js", "if (dates.length !== 2) return;", "if (dates.length < 1) return;",
      "a lone Schedule III date is guessed into a column"),
-    (X + "tableReader.js", "!/leased|per occupied|rent/i.test(label)", "true",
+    (X + "tableReader.js", "const OCC_EXCLUDE = /leased|per occupied|\\brent/i;", "const OCC_EXCLUDE = /(?!)/;",
      "Percentage Leased read as occupancy"),
     (X + "tableReader.js", "if (locRows.length === 1 && subjectRows.length === 1) {",
      "if (locRows.length >= 1) {", "ambiguous location-only rows joined"),
@@ -75,6 +75,19 @@ MUTATIONS = [
      "return true;", "a name prefix matches inside a longer property name"),
     (X + "schema.js", "    if (Math.abs(n - value) <= Math.abs(value) * 1e-9) return true;", "",
      "a scaled prose figure ($123.5 million) is called ungrounded"),
+    # v3
+    (X + "tableReader.js", "let excess = (row.cells.length - subjectIdx) - (hcells.length - propIdx);",
+     "let excess = 99;", "footnote cells dropped even where they stand in for a value"),
+    (X + "tableReader.js", "if (excess > 0 && i > subjectIdx && /^\\(\\d+\\)$/.test(c.text.trim())) { excess--; return; }",
+     "", "an extra footnote cell shifts the row's columns"),
+    (X + "tableReader.js", "      if (starters.size !== 1) return;", "",
+     "an ambiguous shorter name matches another property's row"),
+    (X + "tableReader.js", ".replace(/\\s*\\/\\s*/g, '/')", "",
+     "spaces round a slash defeat a name match"),
+    (X + "tableReader.js", "const SQFT_EXCLUDE = /\\bper\\b|\\brent\\b|", "const SQFT_EXCLUDE = /\\bper\\b|rent|",
+     "a Rentable Square Feet column excluded as rent"),
+    (X + "tableReader.js", "  return hcells.findIndex((c) => /\\bname\\b|\\bbuilding\\b|\\bfacility\\b|\\basset\\b/i.test(c.text));",
+     "  return -1;", "a table that names properties under Name/Building is not read"),
 ]
 
 

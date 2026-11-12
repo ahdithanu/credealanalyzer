@@ -232,3 +232,64 @@ describe('tableReader v2: prose names', () => {
     expect(extractFromFiling(doc, 'Town Center Plaza Leawood, KS 66209').purchasePrice).toBeUndefined();
   });
 });
+
+// ---- v3: the v2 holdout2 error, plus generic robustness for unseen layouts ----
+
+const VNO_HEADER = 'OTHER SEGMENT Property | % Ownership | Type | % Occupancy | In Service | Under Development or Not Available for Lease | Total Property';
+
+describe('tableReader v3', () => {
+  it('drops a footnote cell that makes a row longer than its header', () => {
+    // v2 read 304,000 (under development) as Rosslyn Plaza's total.
+    const doc = [VNO_HEADER,
+      'Rosslyn Plaza, VA (197 units)(2) | 45.6% | Office / Residential | 22.5% | (3) | 685,000 | 304,000 | 989,000'].join('\n');
+    const out = extractFromFiling(doc, 'Rosslyn Plaza, VA (197 units)');
+    expect(out.squareFeet.value).toBe(989_000);
+    expect(out.occupancy.value).toBe(22.5);
+    expect(citationSupports(out.squareFeet.citation, 989_000, pageReader(doc), 'squareFeet')).toBe(true);
+  });
+
+  it('keeps a footnote cell that stands in for a value when the row is not too long', () => {
+    // "(5)" in the occupancy column means "under development"; dropping it
+    // would shift 383,000 out of the Total Property column.
+    const doc = [VNO_HEADER, '623 Fifth Avenue | 100.0% | Office | (5) | — | 383,000 | 383,000'].join('\n');
+    const out = extractFromFiling(doc, '623 Fifth Avenue');
+    expect(out.squareFeet.value).toBe(383_000);
+    expect(out.occupancy).toBeUndefined();
+  });
+
+  it('reads Schedule III through an unambiguous shorter name, with or without spaces round a slash', () => {
+    const doc = [
+      'Property, City, State, Zip Code | Year Completed | Year Acquired | Square Feet(1) /Apartment Units | Average Base Rent Per Square Foot(2) | Percentage Leased(3) | Principal Tenant(s)',
+      'Plaza El Segundo / The Point El Segundo, CA 90245 (6) | 2006-2007, 2016 | 2011/2013 | 503,000 | $49.24 | 99% | Whole Foods Nordstrom Rack HomeGoods',
+      'Descriptions | Encumbrance | Initial cost to company | Cost Capitalized Subsequent to Acquisition | Gross amount at which carried at close of period | Accumulated Depreciation and Amortization | Date of Construction | Date Acquired | Life on which depreciation in latest income statements is computed',
+      'PLAZA EL SEGUNDO/THE POINT (California) | 124,891 | 62,127 | 153,556 | 95,586 | 64,463 | 246,806 | 311,269 | 100,720 | 2006/2007/ 2016 | 12/30/11, 6/14/13, 7/26/13, & 12/27/13 | (1)',
+    ].join('\n');
+    expect(extractFromFiling(doc, 'Plaza El Segundo / The Point El Segundo, CA 90245').yearBuilt.value).toBe(2006);
+  });
+
+  it('refuses a shorter name that starts more than one property\'s row', () => {
+    // Constructed years: in the filing both Santana Row years are ranges, so
+    // the real lines cannot show the guard mattering. "Santana Row" starts the
+    // rows of two properties; the residential one must not take the
+    // commercial Schedule III row's year.
+    const doc = [
+      'Property, City, State, Zip Code | Year Completed | Year Acquired | Square Feet(1) /Apartment Units | Average Base Rent Per Square Foot(2) | Percentage Leased(3) | Principal Tenant(s)',
+      'Santana Row San Jose, CA 95128 | 2002 | 1997 | 1,521,000 | $57.21 | 98% | Crate & Barrel',
+      'Santana Row Residential San Jose, CA 95128 | 2003-2006, 2014 | 1997/2012 | 554 units | N/A | 97%',
+      'Descriptions | Encumbrance | Initial cost to company | Cost Capitalized Subsequent to Acquisition | Gross amount at which carried at close of period | Accumulated Depreciation and Amortization | Date of Construction | Date Acquired | Life on which depreciation in latest income statements is computed',
+      'SANTANA ROW (California) | 65,930 | 7,502 | 1,315,096 | 56,840 | 1,331,688 | 1,388,528 | 364,278 | 1999 | 3/5/97 | (1)',
+    ].join('\n');
+    expect(extractFromFiling(doc, 'Santana Row Residential San Jose, CA 95128').yearBuilt).toBeUndefined();
+  });
+
+  it('reads common header synonyms, and does not mistake "Rentable" for rent', () => {
+    // Constructed header in the vocabulary other REITs use.
+    const doc = [
+      'Building Name | Asset Type | Year Constructed | Rentable Square Feet | % Occupied | Annualized Rent per Leased Square Foot',
+      '100 Main Street | Office | 1985 | 120,500 | 91.0% | 32.10',
+    ].join('\n');
+    expect(values(extractFromFiling(doc, '100 Main Street'))).toEqual({
+      address: '100 Main Street', propertyType: 'office', yearBuilt: 1985, squareFeet: 120_500, occupancy: 91,
+    });
+  });
+});
