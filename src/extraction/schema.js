@@ -131,6 +131,28 @@ export function classifyPropertyType(stated) {
   return OTHER_TYPE_TERMS.test(stated) ? 'other' : null;
 }
 
+/**
+ * Does a span of document text state `value`? Digits first, separators
+ * stripped, so "$12,400,000" holds 12400000 and "6.25%" holds 6.25. Then a
+ * number with a scale word, so "$123.5 million" holds 123500000: the digits
+ * of the two differ, and a literal check would call a correctly cited prose
+ * figure ungrounded. The scaled match is exact, not within a tolerance; the
+ * tolerance belongs to the comparator, not to the citation check.
+ */
+const SCALES = { thousand: 1e3, million: 1e6, billion: 1e9 };
+export function spanHoldsNumber(span, value) {
+  if (typeof span !== 'string' || typeof value !== 'number' || !Number.isFinite(value)) return false;
+  const digits = String(value).replace(/[^0-9]/g, '');
+  if (digits.length > 0 && span.replace(/[^0-9]/g, '').includes(digits)) return true;
+  const re = /(\d[\d,]*(?:\.\d+)?)\s*(thousand|million|billion)\b/gi;
+  let m;
+  while ((m = re.exec(span))) {
+    const n = Number(m[1].replace(/,/g, '')) * SCALES[m[2].toLowerCase()];
+    if (Math.abs(n - value) <= Math.abs(value) * 1e-9) return true;
+  }
+  return false;
+}
+
 /** @returns {{name:string, kind:FieldKind, required:boolean}} */
 export function fieldByName(name) {
   const f = FIELDS.find((x) => x.name === name);

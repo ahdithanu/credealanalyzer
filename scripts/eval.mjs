@@ -2,7 +2,11 @@
 /**
  * Score extractors against the hand-labelled EDGAR corpus.
  *
- *   npm run eval                 # dev and holdout, every extractor
+ *   npm run eval                 # every set, every extractor
+ *
+ * Sets: `dev` (built against by v1), `holdout` (v1's holdout, then spent as
+ * v2's development data), `holdout2` (drawn and labelled after v2 was frozen).
+ * Only a set an extractor was frozen before is evidence about it.
  *   npm run eval -- --set=dev
  *   npm run eval -- --json       # machine-readable, for diffing runs
  *
@@ -27,6 +31,7 @@ import { htmlToText, pageReader } from '../src/extraction/text.js';
 import { scoreDocument, scoreCorpus, BASELINES } from '../src/extraction/score.js';
 import { FIELD_NAMES } from '../src/extraction/schema.js';
 import { extractFromFiling } from '../src/extraction/tableReader.js';
+import { extractFromFiling as extractV1 } from '../src/extraction/tableReaderV1.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CORPUS = join(ROOT, 'corpus/edgar');
@@ -34,7 +39,7 @@ const CORPUS = join(ROOT, 'corpus/edgar');
 const args = process.argv.slice(2);
 const flag = (n) => args.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 const json = args.includes('--json');
-const sets = flag('set') ? [flag('set')] : ['dev', 'holdout'];
+const sets = flag('set') ? [flag('set')] : ['dev', 'holdout', 'holdout2'];
 
 /**
  * The guess the degenerate guesser makes for every field. Constant and
@@ -55,6 +60,8 @@ export const GUESS_FILLER = {
 const EXTRACTORS = {
   abstainAlways: () => BASELINES.abstainAlways(),
   guessAlways: () => BASELINES.guessAlways(GUESS_FILLER),
+  // v1 frozen as scored at 869c621; v2 frozen before holdout2 was drawn.
+  tableReaderV1: ({ text, subject }) => extractV1(text, subject),
   tableReader: ({ text, subject }) => extractFromFiling(text, subject),
 };
 

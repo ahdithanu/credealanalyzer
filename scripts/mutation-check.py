@@ -58,6 +58,23 @@ MUTATIONS = [
      "const cell = dates[0];", "Schedule III date order ignored"),
     (X + "tableReader.js", "const m = String(s).trim().match(/^(\\d{4})(?!\\s*-\\s*\\d)/);",
      "const m = String(s).trim().match(/^(\\d{4})/);", "a year range read as a single year"),
+    # v2: one per defect the v1 holdout found, plus the guards added with them
+    (X + "tableReader.js", "return !DATA_NUMBER.test(t) && !BARE_NON_YEAR(t) && !NIL.test(t) && c.text.length < 90;",
+     "return !DATA_NUMBER.test(t) && c.text.length < 90;", "a data row of small numbers passes as a header"),
+    (X + "tableReader.js", "if (/[\u2014\u2013]\\s*[A-Za-z .']+,\\s*[A-Z]{2}\\s*$|,\\s*[A-Z]{2}(\\s+\\d{5})?\\s*$/.test(t)) return false;",
+     "", "a name with a trailing location reads as an address"),
+    (X + "tableReader.js", "const cell = row.cells[newest + shift];", "const cell = row.cells[newest];",
+     "grouped year columns aligned from the left"),
+    (X + "tableReader.js", "const newest = run.reduce((a, b) => (Number(P[b].text) > Number(P[a].text) ? b : a));",
+     "const newest = run[run.length - 1];", "the oldest year of a run read instead of the newest"),
+    (X + "tableReader.js", "if (t === 'mixed-use') return null;", "",
+     "a two-category heading types every row in its table"),
+    (X + "tableReader.js", "if ((!names_ && !follows) || PLURAL.test(sent.text)) return;",
+     "if (!names_ && !follows) return;", "a price for several properties read as the subject's"),
+    (X + "tableReader.js", "if (!/[A-Z][\\w'&-]*\\s$/.test(before) && !/^\\s[A-Z]/.test(after)) return true;",
+     "return true;", "a name prefix matches inside a longer property name"),
+    (X + "schema.js", "    if (Math.abs(n - value) <= Math.abs(value) * 1e-9) return true;", "",
+     "a scaled prose figure ($123.5 million) is called ungrounded"),
 ]
 
 

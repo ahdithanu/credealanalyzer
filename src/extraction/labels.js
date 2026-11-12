@@ -22,7 +22,9 @@
  *                         claim, not ground truth
  */
 
-import { FIELDS, FIELD_NAMES, fieldByName, classifyPropertyType } from './schema.js';
+import {
+  FIELDS, FIELD_NAMES, fieldByName, classifyPropertyType, spanHoldsNumber,
+} from './schema.js';
 import { sampleSubjects } from './sample.js';
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -109,10 +111,7 @@ export function evidenceHolds(fieldName, evidence, value) {
   if (typeof evidence !== 'string' || !evidence) return false;
   const { kind } = fieldByName(fieldName);
   if (kind === 'enum') return classifyPropertyType(evidence) === value;
-  if (typeof value === 'number') {
-    const digits = String(value).replace(/[^0-9]/g, '');
-    return digits.length > 0 && evidence.replace(/[^0-9]/g, '').includes(digits);
-  }
+  if (typeof value === 'number') return spanHoldsNumber(evidence, value);
   return evidence.toLowerCase().includes(String(value).trim().toLowerCase());
 }
 

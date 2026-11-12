@@ -22,7 +22,7 @@
  */
 
 import {
-  FIELDS, FIELD_NAMES, fieldByName, valuesAgree, classifyPropertyType,
+  FIELDS, FIELD_NAMES, fieldByName, valuesAgree, classifyPropertyType, spanHoldsNumber,
 } from './schema.js';
 
 /**
@@ -104,11 +104,7 @@ export function citationSupports(citation, value, pageText, fieldName) {
   if (fieldName && fieldByName(fieldName).kind === 'enum') {
     return typeof value === 'string' && classifyPropertyType(span) === value.trim().toLowerCase();
   }
-  if (typeof value === 'number') {
-    const digits = String(value).replace(/[^0-9]/g, '');
-    const spanDigits = span.replace(/[^0-9]/g, '');
-    return digits.length > 0 && spanDigits.includes(digits);
-  }
+  if (typeof value === 'number') return spanHoldsNumber(span, value);
   return span.toLowerCase().includes(String(value).trim().toLowerCase());
 }
 

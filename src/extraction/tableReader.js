@@ -54,8 +54,18 @@ function index(text) {
   return lines;
 }
 
+// A header names columns; it does not carry values. v1 judged that only by the
+// absence of comma-formatted numbers, so a Schedule III row whose figures were
+// all under 1,000 ("334 | 428 | 2 | ...") passed as a header and hid the real
+// one. Bare numbers that are not plausible years, and nil markers, now mark a
+// line as data. Years stay allowed: BRT's header is "2025 | 2024 | ...".
+const BARE_NON_YEAR = (t) => /^-?\d+$/.test(t) && !(Number(t) >= 1900 && Number(t) <= 2100);
+const NIL = /^(—|–|-|-\(\d+\))$/;
 const isHeader = (line) => line.cells.length >= 3
-  && line.cells.every((c) => !DATA_NUMBER.test(c.text.trim()) && c.text.length < 90);
+  && line.cells.every((c) => {
+    const t = c.text.trim();
+    return !DATA_NUMBER.test(t) && !BARE_NON_YEAR(t) && !NIL.test(t) && c.text.length < 90;
+  });
 
 function headerBlock(lines, i) {
   // The nearest header line above, and up to five header lines contiguous with
@@ -65,7 +75,10 @@ function headerBlock(lines, i) {
   if (h < 0 || i - h >= 120) return null;
   const block = [lines[h]];
   for (let k = h - 1; k >= 0 && h - k <= 5 && isHeader(lines[k]); k--) block.unshift(lines[k]);
-  return { primary: lines[h], text: block.map((l) => l.raw).join(' | ') };
+  return {
+    primary: lines[h], block, firstIdx: h - block.length + 1,
+    text: block.map((l) => l.raw).join(' | '),
+  };
 }
 
 function nameKeys(subject) {
@@ -95,7 +108,16 @@ const parsePercent = (s) => {
   const m = s.trim().match(/^(\d{1,3}(?:\.\d+)?)%$/);
   return m ? Number(m[1]) : null;
 };
-const looksLikeStreet = (s) => /^\d[\d-]*\s+[A-Za-z0-9]/.test(s.trim());
+// A building number followed by a street name. v1 accepted any leading number,
+// so the property NAME "1322 North —Auburn, AL" came back as an address, with
+// a grounded citation. A trailing location ("— Auburn, AL", ", VA 22202") now
+// disqualifies a string: an address cell in these tables never carries one,
+// and a name-and-location cell always does.
+const looksLikeStreet = (s) => {
+  const t = s.trim();
+  if (/[—–]\s*[A-Za-z .']+,\s*[A-Z]{2}\s*$|,\s*[A-Z]{2}(\s+\d{5})?\s*$/.test(t)) return false;
+  return /^\d[\d-]*\s+[A-Za-z0-9]/.test(t);
+};
 
 const DATE_CELL = /^(\d{4}\b|[A-Z][a-z]{2,4}\.?\s?-\s?\d{4}$|\d{1,2}\/\d{1,2}\/\d{2,4})/;
 
@@ -130,6 +152,132 @@ function readAligned(row, subjectIdx, header, out) {
     } else if (/address/i.test(label) && looksLikeStreet(v)) {
       set(out, 'address', sourced(v.replace(FOOTNOTES, ''), cell, 0.9));
     }
+  }
+}
+
+/**
+ * Grouped year columns under a spanning label. BRT prints
+ *
+ *   Our Percentage Ownership (%) | Average Monthly Rental Rate ... | Average Physical Occupancy (%)
+ *   Property Name and Location | Number of Units | Age | Acquisition Date | 2025 | 2024 | ... | 2025 | 2024 | ...
+ *
+ * and each row carries one more cell than the second line, because the
+ * single-column "Ownership" label has no year under it. Reading by left
+ * alignment puts occupancy under a rent year. So: when the primary header ends
+ * in runs of years, align from the RIGHT, give each run the spanning label
+ * above it (also right-aligned), and read the most recent year of a run whose
+ * label is occupancy.
+ */
+function readGrouped(row, header, out) {
+  const P = header.primary.cells;
+  const isYear = (c) => /^\d{4}$/.test(c.text.trim()) && Number(c.text) >= 1900 && Number(c.text) <= 2100;
+  if (!P.length || !isYear(P[P.length - 1]) || header.block.length < 2) return;
+  if (row.cells.length < P.length) return;
+
+  const runs = [];
+  for (let i = 0; i < P.length; i++) {
+    if (!isYear(P[i])) continue;
+    if (i > 0 && isYear(P[i - 1]) && Number(P[i].text) < Number(P[i - 1].text)) runs[runs.length - 1].push(i);
+    else runs.push([i]);
+  }
+  const grouped = runs.filter((r) => r.length >= 2);
+  const spans = header.block[header.block.length - 2].cells;
+  if (!grouped.length || spans.length < grouped.length) return;
+
+  const shift = row.cells.length - P.length;
+  grouped.forEach((run, k) => {
+    const label = spans[spans.length - grouped.length + k].text;
+    if (!/occupan/i.test(label) || /leased|rent/i.test(label)) return;
+    const newest = run.reduce((a, b) => (Number(P[b].text) > Number(P[a].text) ? b : a));
+    const cell = row.cells[newest + shift];
+    const v = cell?.text.trim() ?? '';
+    const p = parsePercent(v) ?? (/%/.test(label) && /^\d{1,3}(\.\d+)?$/.test(v) && Number(v) <= 100 ? Number(v) : null);
+    if (p !== null) set(out, 'occupancy', sourced(p, cell, 0.85));
+  });
+}
+
+/**
+ * A type stated by a heading the table sits under ("Our Multi-Family
+ * Properties"). Only a heading naming ONE category counts: "Retail and
+ * Residential Properties" describes a table holding both kinds, not rows that
+ * are each mixed-use, and the labelling rules say the same.
+ */
+function headingType(lines, firstHeaderIdx) {
+  for (let k = firstHeaderIdx - 1; k >= 0 && firstHeaderIdx - k <= 4; k--) {
+    const l = lines[k];
+    if (l.cells.length > 1 || l.raw.length >= 80) continue;
+    const t = classifyPropertyType(l.raw);
+    if (t === 'mixed-use') return null;
+    if (t) return { type: t, cell: { start: l.start, end: l.start + l.raw.length } };
+  }
+  return null;
+}
+
+/**
+ * A purchase price stated in prose. v1 read only tables and missed "The
+ * venture acquired the property for $36,500,000".
+ *
+ * Deliberately narrow, because price is the field an invented value costs the
+ * most on. A sentence counts when it says the subject (or "the property", in
+ * the sentence right after one naming the subject) was acquired FOR a dollar
+ * figure. It does not count when it speaks of several properties or a
+ * portfolio, because a portfolio price is not a property price.
+ */
+const PRICE = /\bacquir(?:ed|es)\b[^.]*?\bfor\s+(?:approximately\s+|about\s+)?(\$\s?(\d[\d,]*(?:\.\d+)?)(?:\s*(thousand|million|billion))?)/i;
+const PLURAL = /\bproperties\b|\bportfolio\b|\bassets\b|\b(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:buildings|properties)\b/i;
+
+function subjectNames(subject) {
+  const names = new Set([subject.trim()]);
+  const dash = subject.match(/^(.*?)\s*[—–]\s*[A-Za-z .']+,\s*[A-Z]{2}\s*$/);
+  if (dash) names.add(dash[1].trim());
+  const zip = subject.match(/^(.*?),\s*[A-Z]{2}\s+\d{5}$/);
+  if (zip) {
+    // "Del Monte Shopping Center Monterey, CA 93940": where the name ends and
+    // the city begins is not marked, so every prefix of two or more words is a
+    // candidate. mentions() keeps a short one from matching inside a longer
+    // name.
+    const words = zip[1].trim().split(/\s+/);
+    for (let n = words.length; n >= 2; n--) names.add(words.slice(0, n).join(' '));
+  }
+  return [...names].filter((n) => n.length >= 4);
+}
+
+/**
+ * The sentence names this property, not a longer name that contains it:
+ * "Town Center" inside "Annapolis Town Center" or "Town Center Crossing" is
+ * another property. A capitalised word touching either end means the match is
+ * part of a longer proper name.
+ */
+function mentions(text, name) {
+  let at = text.indexOf(name);
+  while (at >= 0) {
+    const before = text.slice(0, at);
+    const after = text.slice(at + name.length);
+    if (!/[A-Z][\w'&-]*\s$/.test(before) && !/^\s[A-Z]/.test(after)) return true;
+    at = text.indexOf(name, at + 1);
+  }
+  return false;
+}
+
+function readProsePrice(lines, subject, out) {
+  const names = subjectNames(subject);
+  for (const line of lines) {
+    if (line.cells.length > 1) continue;
+    const sentences = [];
+    const re = /[^.]+(?:\.(?!\s+[A-Z])[^.]*)*\.?/g;
+    let m;
+    while ((m = re.exec(line.raw))) sentences.push({ text: m[0], at: m.index });
+    sentences.forEach((sent, k) => {
+      const names_ = names.some((n) => mentions(sent.text, n));
+      const follows = k > 0 && /\bthe property\b/i.test(sent.text)
+        && names.some((n) => mentions(sentences[k - 1].text, n)) && !PLURAL.test(sentences[k - 1].text);
+      if ((!names_ && !follows) || PLURAL.test(sent.text)) return;
+      const p = sent.text.match(PRICE);
+      if (!p) return;
+      const value = Number(p[2].replace(/,/g, '')) * ({ thousand: 1e3, million: 1e6, billion: 1e9 }[p[3]?.toLowerCase()] || 1);
+      const start = line.start + sent.at + sent.text.indexOf(p[1]);
+      set(out, 'purchasePrice', sourced(value, { start, end: start + p[1].length }, 0.8));
+    });
   }
 }
 
@@ -175,13 +323,16 @@ export function extractFromFiling(text, subject) {
     if (matches.length && key === keys[0]) break;
   }
   matches.sort((a, b) => a.i - b.i);
+  let headingFound = null;
 
   for (const { i, idx } of matches) {
     const row = lines[i];
     const header = headerBlock(lines, i);
     if (!header) continue;
     readAligned(row, idx, header, out);
+    readGrouped(row, header, out);
     readScheduleDates(row, header, out);
+    if (!headingFound) headingFound = headingType(lines, header.firstIdx);
     // The subject cell itself is a street address, under a property/address
     // column. Judge the header cell the subject ALIGNS with, not the header's
     // first cell: a table that leads with "Market" still names properties.
@@ -209,6 +360,11 @@ export function extractFromFiling(text, subject) {
       const at = text.indexOf(subject);
       if (at >= 0) out.propertyType = sourced(t, { start: at, end: at + subject.length }, 0.7);
     }
+  }
+  readProsePrice(lines, subject, out);
+
+  if (!out.propertyType && headingFound) {
+    out.propertyType = sourced(headingFound.type, headingFound.cell, 0.75);
   }
   return out;
 }

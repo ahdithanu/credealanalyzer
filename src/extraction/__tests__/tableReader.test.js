@@ -143,3 +143,92 @@ describe('tableReader on other table shapes', () => {
     expect(extractFromFiling(VNO, '1 Main Street')).toEqual({});
   });
 });
+
+// ---- v2: each test below is one defect the v1 holdout found ----
+
+const BRT_FULL = [
+  'Our Multi-Family Properties',
+  'Generally, our multi-family properties are garden apartments and, to a lesser extent, mid-rise or town home style properties.',
+  'Our Percentage Ownership (%) (1) | Average Monthly Rental Rate Per Occupied Unit ($) | Average Physical Occupancy (%)',
+  'Property Name and Location | Number of Units | Age | Acquisition Date | 2025 | 2024 | 2023 | 2022 | 2021 | 2025 | 2024 | 2023 | 2022 | 2021',
+  'Avalon Apartments—Pensacola, FL | 276 | 17 | 12/22/2014 | 100 | 1,449 | 1,498 | 1,518 | 1,438 | 1,250 | 94.2 | 94.8 | 95.0 | 96.3 | 98.1',
+  '1322 North —Auburn, AL | 214 | 23 | 7/15/2025 | 80 | 1,262 | — | — | — | — | 87.7 | — | — | — | —',
+  'On July 15, 2025, an unconsolidated joint venture in which the Company has an 80% interest, acquired 1322 North, a 214 unit multi-family property located in Auburn, AL (the "Auburn Acquisition"). The venture acquired the property for $36,500,000 (including a $24,419,000 mortgage). The mortgage matures in 2032.',
+].join('\n');
+
+describe('tableReader v2', () => {
+  it('does not take a data row of small numbers for a header', () => {
+    // v1 read "6701 East 30th Street | 334 | 428 | 2 | ..." as a header, never
+    // saw "Year Acquired", and missed Outland Center's construction year.
+    const doc = [
+      'Metro Area | Address | Encumbrances | Land | Building and Improvements | Costs Capitalized Subsequent to Acquisition | Land | Building and Improvements | Total (2) | Accumulated Depreciation (3) | Year Acquired | Year Built/ Renovated (4) | Depreciable Life (in years) (5)',
+      'Indianapolis, IN | 6555 East 30th Street | 1,881 | 6,636 | 635 | 1,881 | 7,271 | 9,152 | 2,927 | 2019 | 1969/1997 | 17',
+      'Indianapolis, IN | 6701 East 30th Street | 334 | 428 | 2 | 334 | 430 | 764 | 290 | 2019 | 1990 | 17',
+      'Memphis, TN | Outland Center Memphis I | -(1) | 678 | 9,227 | 1,138 | 678 | 10,365 | 11,043 | 1,523 | 2022 | 1988 | 21-25',
+    ].join('\n');
+    expect(extractFromFiling(doc, 'Outland Center Memphis I').yearBuilt.value).toBe(1988);
+  });
+
+  it('does not read a numbered property name as a street address', () => {
+    // v1's holdout hallucination: grounded, confident, and wrong.
+    expect(extractFromFiling(BRT_FULL, '1322 North —Auburn, AL').address).toBeUndefined();
+    // A real numbered street address still reads.
+    expect(extractFromFiling(VNO, '606 Broadway').address.value).toBe('606 Broadway');
+  });
+
+  it('reads occupancy under a spanning label over grouped year columns, newest year', () => {
+    const out = extractFromFiling(BRT_FULL, 'Avalon Apartments—Pensacola, FL');
+    expect(out.occupancy.value).toBe(94.2);
+    expect(extractFromFiling(BRT_FULL, '1322 North —Auburn, AL').occupancy.value).toBe(87.7);
+    expect(citationSupports(out.occupancy.citation, 94.2, pageReader(BRT_FULL), 'occupancy')).toBe(true);
+  });
+
+  it('takes a type from a heading that names one category', () => {
+    const out = extractFromFiling(BRT_FULL, '1322 North —Auburn, AL');
+    expect(out.propertyType.value).toBe('multifamily');
+    expect(citationSupports(out.propertyType.citation, 'multifamily', pageReader(BRT_FULL), 'propertyType')).toBe(true);
+  });
+
+  it('takes no type from a heading that names two categories', () => {
+    // "Retail and Residential Properties" heads a table holding both kinds;
+    // it does not say any row is mixed-use.
+    const doc = [
+      'Retail and Residential Properties',
+      'Property, City, State, Zip Code | Year Completed | Year Acquired | Square Feet(1) /Apartment Units | Average Base Rent Per Square Foot(2) | Percentage Leased(3) | Principal Tenant(s)',
+      'Westpost Arlington, VA 22202 | 2001-2002 | 1998/2010 | 298,000 | $35.22 | 99% | Harris Teeter Target TJ Maxx Ulta Walgreens DSW',
+    ].join('\n');
+    const out = extractFromFiling(doc, 'Westpost Arlington, VA 22202');
+    expect(out.squareFeet.value).toBe(298_000); // the row was found
+    expect(out.propertyType).toBeUndefined();
+  });
+
+  it('reads a purchase price stated in prose about the subject, with a grounded citation', () => {
+    const out = extractFromFiling(BRT_FULL, '1322 North —Auburn, AL');
+    expect(out.purchasePrice.value).toBe(36_500_000);
+    expect(citationSupports(out.purchasePrice.citation, 36_500_000, pageReader(BRT_FULL), 'purchasePrice')).toBe(true);
+  });
+
+  it('never reads a portfolio price as a property price', () => {
+    const doc = 'During 2025, we acquired properties for $752.8 million, and will continue to evaluate additional opportunities in 2026.';
+    expect(extractFromFiling(doc, 'Del Monte Shopping Center Monterey, CA 93940')).toEqual({});
+    const named = 'We acquired Del Monte Shopping Center and two other properties for $300.0 million.';
+    expect(extractFromFiling(named, 'Del Monte Shopping Center Monterey, CA 93940').purchasePrice).toBeUndefined();
+  });
+
+  it('scales a prose price and still grounds it', () => {
+    // Constructed: no single-property "million" price exists in the corpus.
+    const doc = 'In February 2025 we acquired Del Monte Shopping Center for $123.5 million.';
+    const out = extractFromFiling(doc, 'Del Monte Shopping Center Monterey, CA 93940');
+    expect(out.purchasePrice.value).toBe(123_500_000);
+    expect(citationSupports(out.purchasePrice.citation, 123_500_000, pageReader(doc), 'purchasePrice')).toBe(true);
+  });
+});
+
+describe('tableReader v2: prose names', () => {
+  it('does not take a price stated for a longer name containing the subject', () => {
+    // Constructed. "Town Center" is a prefix candidate for the subject below,
+    // and must not match inside "Annapolis Town Center".
+    const doc = 'In October 2025 we acquired Annapolis Town Center for $187.0 million.';
+    expect(extractFromFiling(doc, 'Town Center Plaza Leawood, KS 66209').purchasePrice).toBeUndefined();
+  });
+});

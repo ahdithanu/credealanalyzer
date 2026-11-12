@@ -5,7 +5,7 @@ import {
   assertDrawn, labelProblems, assertCompleteLabels, evidenceProblems, evidenceHolds, corpusItems,
 } from '../labels';
 import { isLabelled, assertLabelled } from '../edgar';
-import { classifyPropertyType, FIELD_NAMES } from '../schema';
+import { classifyPropertyType, FIELD_NAMES, spanHoldsNumber } from '../schema';
 import { citationSupports } from '../score';
 
 const ALL_NULL = Object.fromEntries(FIELD_NAMES.map((f) => [f, null]));
@@ -209,5 +209,18 @@ describe('corpusItems', () => {
     }];
     expect(corpusItems(manifest).map((i) => i.id)).toEqual(['e1#a', 'e1#b']);
     expect(corpusItems(manifest, { set: 'holdout' }).map((i) => i.subject)).toEqual(['b']);
+  });
+});
+
+describe('spanHoldsNumber: the shared literal check for labels and citations', () => {
+  it.each([
+    ['$12,400,000', 12_400_000, true],
+    ['6.25%', 6.25, true],
+    ['$123.5 million', 123_500_000, true],
+    ['$123.5 million', 123_400_000, false],
+    ['$1.2 billion', 1_200_000_000, true],
+    ['$36,500,000', 36_400_000, false],
+  ])('%s holds %d: %s', (span, value, expected) => {
+    expect(spanHoldsNumber(span, value)).toBe(expected);
   });
 });
