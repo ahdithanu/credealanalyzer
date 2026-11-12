@@ -22,6 +22,7 @@
     "buybox": "node scripts/buybox.mjs",
     "enrich": "node scripts/enrich.mjs",
     "markets": "node scripts/markets.mjs",
-    "edgar": "node scripts/edgar.mjs"
+    "edgar": "node scripts/edgar.mjs",
+    "eval": "node scripts/eval.mjs"
   }
 }

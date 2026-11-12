@@ -21,7 +21,9 @@
  *    to look at both.
  */
 
-import { FIELDS, FIELD_NAMES, fieldByName, valuesAgree } from './schema';
+import {
+  FIELDS, FIELD_NAMES, fieldByName, valuesAgree, classifyPropertyType,
+} from './schema.js';
 
 /**
  * Per-field outcomes. The names are chosen so that a report reads as English
@@ -75,8 +77,12 @@ export function abstained(answer) {
  * @param {{page:number, start:number, end:number}} citation
  * @param {*} value
  * @param {(page:number) => string} pageText  reader over the source document
+ * @param {string} [fieldName]  when the field is an enum, the span is judged by
+ *   what it states, through the same mapping the labels use: a filing says
+ *   "Office / Retail", never "mixed-use", and a literal check would call every
+ *   correctly cited type ungrounded.
  */
-export function citationSupports(citation, value, pageText) {
+export function citationSupports(citation, value, pageText, fieldName) {
   if (!citation || typeof pageText !== 'function') return false;
   const { page, start, end } = citation;
   if (!Number.isInteger(page) || !Number.isInteger(start) || !Number.isInteger(end)) return false;
@@ -95,6 +101,9 @@ export function citationSupports(citation, value, pageText) {
   if (start < 0 || end > text.length) return false;
 
   const span = text.slice(start, end);
+  if (fieldName && fieldByName(fieldName).kind === 'enum') {
+    return typeof value === 'string' && classifyPropertyType(span) === value.trim().toLowerCase();
+  }
   if (typeof value === 'number') {
     const digits = String(value).replace(/[^0-9]/g, '');
     const spanDigits = span.replace(/[^0-9]/g, '');
@@ -138,7 +147,7 @@ export function scoreDocument({ predicted = {}, truth = {}, pageText } = {}) {
     // sourced is a separate assertion from the value, and it fails separately.
     let grounded = null;
     if (!declined && answer.quality === 'sourced') {
-      grounded = pageText ? citationSupports(answer.citation, answer.value, pageText) : null;
+      grounded = pageText ? citationSupports(answer.citation, answer.value, pageText, name) : null;
       if (grounded === false) ungrounded.push(name);
     }
 

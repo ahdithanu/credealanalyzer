@@ -137,6 +137,19 @@ export function manifestEntry({ cik, company, filing, localPath, fetchedAt }) {
 }
 
 /**
+ * A filing is labelled either as one deal (`groundTruth` is an object) or as
+ * a list of drawn subjects (see ./labels.js), every one of which carries a
+ * ground-truth object. An empty subject list is NOT labelled: it would score
+ * as nothing at all and let a run report numbers over a corpus it skipped.
+ */
+export function isLabelled(entry) {
+  if (entry.groundTruth !== null && entry.groundTruth !== undefined) return true;
+  const items = entry.subjects?.items;
+  return Array.isArray(items) && items.length > 0
+    && items.every((i) => i && i.groundTruth && typeof i.groundTruth === 'object');
+}
+
+/**
  * Refuse to score against an unlabelled corpus.
  *
  * Without this the harness would happily report a hallucination rate computed
@@ -146,7 +159,7 @@ export function manifestEntry({ cik, company, filing, localPath, fetchedAt }) {
  * whole directory is built around.
  */
 export function assertLabelled(manifest) {
-  const unlabelled = manifest.filter((e) => e.groundTruth === null || e.groundTruth === undefined);
+  const unlabelled = manifest.filter((e) => !isLabelled(e));
   if (unlabelled.length) {
     throw new Error(
       `${unlabelled.length} of ${manifest.length} corpus documents are unlabelled: `

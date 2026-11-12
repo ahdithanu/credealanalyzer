@@ -98,6 +98,39 @@ export function normaliseText(s) {
   return String(s).toLowerCase().replace(/[\s,.]+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
 }
 
+/**
+ * How a property type the DOCUMENT STATES becomes one of the schema's enum
+ * values. Written down once, here, and used by three things that must agree:
+ * the labeller deciding a label, the evidence check confirming it, and the
+ * citation check deciding whether a cited span grounds an extracted type.
+ *
+ * Filings never say "mixed-use". They say "Office / Retail". So a span naming
+ * two or more of the four use categories maps to mixed-use; one maps to that
+ * category; none, but a non-use term ("Land", "Studio"), maps to other; and
+ * nothing recognisable maps to null — the document did not state a type.
+ *
+ * A portfolio-level sentence ("predominantly retail") is not a statement about
+ * any one property, and is not labelled as one. See docs/extraction-eval.md.
+ */
+export const PROPERTY_TYPE_TERMS = {
+  office: /\boffices?\b/i,
+  retail: /\bretail\b|shopping\s+cent(?:er|re)s?\b|\bmall\b/i,
+  industrial: /industrial|warehouse|distribution|manufacturing|\bflex\b/i,
+  multifamily: /multi-?\s?family|\bapartments?\b|\bresidential\b/i,
+};
+const OTHER_TYPE_TERMS = /\bland\b|\bstudios?\b|\btheat(?:er|re)\b|\bhotel\b|\bgarage\b|\bshowroom\b/i;
+
+/** @returns {string|null} the enum value a stated type label maps to */
+export function classifyPropertyType(stated) {
+  if (typeof stated !== 'string') return null;
+  const hits = Object.entries(PROPERTY_TYPE_TERMS)
+    .filter(([, re]) => re.test(stated))
+    .map(([name]) => name);
+  if (hits.length >= 2) return 'mixed-use';
+  if (hits.length === 1) return hits[0];
+  return OTHER_TYPE_TERMS.test(stated) ? 'other' : null;
+}
+
 /** @returns {{name:string, kind:FieldKind, required:boolean}} */
 export function fieldByName(name) {
   const f = FIELDS.find((x) => x.name === name);
