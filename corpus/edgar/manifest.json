@@ -13,7 +13,7 @@
     "groundTruth": null,
     "subjects": {
       "populationSource": "Item 2, PROPERTY LISTING (New York and Other segments): every row naming a property; Total / Our Ownership Interest / \"Other (n buildings)\" rows excluded; trailing footnote markers stripped",
-      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; first 6 drawn = dev, next 3 = holdout",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
       "population": [
         "PENN 1 (ground leased through 2098)",
         "1290 Avenue of the Americas",
@@ -302,6 +302,124 @@
             "Unconsolidated (footnote 2): no Schedule III row, yearBuilt NOT STATED.",
             "The $450,000,000 financing is debt, not a price."
           ]
+        },
+        {
+          "subject": "138-142 West 32nd Street",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "138-142 West 32nd Street",
+            "propertyType": "retail",
+            "squareFeet": 8000,
+            "yearBuilt": 1920,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 80.3
+          },
+          "evidence": {
+            "address": "138-142 West 32nd Street | 100.0% | Retail",
+            "propertyType": "138-142 West 32nd Street | 100.0% | Retail",
+            "squareFeet": "Retail | 80.3% | 8,000 | — | 8,000",
+            "occupancy": "Retail | 80.3% | 8,000",
+            "yearBuilt": "21,415 | 3,363 | 1920 | 2015"
+          },
+          "notes": [
+            "Schedule III rendered (checked earlier screenshot): 1920 construction, 2015 acquired."
+          ]
+        },
+        {
+          "subject": "770 Broadway",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "770 Broadway",
+            "propertyType": "mixed-use",
+            "squareFeet": 1183000,
+            "yearBuilt": 1907,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "770 Broadway | 100.0% | Office / Retail",
+            "propertyType": "770 Broadway | 100.0% | Office / Retail",
+            "squareFeet": "Office / Retail | 100.0% | 1,183,000 | — | 1,183,000",
+            "occupancy": "Office / Retail | 100.0% | 1,183,000",
+            "yearBuilt": "22,188 | 10,175 | 1907 | 1998"
+          },
+          "notes": [
+            "The $935,000 thousand NYU payment is a prepaid lease payment, not a price. The 1,076,000 square feet is the NYU master-leased area, not the property total."
+          ]
+        },
+        {
+          "subject": "Rosslyn Plaza, VA (197 units)",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "mixed-use",
+            "squareFeet": 989000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 22.5
+          },
+          "evidence": {
+            "propertyType": "Rosslyn Plaza, VA (197 units)(2) | 45.6% | Office / Residential",
+            "squareFeet": "685,000 | 304,000 | 989,000",
+            "occupancy": "Office / Residential | 22.5%"
+          },
+          "notes": [
+            "The row carries an extra footnote cell \"(3)\" after occupancy (Excludes residential occupancy statistics), which shifts every later cell one column right in the text. Total Property is the last cell, 989,000.",
+            "occupancy 22.5 is stated, with the footnote that it excludes residential.",
+            "Unconsolidated: no Schedule III row, yearBuilt NOT STATED. No street address."
+          ]
+        },
+        {
+          "subject": "PENN 2",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "mixed-use",
+            "squareFeet": 1825000,
+            "yearBuilt": 1968,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 79.5
+          },
+          "evidence": {
+            "propertyType": "PENN 2 | 100.0% | Office / Retail",
+            "squareFeet": "Office / Retail | 79.5% | 1,825,000 | — | 1,825,000",
+            "occupancy": "Office / Retail | 79.5% | 1,825,000",
+            "yearBuilt": "1,328,445 | 135,733 | 1968 | 1997"
+          },
+          "notes": [
+            "address NOT STATED: \"located on the west side of Seventh Avenue between 31st and 33rd Street\" has no building number.",
+            "The $750,000,000 is a redevelopment cost estimate, not a price."
+          ]
+        },
+        {
+          "subject": "Annapolis, MD (ground leased through 2042)",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "retail",
+            "squareFeet": 128000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "propertyType": "Annapolis, MD (ground leased through 2042)(1) | 100.0% | Retail",
+            "squareFeet": "Retail | 100.0% | 128,000 | — | 128,000",
+            "occupancy": "Retail | 100.0% | 128,000"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: Schedule III \"Annapolis, Maryland\" carries one year, 2005. Rendered, it sits under Date acquired with construction blank (converter-loss case, like 606 Broadway)."
+          ]
         }
       ]
     }
@@ -320,7 +438,7 @@
     "groundTruth": null,
     "subjects": {
       "populationSource": "Item 2, Company Portfolio table: the Property column of every row (129 rows, matching \"Total Company Portfolio | 129\"); trailing footnote markers stripped",
-      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; first 6 drawn = dev, next 3 = holdout",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
       "population": [
         "1099 Dodds Avenue",
         "1413 Lovers Lane",
@@ -665,6 +783,120 @@
             "occupancy": "350,000 | 100% | 1,568,000"
           },
           "notes": []
+        },
+        {
+          "subject": "2100 International Parkway",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "2100 International Parkway",
+            "propertyType": "industrial",
+            "squareFeet": 274464,
+            "yearBuilt": 2000,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 0
+          },
+          "evidence": {
+            "address": "2100 International Parkway | Canton | OH",
+            "propertyType": "2100 International Parkway | Canton | OH | Warehouse/Light Manufacturing",
+            "squareFeet": "Warehouse/Light Manufacturing | 2000 | 274,464 | 0%",
+            "yearBuilt": "Warehouse/Light Manufacturing | 2000 | 274,464",
+            "occupancy": "274,464 | 0% | -"
+          },
+          "notes": [
+            "occupancy is a STATED zero (0%): the building is vacant. Abstaining on it is a miss, not a correct abstention."
+          ]
+        },
+        {
+          "subject": "1715 Dogwood Drive",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "1715 Dogwood Drive",
+            "propertyType": "industrial",
+            "squareFeet": 100000,
+            "yearBuilt": 1973,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "1715 Dogwood Drive | Conyers | GA",
+            "propertyType": "1715 Dogwood Drive | Conyers | GA | Warehouse/Distribution",
+            "squareFeet": "Warehouse/Distribution | 1973 | 100,000 | 100%",
+            "yearBuilt": "Warehouse/Distribution | 1973 | 100,000",
+            "occupancy": "100,000 | 100% | 284,614"
+          },
+          "notes": []
+        },
+        {
+          "subject": "6777-6785 New Calhoun Highway NE",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "6777-6785 New Calhoun Highway NE",
+            "propertyType": "industrial",
+            "squareFeet": 416600,
+            "yearBuilt": 2023,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "6777-6785 New Calhoun Highway NE | Rome | GA",
+            "propertyType": "6777-6785 New Calhoun Highway NE | Rome | GA | Warehouse/Distribution",
+            "squareFeet": "Warehouse/Distribution | 2023 | 416,600 | 100%",
+            "yearBuilt": "Warehouse/Distribution | 2023 | 416,600",
+            "occupancy": "416,600 | 100% | 2,454,346"
+          },
+          "notes": [
+            "CONFLICT: Item 2 Year Built says 2023; Schedule III says Year Acquired 2023, Year Built 2022. Labelled from the primary table: 2023."
+          ]
+        },
+        {
+          "subject": "4211 Shuffel Street NW",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "4211 Shuffel Street NW",
+            "propertyType": "industrial",
+            "squareFeet": 255000,
+            "yearBuilt": 1994,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "4211 Shuffel Street NW | Canton | OH",
+            "propertyType": "4211 Shuffel Street NW | Canton | OH | Warehouse/Light Manufacturing",
+            "squareFeet": "Warehouse/Light Manufacturing | 1994 | 255,000 | 100%",
+            "yearBuilt": "Warehouse/Light Manufacturing | 1994 | 255,000",
+            "occupancy": "255,000 | 100% | 1,473,502"
+          },
+          "notes": []
+        },
+        {
+          "subject": "Place Industrial Memphis",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": 85631,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 88
+          },
+          "evidence": {
+            "propertyType": "Place Industrial Memphis | Memphis | TN | Warehouse/Distribution",
+            "squareFeet": "1980-1988 | 85,631 | 88%",
+            "occupancy": "85,631 | 88% | 333,811"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: \"1980-1988\" in both tables. address NOT STATED: a name."
+          ]
         }
       ]
     }
@@ -683,7 +915,7 @@
     "groundTruth": null,
     "subjects": {
       "populationSource": "Item 1, Our Multi-Family Properties table: the \"Property Name and Location\" cell of every row; Total row excluded; trailing footnote markers stripped",
-      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; first 6 drawn = dev, next 3 = holdout",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
       "population": [
         "Silvana Oaks Apartments—N. Charleston, SC",
         "Avondale Station—Decatur, GA",
@@ -915,6 +1147,116 @@
           "notes": [
             "Unconsolidated JV (50%): no Schedule III row, yearBuilt NOT STATED."
           ]
+        },
+        {
+          "subject": "Village at Lakeside — Auburn, AL",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 96.6
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "907 | 96.6 | 97.7"
+          },
+          "notes": [
+            "Unconsolidated JV: no Schedule III row, yearBuilt NOT STATED. Shares Auburn, AL with 1322 North."
+          ]
+        },
+        {
+          "subject": "Magnolia Pointe at Madison — Madison, AL",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 1992,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 94.1
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,036 | 94.1 | 93.2",
+            "yearBuilt": "Madison, AL | 14,236 | 2,054 | 22,018 | — | 1,903 | 2,054 | 23,921 | 25,975 | 3,195 | 1992 | Aug-2022"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Madison, AL unique). Age 34 is derived."
+          ]
+        },
+        {
+          "subject": "Kilburn Crossing — Fredericksburg, VA",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 2005,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 96.9
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,465 | 96.9 | 96.7",
+            "yearBuilt": "Fredericksburg, VA | 24,012 | 7,540 | 32,316 | — | 3,398 | 7,540 | 35,714 | 43,254 | 10,169 | 2005 | Jul-2018"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Fredericksburg unique)."
+          ]
+        },
+        {
+          "subject": "Oaks at Victory —Savannah, GA",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": 23000000,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 88.5
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,375 | — | — | — | — | 88.5",
+            "purchasePrice": "The venture acquired the property for $23,000,000"
+          },
+          "notes": [
+            "purchasePrice STATED for the whole property (including an assumed $15,680,000 mortgage).",
+            "Unconsolidated JV: yearBuilt NOT STATED (Age 57 is derived)."
+          ]
+        },
+        {
+          "subject": "Avondale Station—Decatur, GA",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 1954,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 92.3
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,196 | 92.3 | 89.3",
+            "yearBuilt": "Decatur, GA | — | 1,698 | 8,676 | — | 3,431 | 1,698 | 12,107 | 13,805 | 5,688 | 1954 | Nov-2012"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Decatur unique)."
+          ]
         }
       ]
     }
@@ -933,7 +1275,7 @@
     "groundTruth": null,
     "subjects": {
       "populationSource": "Item 2, Retail and Residential Properties table: the \"Property, City, State, Zip Code\" cell of every row; Total rows excluded; trailing footnote markers stripped",
-      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; first 6 drawn = dev, next 3 = holdout",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
       "population": [
         "Camelback Colonnade Phoenix, AZ 85016",
         "Chandler Festival Chandler, AZ 85224",
@@ -1251,6 +1593,120 @@
             "\"Santana Row Residential\" (554 units) is a separate row and a separate subject.",
             "The $73.9 million figure is the sale of one residential building, not a purchase price.",
             "occupancy NOT STATED (Percentage Leased 98%). propertyType NOT STATED per row."
+          ]
+        },
+        {
+          "subject": "Plaza El Segundo / The Point El Segundo, CA 90245",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 503000,
+            "yearBuilt": 2006,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Plaza El Segundo / The Point El Segundo, CA 90245 (6) | 2006-2007, 2016 | 2011/2013 | 503,000",
+            "yearBuilt": "PLAZA EL SEGUNDO/THE POINT (California) | 124,891 | 62,127 | 153,556 | 95,586 | 64,463 | 246,806 | 311,269 | 100,720 | 2006/2007/ 2016"
+          },
+          "notes": [
+            "DISPUTABLE: Item 2 starts with the range \"2006-2007\" (no single year), so the rule falls through to Schedule III, which writes the same span as \"2006/2007/ 2016\"; its first year is 2006. Mechanically correct; a reader could fairly call both the same range.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy.",
+            "propertyType NOT STATED: no type column, the heading names two categories, and the name carries no type term under the mapping.",
+            "The $125,000 thousand is a mortgage."
+          ]
+        },
+        {
+          "subject": "Grossmont Center La Mesa, CA 91942",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 866000,
+            "yearBuilt": 1961,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Grossmont Center La Mesa, CA 91942(4) | 1961, 1963, 1982-1983, 2002 | 2021 | 866,000",
+            "yearBuilt": "Grossmont Center La Mesa, CA 91942(4) | 1961, 1963"
+          },
+          "notes": [
+            "\"Center\" alone is not a type term; \"Shopping Center\" is.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        },
+        {
+          "subject": "Tower Shops Davie, FL 33324",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 431000,
+            "yearBuilt": 1989,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Tower Shops Davie, FL 33324 | 1989, 2017 | 2011/2014 | 431,000",
+            "yearBuilt": "Tower Shops Davie, FL 33324 | 1989, 2017"
+          },
+          "notes": [
+            "\"Shops\" is not a type term under the written mapping, so propertyType is NOT STATED. An extractor answering retail would score as a hallucination; that is the mapping's strictness, recorded here rather than relaxed after the fact.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        },
+        {
+          "subject": "Troy Hills Parsippany-Troy, NJ 07054",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 211000,
+            "yearBuilt": 1966,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Troy Hills Parsippany-Troy, NJ 07054 | 1966 | 1980 | 211,000",
+            "yearBuilt": "Troy Hills Parsippany-Troy, NJ 07054 | 1966"
+          },
+          "notes": [
+            "propertyType NOT STATED: no type column, the heading names two categories, and the name carries no type term under the mapping.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        },
+        {
+          "subject": "Pike & Rose North Bethesda, MD 20852",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 955000,
+            "yearBuilt": 1963,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Pike & Rose North Bethesda, MD 20852(10) | 1963, 2014, 2018, 2020, 2025 | 1982/2007/ 2012 | 955,000",
+            "yearBuilt": "Pike & Rose North Bethesda, MD 20852(10) | 1963, 2014"
+          },
+          "notes": [
+            "\"Phase IV at Pike & Rose is a 272,000 square foot office building ... 249,000 square feet is occupied\" describes one phase, not the property: neither squareFeet nor occupancy for the subject.",
+            "The $125.0 million is the sale of one residential building, not a purchase price. \"Pike & Rose Residential\" is a separate row.",
+            "propertyType NOT STATED: no type column, the heading names two categories, and the name carries no type term under the mapping.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
           ]
         }
       ]
