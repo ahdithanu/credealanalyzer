@@ -227,6 +227,81 @@
           "notes": [
             "yearBuilt NOT STATED: same short-row case as 131-135 West 33rd Street. Rendered, 2016 sits under Date acquired; construction is blank."
           ]
+        },
+        {
+          "subject": "4 Union Square South",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "4 Union Square South",
+            "propertyType": "retail",
+            "squareFeet": 204000,
+            "yearBuilt": 1965,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "4 Union Square South | 100.0% | Retail",
+            "propertyType": "4 Union Square South | 100.0% | Retail",
+            "squareFeet": "Retail | 100.0% | 204,000 | — | 204,000",
+            "occupancy": "Retail | 100.0% | 204,000",
+            "yearBuilt": "35,413 | 1965/2004 | 1993"
+          },
+          "notes": [
+            "Schedule III rendered (checked): 1965/2004 under Date of construction (original construction 1965), 1993 under Date acquired.",
+            "The $120,000,000 refinancing is debt, not a price."
+          ]
+        },
+        {
+          "subject": "350 Park Avenue",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "350 Park Avenue",
+            "propertyType": "office",
+            "squareFeet": 585000,
+            "yearBuilt": 1960,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "350 Park Avenue | 100.0% | Office",
+            "propertyType": "350 Park Avenue | 100.0% | Office",
+            "squareFeet": "Office | 100.0% | 585,000 | — | 585,000",
+            "occupancy": "Office | 100.0% | 585,000",
+            "yearBuilt": "203,124 | 1960 | 2006"
+          },
+          "notes": [
+            "The 1,850,000 square foot figure in the business section is a PLANNED tower on the combined 350 Park Site, not this property's size.",
+            "Schedule III rendered (checked): 1960 construction, 2006 acquired."
+          ]
+        },
+        {
+          "subject": "1535 Broadway",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "1535 Broadway",
+            "propertyType": "retail",
+            "squareFeet": 107000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "1535 Broadway(2) | 52.0% | Retail / Theatre",
+            "propertyType": "Retail / Theatre",
+            "squareFeet": "Retail / Theatre | 100.0% | 107,000 | — | 107,000",
+            "occupancy": "Retail / Theatre | 100.0% | 107,000"
+          },
+          "notes": [
+            "Type \"Retail / Theatre\": one use category plus a non-use term maps to retail under the mapping, not mixed-use.",
+            "Unconsolidated (footnote 2): no Schedule III row, yearBuilt NOT STATED.",
+            "The $450,000,000 financing is debt, not a price."
+          ]
         }
       ]
     }
@@ -520,6 +595,76 @@
             "occupancy": "32,361 | 100% | 161,805"
           },
           "notes": []
+        },
+        {
+          "subject": "Outland Center Memphis I",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": 175337,
+            "yearBuilt": 1988,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 86
+          },
+          "evidence": {
+            "propertyType": "Outland Center Memphis I | Memphis | TN | Warehouse/Distribution",
+            "squareFeet": "1988-1989 | 175,337 | 86%",
+            "occupancy": "175,337 | 86% | 698,790",
+            "yearBuilt": "Memphis, TN | Outland Center Memphis I | -(1) | 678 | 9,227 | 1,138 | 678 | 10,365 | 11,043 | 1,523 | 2022 | 1988"
+          },
+          "notes": [
+            "Item 2 (primary) gives the range \"1988-1989\", which states no single year. Schedule III states 1988 (column order Year Acquired 2022, Year Built 1988). Primary-first, falling through to the next table when the primary does not state the field: 1988.",
+            "address NOT STATED: \"Outland Center Memphis I\" is a name, and Schedule III prints the same name in its Address column."
+          ]
+        },
+        {
+          "subject": "3051 Gateway",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "3051 Gateway",
+            "propertyType": "industrial",
+            "squareFeet": 521171,
+            "yearBuilt": 2016,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "3051 Gateway | Edwardsville | IL",
+            "propertyType": "3051 Gateway | Edwardsville | IL | Warehouse/Light Manufacturing",
+            "squareFeet": "Warehouse/Light Manufacturing | 2016 | 521,171 | 100%",
+            "yearBuilt": "Warehouse/Light Manufacturing | 2016 | 521,171",
+            "occupancy": "521,171 | 100% | 2,626,324"
+          },
+          "notes": [
+            "address has a building number and a street name with no suffix; labelled verbatim as printed."
+          ]
+        },
+        {
+          "subject": "2210 International Parkway",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "2210 International Parkway",
+            "propertyType": "industrial",
+            "squareFeet": 350000,
+            "yearBuilt": 2001,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "2210 International Parkway | Canton | OH",
+            "propertyType": "2210 International Parkway | Canton | OH | Warehouse/Distribution",
+            "squareFeet": "Warehouse/Distribution | 2001 | 350,000 | 100%",
+            "yearBuilt": "Warehouse/Distribution | 2001 | 350,000",
+            "occupancy": "350,000 | 100% | 1,568,000"
+          },
+          "notes": []
         }
       ]
     }
@@ -700,6 +845,72 @@
           "evidence": {
             "propertyType": "Our Multi-Family Properties",
             "occupancy": "1,374 | 94.4 | 91.4"
+          },
+          "notes": [
+            "Unconsolidated JV (50%): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "The Pointe at Lenox Park— Atlanta, GA",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 93
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,275 | 93.0 | 94.7"
+          },
+          "notes": [
+            "Unconsolidated JV (74%): no Schedule III row, yearBuilt NOT STATED (Age 36 is derived)."
+          ]
+        },
+        {
+          "subject": "1322 North —Auburn, AL",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": 36500000,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 87.7
+          },
+          "evidence": {
+            "propertyType": "a 214 unit multi-family property located in Auburn, AL",
+            "purchasePrice": "The venture acquired the property for $36,500,000",
+            "occupancy": "1,262 | — | — | — | — | 87.7"
+          },
+          "notes": [
+            "purchasePrice STATED: \"The venture acquired the property for $36,500,000 (including a $24,419,000 mortgage)\". This is the price of the whole property paid by the venture, not BRT's 80% share; the mortgage is part of the price, not a separate figure.",
+            "Unconsolidated JV: no Schedule III row, yearBuilt NOT STATED (Age 23 is derived).",
+            "Auburn, AL also hosts Village at Lakeside: a location-only join would be ambiguous here regardless."
+          ]
+        },
+        {
+          "subject": "Landings of Carrier Parkway — Grand Prairie, TX",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 91.5
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,149 | 91.5 | 91.9"
           },
           "notes": [
             "Unconsolidated JV (50%): no Schedule III row, yearBuilt NOT STATED."
@@ -972,6 +1183,74 @@
           },
           "notes": [
             "occupancy NOT STATED (Percentage Leased 100%)."
+          ]
+        },
+        {
+          "subject": "San Antonio Center Mountain View, CA 94040",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 213000,
+            "yearBuilt": 1958,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "San Antonio Center Mountain View, CA 94040(7)(8) | 1958, 1964-1965, 1974-1975, 1995-1997 | 2015/2019 | 213,000",
+            "yearBuilt": "San Antonio Center Mountain View, CA 94040(7)(8) | 1958, 1964-1965"
+          },
+          "notes": [
+            "Year Completed starts with the single year 1958; Schedule III agrees.",
+            "occupancy NOT STATED (Percentage Leased 100%). propertyType NOT STATED per row."
+          ]
+        },
+        {
+          "subject": "Hoboken Hoboken, NJ 07030",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 171000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Hoboken Hoboken, NJ 07030(4)(6)(12) | 1887-2006 | 2019/2020/2022 | 171,000"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: \"1887-2006\" (40 buildings, footnote 12).",
+            "address NOT STATED: footnote 12 says \"along Washington Street and 14th Street\", which names streets, not an address.",
+            "occupancy NOT STATED (Percentage Leased 97%). propertyType NOT STATED per row."
+          ]
+        },
+        {
+          "subject": "Santana Row San Jose, CA 95128",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 1521000,
+            "yearBuilt": 2002,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Santana Row San Jose, CA 95128(7)(10) | 2002, 2009, 2016, 2020 | 1997 | 1,521,000",
+            "yearBuilt": "Santana Row San Jose, CA 95128(7)(10) | 2002, 2009"
+          },
+          "notes": [
+            "CONFLICT: Item 2 Year Completed starts 2002; Schedule III starts with the range \"1999-2006\". Labelled from the primary table: 2002.",
+            "\"Santana Row Residential\" (554 units) is a separate row and a separate subject.",
+            "The $73.9 million figure is the sale of one residential building, not a purchase price.",
+            "occupancy NOT STATED (Percentage Leased 98%). propertyType NOT STATED per row."
           ]
         }
       ]
