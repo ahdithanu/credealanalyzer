@@ -460,6 +460,46 @@ the extractor or only in the labels; and a model-based extractor scored on
 the same five filings, with a sixth filing, pre-registered the same way, as
 its holdout.
 
+### Model-based extractor: pre-registration
+
+Committed before the model extractor is written, and before any sixth filing
+is fetched.
+
+- **Extractor:** Claude (`claude-opus-5-5`), adaptive thinking, effort
+  `high`. The output is a JSON schema per field: a value or null, a verbatim
+  quote of the text the value was read from, and a confidence. The quote is
+  located in the canonical text by exact match, and its offsets become the
+  citation. A quote that is not in the document leaves the citation null,
+  which the scorer counts as ungrounded. No answer escapes the grounding
+  check by omitting its quote: a non-null value requires one.
+- **No refusal fallback.** A fallback would let another model answer and
+  have its answer scored as this one's. A refusal is recorded, counted and
+  scored as abstention on every field, and the count is reported.
+- **Every response is cached** to `eval/predictions/` and committed, so every
+  number is reproducible without spending again, and a re-run is a
+  deliberate act.
+- **Development data:** all five filings (68 properties). The prompt is
+  written and revised against them, so the model's numbers there are
+  in-sample, like every extractor's.
+- **Freeze:** the hash of the prompt and schema is committed as
+  `FROZEN_PROMPT_SHA` before the sixth filing is fetched. The runner refuses
+  the sixth filing's set under any other hash.
+- **The sixth filing** is the first of these whose latest 10-K has a
+  per-property table of at least 20 rows, judged by a script that prints row
+  counts, not rows: Universal Health Realty Income Trust (CIK 798783,
+  healthcare), then One Liberty Properties (CIK 712770, net lease), then Getty
+  Realty (CIK 1052752, convenience and automotive retail). Twelve subjects are
+  drawn by `sampleSubjects` and labelled under the rules above. The labels are
+  committed before any extractor (tableReader v3, the baselines, or the
+  model) runs on them. New cases are settled in the rules first.
+- **Reported:** the full metric set for every extractor on the sixth filing.
+  The model is run there **twice**, because its sampling is not deterministic,
+  and both runs are reported. A single run of a stochastic extractor is one
+  draw, not a measurement. The prompt is not revised after the sixth filing's
+  score is seen.
+- **The bar** (from the fifth filing): beat zero coverage on a layout the
+  extractor was not developed on, at zero hallucination.
+
 ## Status
 
 - [x] Schema, comparators and tolerances — `src/extraction/schema.js`
