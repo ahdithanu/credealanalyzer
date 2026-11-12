@@ -36,7 +36,7 @@ MUTATIONS = [
      "a field left unlabelled passes as 'not in document'"),
     (X + "labels.js", "else if (v > 0 && v < 1) bad(", "else if (false) bad(",
      "a percentage written as a fraction passes"),
-    (X + "labels.js", "} else if (!text.includes(ev)) {", "} else if (false) {",
+    (X + "labels.js", "    } else if (parts.some((x) => !text.includes(x))) {", "    } else if (false) {",
      "evidence not found in the document passes"),
     (X + "labels.js", "if (kind === 'enum') return classifyPropertyType(evidence) === value;",
      "if (kind === 'enum') return true;", "type evidence is not checked against the mapping"),
@@ -88,6 +88,15 @@ MUTATIONS = [
      "a Rentable Square Feet column excluded as rent"),
     (X + "tableReader.js", "  return hcells.findIndex((c) => /\\bname\\b|\\bbuilding\\b|\\bfacility\\b|\\basset\\b/i.test(c.text));",
      "  return -1;", "a table that names properties under Name/Building is not read"),
+    # fifth-filing harness
+    (X + "schema.js", "|\\bclinics?\\b|\\blaborator(?:y|ies)\\b|\\bcourthouses?\\b|\\bspecialized facilit(?:y|ies)\\b/i;", "/i;",
+     "a stated type outside the four categories is labelled not stated"),
+    (X + "tableReader.js", "import { classifyPropertyTypeV1 as classifyPropertyType } from './schema.js';",
+     "import { classifyPropertyType } from './schema.js';", "a frozen extractor follows the labelling vocabulary"),
+    (X + "labels.js", "    } else if (parts.some((x) => !text.includes(x))) {", "    } else if (!text.includes(parts[0])) {",
+     "a second evidence fragment is not checked against the document"),
+    (X + "labels.js", "        alternateTruth: item.alternateTruth || null,", "        alternateTruth: null,",
+     "the alternate labelling is silently dropped"),
 ]
 
 

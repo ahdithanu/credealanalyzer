@@ -83,6 +83,7 @@ converter can change.
 | Plymouth Industrial REIT 10-K | industrial | FY2024 (its latest) | Item 2, Company Portfolio | 129 |
 | BRT Apartments 10-K | multifamily | FY2025 | Item 1, Our Multi-Family Properties | 31 |
 | Federal Realty 10-K | retail | FY2025 | Item 2, Retail and Residential Properties | 113 |
+| Easterly Government Properties 10-K (fifth filing, holdout only) | government-leased office, lab, clinic | FY2025 | Item 2, property table | 103 |
 
 **The eval unit is (filing, property), not filing.** The schema describes one
 deal; a 10-K describes dozens. The extractor is given the filing's text and the
@@ -205,6 +206,21 @@ labels and are what the labels follow:
   purchase prices.
 - **netOperatingIncome**, **capRate**: stated for that property alone. Segment
   or portfolio figures are not.
+- **Type codes**: a code in a type column defined by a legend ("SF=Specialized
+  Facility") is a stated type, read through the legend. A stated type outside
+  the four use categories (clinic, laboratory, courthouse, specialized
+  facility, land, studio) is **other**: that is what the enum's other is for.
+  The extractors stay pinned to the mapping they were frozen with
+  (`classifyPropertyTypeV1`). Extending the labelling vocabulary must not
+  change a frozen extractor's answers, and it would have: Federal Realty's
+  "Courthouse Center" is a shopping center.
+- **Leased square feet is not size.** Where the only per-property figure is
+  "Leased Square Feet" (Easterly), squareFeet is not stated, by the same
+  logic that keeps "% leased" from being occupancy. This one could
+  reasonably go the other way. The label carries `alternateTruth` with the
+  leased figure, and `npm run eval` scores the set both ways.
+- **Schedule III keyed by city and type code** (Easterly) is joined when the
+  pair is unique in both tables, the same rule as a unique city.
 - **occupancy**: a figure the filing calls occupancy, for the most recent date
   or period it gives, including an annual average (BRT's "Average Physical
   Occupancy"). **"Percentage leased" is not occupancy** when the filing defines

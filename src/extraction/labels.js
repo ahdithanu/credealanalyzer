@@ -123,12 +123,18 @@ export function evidenceProblems(text, item) {
   for (const name of FIELD_NAMES) {
     const v = truth[name];
     if (v === null || v === undefined) continue;
+    // Evidence is one verbatim fragment, or several when the statement is
+    // split across the document: a type code in the row ("| SF |") and its
+    // legend ("SF=Specialized Facility"). Every fragment must be in the
+    // document; the value is judged against them together.
     const ev = evidence[name];
-    if (typeof ev !== 'string' || !ev) {
+    const parts = Array.isArray(ev) ? ev : [ev];
+    if (!parts.length || parts.some((x) => typeof x !== 'string' || !x)) {
       problems.push(`${name}: stated as ${JSON.stringify(v)} with no evidence`);
-    } else if (!text.includes(ev)) {
-      problems.push(`${name}: evidence ${JSON.stringify(ev)} is not in the document`);
-    } else if (!evidenceHolds(name, ev, v)) {
+    } else if (parts.some((x) => !text.includes(x))) {
+      const missing = parts.find((x) => !text.includes(x));
+      problems.push(`${name}: evidence ${JSON.stringify(missing)} is not in the document`);
+    } else if (!evidenceHolds(name, parts.join(' | '), v)) {
       problems.push(`${name}: evidence ${JSON.stringify(ev)} does not hold ${JSON.stringify(v)}`);
     }
   }
@@ -160,6 +166,9 @@ export function corpusItems(manifest, { set } = {}) {
         subject: item.subject,
         set: item.set,
         truth: item.groundTruth,
+        // A labelling decision that could reasonably go the other way, scored
+        // both ways so the number does not hide the choice.
+        alternateTruth: item.alternateTruth || null,
       });
     }
   }

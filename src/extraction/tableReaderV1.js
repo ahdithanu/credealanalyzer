@@ -35,7 +35,7 @@
  * groundedness checks the extractor's pointer as well as its value.
  */
 
-import { classifyPropertyType } from './schema.js';
+import { classifyPropertyTypeV1 as classifyPropertyType } from './schema.js';
 
 const FOOTNOTES = /(\s*\(\d+\))+\s*$/;
 const DATA_NUMBER = /^[$(]?-?\d{1,3}(,\d{3})+(\.\d+)?\)?$|^-?\d+\.\d+%?$|^\d+%$/;

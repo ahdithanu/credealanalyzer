@@ -1711,5 +1711,522 @@
         }
       ]
     }
+  },
+  {
+    "id": "0001622194-0001193125-26-064115",
+    "company": "Easterly Government Properties, Inc.",
+    "cik": "0001622194",
+    "form": "10-K",
+    "accessionNumber": "0001193125-26-064115",
+    "reportDate": "2025-12-31",
+    "filingDate": "2026-02-23",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1622194/000119312526064115/dea-20251231.htm",
+    "localPath": "0001622194-0001193125-26-064115-dea-20251231.htm",
+    "fetchedAt": "2026-11-12T07:23:31.452Z",
+    "groundTruth": null,
+    "subjects": {
+      "populationSource": "Item 2 property table (Wholly Owned U.S. Government, State and Local, Privately Leased, and Unconsolidated JV sections): the Property Name cell of every row with a location; Subtotal / Total rows excluded; trailing footnote markers stripped. 103 rows = 93 wholly owned + 10 JV, matching the filing's own count.",
+      "drawRule": "Fifth-filing holdout, pre-registered in b211833: sampleSubjects(entry.id, population, 12), labelled after v3 was frozen at d37c626",
+      "population": [
+        "VA - Loma Linda",
+        "USCIS - Kansas City",
+        "JSC - Suffolk",
+        "Various GSA - Chicago",
+        "IRS - Fresno",
+        "FBI - Salt Lake",
+        "Various GSA - Portland",
+        "Various GSA - Buffalo",
+        "VA - San Jose",
+        "EPA - Lenexa",
+        "FBI - Tampa",
+        "PTO - Arlington",
+        "FBI - San Antonio",
+        "FDA - Alameda",
+        "FBI / DEA - El Paso",
+        "USCIS - Lincoln",
+        "FEMA - Tracy",
+        "TREAS - Parkersburg",
+        "FBI - Mobile",
+        "FDA - Lenexa",
+        "ICE - Dallas",
+        "FBI - Pittsburgh",
+        "VA - South Bend",
+        "FBI - New Orleans",
+        "FBI - Omaha",
+        "VA - Mobile",
+        "FDA - Atlanta",
+        "USFS II - Albuquerque",
+        "FBI - Albany",
+        "FBI - Birmingham",
+        "EPA - Kansas City",
+        "DOT - Lakewood",
+        "VA - Chico",
+        "ICE - Charleston",
+        "FBI - Richmond",
+        "FBI - Knoxville",
+        "DEA - Sterling",
+        "FBI - Little Rock",
+        "JUD - Del Rio",
+        "DEA - Vista",
+        "USCIS - Tustin",
+        "VA - Orange",
+        "VA - Indianapolis",
+        "ICE - Albuquerque",
+        "SSA - Charleston",
+        "JUD - El Centro",
+        "DEA - Dallas Lab",
+        "DEA - Dallas",
+        "DEA - Pleasanton",
+        "DEA - Upper Marlboro",
+        "DHS - Burlington",
+        "NARA - Broomfield",
+        "TREAS - Birmingham",
+        "DHS - Atlanta",
+        "USAO - Louisville",
+        "JUD - Charleston",
+        "JUD - Jackson",
+        "IRS - Ogden",
+        "Various GSA - Cleveland",
+        "CBP - Savannah",
+        "NWS - Kansas City",
+        "DEA - Santa Ana",
+        "ICE - Orlando",
+        "GSA - Clarksburg",
+        "DEA - North Highlands",
+        "JUD - Aberdeen",
+        "DEA - Riverside",
+        "NPS - Omaha",
+        "VA - Golden",
+        "JUD - Newport News",
+        "USCG - Martinsburg",
+        "VA - Charleston",
+        "USAO - Springfield",
+        "JUD - Council Bluffs",
+        "DEA - Birmingham",
+        "DEA - Albany",
+        "HSI - Orlando",
+        "SSA - Dallas",
+        "JUD - South Bend",
+        "ICE - Louisville",
+        "DEA - San Diego",
+        "DEA - Bakersfield",
+        "SSA - San Diego",
+        "DC - Capitol Plaza",
+        "Wake County III - Cary",
+        "CA - Anaheim",
+        "Wake County II - Cary",
+        "Wake County I - Cary",
+        "NM - Albuquerque",
+        "York Space Systems - Greenwood Village",
+        "Northrop Grumman - Dayton",
+        "Northrop Grumman - Aurora",
+        "501 East Hunter Street - Lummus Corporation",
+        "VA - Phoenix",
+        "VA - San Antonio",
+        "VA - Jacksonville",
+        "VA - Chattanooga",
+        "VA - Lubbock",
+        "VA - Marietta",
+        "VA - Birmingham",
+        "VA - Corpus Christi",
+        "VA - Columbus",
+        "VA - Lenexa"
+      ],
+      "items": [
+        {
+          "subject": "FEMA - Tracy",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": null,
+            "yearBuilt": 2018,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "FEMA - Tracy | Tracy, CA | W",
+              "W=Warehouse"
+            ],
+            "yearBuilt": "Tracy, CA | W | — | 2,678 | 548 | 29,756 | 2,678 | 30,304 | 32,982 | 5,491 | 2018"
+          },
+          "alternateTruth": {
+            "squareFeet": 210373
+          },
+          "alternateEvidence": {
+            "squareFeet": "W | 2038 | 210,373"
+          },
+          "notes": [
+            "Type code W in the row, defined by footnote (1) as Warehouse.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: Schedule III \"Original Construction Date(s)\" for the unique Tracy, CA / W row."
+          ]
+        },
+        {
+          "subject": "DEA - San Diego",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": null,
+            "yearBuilt": 1999,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "DEA - San Diego | San Diego, CA | W",
+              "W=Warehouse"
+            ],
+            "yearBuilt": "San Diego, CA | W | — | 3,060 | 510 | 914 | 3,060 | 1,424 | 4,484 | 765 | 1999"
+          },
+          "alternateTruth": {
+            "squareFeet": 16100
+          },
+          "alternateEvidence": {
+            "squareFeet": "W | 2032 | 16,100"
+          },
+          "notes": [
+            "Type code W in the row, defined by footnote (1) as Warehouse.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: two San Diego properties, but only one is W in both tables (SSA - San Diego is SF), so city + code is unique."
+          ]
+        },
+        {
+          "subject": "DHS - Burlington",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 2000,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "DHS - Burlington | Williston, VT | SF",
+              "SF=Specialized Facility"
+            ],
+            "yearBuilt": "Burlington, VT | O | — | 1,278 | 14,611 | 5 | 1,278 | 14,616 | 15,894 | 463 | 2000 | 5/7/2025"
+          },
+          "alternateTruth": {
+            "squareFeet": 74549
+          },
+          "alternateEvidence": {
+            "squareFeet": "SF | 2031 | 74,549"
+          },
+          "notes": [
+            "Type code SF in the row, defined by footnote (1) as Specialized Facility.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "CONFLICT inside the filing: Item 2 says Williston, VT, type SF; the only matching Schedule III row says Burlington, VT, type O. propertyType from the primary table: SF, other.",
+            "DISPUTABLE yearBuilt 2000: joined by a second hop, as Civic Center I was. The Schedule III row's Date Acquired 5/7/2025 matches \"On May 7, 2025, we acquired a 74,549 leased square foot Department of Homeland Security (“DHS”) facility near Burlington, Vermont\", whose 74,549 matches this row. Location and type both disagree, so a reader could fairly call it not stated.",
+            "purchasePrice NOT STATED: the $169.9 million is the aggregate for three properties."
+          ]
+        },
+        {
+          "subject": "TREAS - Birmingham",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "office",
+            "squareFeet": null,
+            "yearBuilt": 2014,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "TREAS - Birmingham | Birmingham, AL | O",
+              "O=Office"
+            ],
+            "yearBuilt": "Birmingham, AL | O | — | 1,410 | 17,276 | 120 | 1,410 | 17,396 | 18,806 | 4,077 | 2014"
+          },
+          "alternateTruth": {
+            "squareFeet": 83676
+          },
+          "alternateEvidence": {
+            "squareFeet": "O | 2029 | 83,676"
+          },
+          "notes": [
+            "Type code O in the row, defined by footnote (1) as Office.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: three Birmingham properties, only one O in both tables."
+          ]
+        },
+        {
+          "subject": "CA - Anaheim",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "office",
+            "squareFeet": null,
+            "yearBuilt": 1991,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "CA - Anaheim | Anaheim, CA | O",
+              "O=Office"
+            ],
+            "yearBuilt": "Anaheim, CA | O | — | 7,081 | 16,346 | 570 | 7,081 | 16,916 | 23,997 | 1,170 | 1991 / 2020"
+          },
+          "alternateTruth": {
+            "squareFeet": 95273
+          },
+          "alternateEvidence": {
+            "squareFeet": "O | 2033 / 2034 | 95,273"
+          },
+          "notes": [
+            "Type code O in the row, defined by footnote (1) as Office.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "\"1991 / 2020\": first listed is original construction (the column is \"Original Construction Date(s)\")."
+          ]
+        },
+        {
+          "subject": "VA - Columbus",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "VA - Columbus (11) | Columbus, GA | OC",
+              "OC=Outpatient Clinic"
+            ]
+          },
+          "alternateTruth": {
+            "squareFeet": 67793
+          },
+          "alternateEvidence": {
+            "squareFeet": "OC | 2042 | 67,793"
+          },
+          "notes": [
+            "Type code OC in the row, defined by footnote (1) as Outpatient Clinic.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "JV property (footnote 11): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "VA - Loma Linda",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 2016,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "VA - Loma Linda | Loma Linda, CA | OC",
+              "OC=Outpatient Clinic"
+            ],
+            "yearBuilt": "Loma Linda, CA | OC | 127,145 | 12,476 | 177,357 | 508 | 12,476 | 177,865 | 190,341 | 38,260 | 2016"
+          },
+          "alternateTruth": {
+            "squareFeet": 327614
+          },
+          "alternateEvidence": {
+            "squareFeet": "OC | 2036 | 327,614"
+          },
+          "notes": [
+            "Type code OC in the row, defined by footnote (1) as Outpatient Clinic.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "The 127,500 figure elsewhere is a mortgage."
+          ]
+        },
+        {
+          "subject": "DOT - Lakewood",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "office",
+            "squareFeet": null,
+            "yearBuilt": 2004,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "DOT - Lakewood | Lakewood, CO | O",
+              "O=Office"
+            ],
+            "yearBuilt": "Lakewood, CO | O | — | 1,521 | 32,865 | 3,241 | 1,521 | 36,106 | 37,627 | 11,524 | 2004"
+          },
+          "alternateTruth": {
+            "squareFeet": 116046
+          },
+          "alternateEvidence": {
+            "squareFeet": "O | 2039 | 116,046"
+          },
+          "notes": [
+            "Type code O in the row, defined by footnote (1) as Office.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city."
+          ]
+        },
+        {
+          "subject": "VA - Phoenix",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "VA - Phoenix (11) | Phoenix, AZ | OC",
+              "OC=Outpatient Clinic"
+            ]
+          },
+          "alternateTruth": {
+            "squareFeet": 257294
+          },
+          "alternateEvidence": {
+            "squareFeet": "OC | 2042 | 257,294"
+          },
+          "notes": [
+            "Type code OC in the row, defined by footnote (1) as Outpatient Clinic.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "JV property (footnote 11): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "JUD - Jackson",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 1998,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "JUD - Jackson | Jackson, TN | C",
+              "C=Courthouse"
+            ],
+            "yearBuilt": "Jackson, TN | C | — | 332 | 24,324 | 3,285 | 332 | 27,609 | 27,941 | 3,277 | 1998"
+          },
+          "alternateTruth": {
+            "squareFeet": 75043
+          },
+          "alternateEvidence": {
+            "squareFeet": "C | 2043 | 75,043"
+          },
+          "notes": [
+            "Type code C in the row, defined by footnote (1) as Courthouse.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city."
+          ]
+        },
+        {
+          "subject": "FBI - Albany",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "FBI - Albany | Albany, NY | SF",
+              "SF=Specialized Facility"
+            ]
+          },
+          "alternateTruth": {
+            "squareFeet": 69476
+          },
+          "alternateEvidence": {
+            "squareFeet": "SF | 2036 | 69,476"
+          },
+          "notes": [
+            "Type code SF in the row, defined by footnote (1) as Specialized Facility.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt NOT STATED: two Albany properties, both SF, and two Albany SF Schedule III rows (2004, 1998). Which is which is not stated."
+          ]
+        },
+        {
+          "subject": "ICE - Charleston",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 1994,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "ICE - Charleston | North Charleston, SC | SF",
+              "SF=Specialized Facility"
+            ],
+            "yearBuilt": "North Charleston, SC | SF | 8,946 | 963 | 34,987 | 2,010 | 963 | 36,997 | 37,960 | 11,230 | 1994 / 2012"
+          },
+          "alternateTruth": {
+            "squareFeet": 65124
+          },
+          "alternateEvidence": {
+            "squareFeet": "SF | 2027 | 65,124"
+          },
+          "notes": [
+            "Type code SF in the row, defined by footnote (1) as Specialized Facility.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: North Charleston has a W and an SF property; city + code unique. \"1994 / 2012\": first listed."
+          ]
+        }
+      ]
+    }
   }
 ]

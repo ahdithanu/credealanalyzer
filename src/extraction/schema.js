@@ -118,17 +118,39 @@ export const PROPERTY_TYPE_TERMS = {
   industrial: /industrial|warehouse|distribution|manufacturing|\bflex\b/i,
   multifamily: /multi-?\s?family|\bapartments?\b|\bresidential\b/i,
 };
-const OTHER_TYPE_TERMS = /\bland\b|\bstudios?\b|\btheat(?:er|re)\b|\bhotel\b|\bgarage\b|\bshowroom\b/i;
+// Stated types outside the four use categories. Extended for the fifth filing
+// (Easterly), whose legend reads "OC=Outpatient Clinic; SF=Specialized
+// Facility; O=Office; C=Courthouse; L=Laboratory; W=Warehouse": a type the
+// filing states is still a stated type when the enum has no word for it, and
+// the enum's word for it is "other". Extending this list was checked to leave
+// every frozen extractor's output unchanged on all five filings.
+const OTHER_TYPE_TERMS = /\bland\b|\bstudios?\b|\btheat(?:er|re)\b|\bhotel\b|\bgarage\b|\bshowroom\b|\bclinics?\b|\blaborator(?:y|ies)\b|\bcourthouses?\b|\bspecialized facilit(?:y|ies)\b/i;
 
-/** @returns {string|null} the enum value a stated type label maps to */
-export function classifyPropertyType(stated) {
+function classifyWith(stated, otherTerms) {
   if (typeof stated !== 'string') return null;
   const hits = Object.entries(PROPERTY_TYPE_TERMS)
     .filter(([, re]) => re.test(stated))
     .map(([name]) => name);
   if (hits.length >= 2) return 'mixed-use';
   if (hits.length === 1) return hits[0];
-  return OTHER_TYPE_TERMS.test(stated) ? 'other' : null;
+  return otherTerms.test(stated) ? 'other' : null;
+}
+
+/** @returns {string|null} the enum value a stated type label maps to */
+export function classifyPropertyType(stated) {
+  return classifyWith(stated, OTHER_TYPE_TERMS);
+}
+
+/**
+ * The mapping exactly as the extractors were frozen with it (v1 to v3). They
+ * import this, not the current mapping, so that extending the labelling
+ * vocabulary cannot change a frozen extractor's answers. It would have: with
+ * "courthouse" added, every version started calling Federal Realty's
+ * "Courthouse Center", a shopping center, type other.
+ */
+const OTHER_TYPE_TERMS_V1 = /\bland\b|\bstudios?\b|\btheat(?:er|re)\b|\bhotel\b|\bgarage\b|\bshowroom\b/i;
+export function classifyPropertyTypeV1(stated) {
+  return classifyWith(stated, OTHER_TYPE_TERMS_V1);
 }
 
 /**

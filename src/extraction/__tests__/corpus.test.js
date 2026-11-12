@@ -5,7 +5,9 @@ import {
   assertDrawn, labelProblems, assertCompleteLabels, evidenceProblems, evidenceHolds, corpusItems,
 } from '../labels';
 import { isLabelled, assertLabelled } from '../edgar';
-import { classifyPropertyType, FIELD_NAMES, spanHoldsNumber } from '../schema';
+import {
+  classifyPropertyType, classifyPropertyTypeV1, FIELD_NAMES, spanHoldsNumber,
+} from '../schema';
 import { citationSupports } from '../score';
 
 const ALL_NULL = Object.fromEntries(FIELD_NAMES.map((f) => [f, null]));
@@ -222,5 +224,40 @@ describe('spanHoldsNumber: the shared literal check for labels and citations', (
     ['$36,500,000', 36_400_000, false],
   ])('%s holds %d: %s', (span, value, expected) => {
     expect(spanHoldsNumber(span, value)).toBe(expected);
+  });
+});
+
+describe('fifth-filing harness changes', () => {
+  it('maps stated types outside the four categories to other', () => {
+    for (const t of ['Outpatient Clinic', 'Specialized Facility', 'Courthouse', 'Laboratory']) {
+      expect(classifyPropertyType(t)).toBe('other');
+    }
+    expect(classifyPropertyType('Warehouse')).toBe('industrial');
+  });
+
+  it('keeps the frozen extractors on the mapping they were frozen with', () => {
+    // Federal Realty's "Courthouse Center" is a shopping center. Under the
+    // extended mapping its name reads as other; the frozen extractors must not
+    // start saying so.
+    expect(classifyPropertyType('Courthouse Center Rockville, MD 20852')).toBe('other');
+    expect(classifyPropertyTypeV1('Courthouse Center Rockville, MD 20852')).toBe(null);
+  });
+
+  it('accepts evidence split across fragments, each of which must be in the document', () => {
+    const doc = 'FBI - Albany | Albany, NY | SF | 2036\n(1)\nOC=Outpatient Clinic; SF=Specialized Facility; O=Office';
+    const item = (evidence) => ({ groundTruth: { ...ALL_NULL, propertyType: 'other' }, evidence: { propertyType: evidence } });
+    expect(evidenceProblems(doc, item(['FBI - Albany | Albany, NY | SF', 'SF=Specialized Facility']))).toEqual([]);
+    expect(evidenceProblems(doc, item(['FBI - Albany | Albany, NY | SF', 'SF=Storage Facility'])).join())
+      .toMatch(/not in the document/);
+    expect(evidenceProblems(doc, item(['FBI - Albany | Albany, NY | SF', 'O=Office'])).join())
+      .toMatch(/does not hold/);
+    expect(evidenceProblems(doc, item([])).join()).toMatch(/no evidence/);
+  });
+
+  it('carries an alternate labelling through to scoring', () => {
+    const manifest = [{ id: 'e5', subjects: { items: [
+      { subject: 'a', set: 'filing5', groundTruth: ALL_NULL, alternateTruth: { squareFeet: 100 } },
+    ] } }];
+    expect(corpusItems(manifest)[0].alternateTruth).toEqual({ squareFeet: 100 });
   });
 });

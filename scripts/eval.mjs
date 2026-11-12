@@ -105,8 +105,16 @@ function run() {
   const { manifest, texts } = loadCorpus();
   const report = {};
 
+  const runs = [];
   for (const set of sets) {
     const items = corpusItems(manifest, { set });
+    runs.push([set, items]);
+    if (items.some((i) => i.alternateTruth)) {
+      runs.push([`${set} (alternate labels)`,
+        items.map((i) => ({ ...i, truth: { ...i.truth, ...(i.alternateTruth || {}) } }))]);
+    }
+  }
+  for (const [set, items] of runs) {
     if (!items.length) {
       report[set] = { items: 0, note: 'no labelled items in this set' };
       continue;

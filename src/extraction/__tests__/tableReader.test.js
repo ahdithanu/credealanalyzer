@@ -293,3 +293,16 @@ describe('tableReader v3', () => {
     });
   });
 });
+
+describe('frozen extractors and the labelling vocabulary', () => {
+  it('does not type a shopping center named "Courthouse Center" as other', () => {
+    // The labelling mapping gained "courthouse" for the fifth filing. The
+    // extractors are pinned to the mapping they were frozen with, so this
+    // real Federal Realty row must not change answer.
+    const doc = [
+      'Property, City, State, Zip Code | Year Completed | Year Acquired | Square Feet(1) /Apartment Units | Average Base Rent Per Square Foot(2) | Percentage Leased(3) | Principal Tenant(s)',
+      "Courthouse Center Rockville, MD 20852 | 1975 | 1997 | 33,000 | $30.44 | 81%",
+    ].join('\n');
+    expect(extractFromFiling(doc, 'Courthouse Center Rockville, MD 20852').propertyType).toBeUndefined();
+  });
+});
