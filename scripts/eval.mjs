@@ -35,6 +35,7 @@ import { extractFromFiling } from '../src/extraction/tableReader.js';
 import { extractFromFiling as extractV1 } from '../src/extraction/tableReaderV1.js';
 import { extractFromFiling as extractV2 } from '../src/extraction/tableReaderV2.js';
 import { MODEL, parseRecord } from '../src/extraction/modelExtractor.js';
+import { readConsistency } from '../src/extraction/readCheck.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CORPUS = join(ROOT, 'corpus/edgar');
@@ -150,7 +151,7 @@ function run() {
       const docScores = items.map((item) => {
         const text = texts[item.entryId];
         const predicted = extract({ text, subject: item.subject, item });
-        return { item: item.id, ...scoreDocument({ predicted, truth: item.truth, pageText: pageReader(text) }) };
+        return { item: item.id, predicted, pageText: pageReader(text), ...scoreDocument({ predicted, truth: item.truth, pageText: pageReader(text) }) };
       });
       const corpus = scoreCorpus(docScores);
       report[set].extractors[name] = {
@@ -160,6 +161,9 @@ function run() {
         hallucinationRate: corpus.hallucinationRate,
         groundedness: corpus.groundedness,
         groundedChecked: corpus.groundedChecked,
+        // Beside groundedness, not inside it: does the cited cell sit under a
+        // header that names the field? See docs/read-check.md.
+        readConsistency: readConsistency(docScores),
         ece: corpus.calibration.ece,
         calibrationBuckets: corpus.calibration.buckets,
         counts: corpus.counts,
@@ -174,20 +178,24 @@ function run() {
 }
 
 const fmt = (v) => (v === null || v === undefined ? ' null' : v.toFixed(3));
+const readCells = (r) => `${r.consistent}/${r.inconsistent}/${r.indeterminate}`.padEnd(13)
+  + ` ${fmt(r.inconsistentRate)}    | ${r.flagged.hit}/${r.flagged.error}/${r.flagged.hallucination}`;
 
 function print(report) {
   console.log('Floor on difficulty, not an estimate: Schedule III and Item 2 tables are easier than an OM.');
   for (const [set, r] of Object.entries(report)) {
     console.log(`\n=== ${set}: ${r.items} (filing, property) items x ${FIELD_NAMES.length} fields`);
     if (!r.extractors) { console.log(`  ${r.note}`); continue; }
-    console.log('  extractor        accuracy coverage halluc.  grounded  ece    | hit err miss hall abst');
+    console.log('  extractor        accuracy coverage halluc.  grounded  ece    | hit err miss hall abst'
+      + ' | read ok/bad/?  bad-rate | flagged hit/err/hall');
     for (const [k, v] of Object.entries(r.notRun || {})) console.log(`  ${k}: not run on this set (${v})`);
     for (const [name, m] of Object.entries(r.extractors)) {
       const c = m.counts;
       const errs = Object.keys(m.responseErrors || {}).length;
       if (errs) console.log(`  ${name}: ${errs} response(s) scored as abstention: ${[...new Set(Object.values(m.responseErrors))].join(', ')}`);
       console.log(`  ${name.padEnd(16)} ${fmt(m.answerAccuracy)}    ${fmt(m.coverage)}    ${fmt(m.hallucinationRate)}    ${fmt(m.groundedness)}    ${fmt(m.ece)}  | `
-        + `${c.hit} ${c.error} ${c.miss} ${c.hallucination} ${c.correct_abstention}`);
+        + `${c.hit} ${c.error} ${c.miss} ${c.hallucination} ${c.correct_abstention}`
+        + ` | ${readCells(m.readConsistency)}`);
     }
     const tr = r.extractors.tableReader;
     if (tr) {
