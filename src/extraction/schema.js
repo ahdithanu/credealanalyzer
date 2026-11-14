@@ -193,3 +193,111 @@ export function valuesAgree(fieldName, predicted, truth) {
   if (!cmp) throw new Error(`no comparator for kind: ${kind}`);
   return cmp(predicted, truth);
 }
+
+// ─── Product fields: what the deal model needs from an offering memorandum ───
+//
+// Everything below is ADDED for the product and changes nothing above it. The
+// eval scores FIELDS through COMPARATORS, and its recorded numbers depend on
+// both byte for byte. Nothing below is read by the eval, and a test pins FIELDS
+// and the model extractor's prompt hash to their values on the commit this was
+// branched from.
+//
+// THE DRAFT FIELDS HAVE NO EVAL. There are no labels for them, no corpus of
+// documents that state them, and no measured accuracy. `measured: false` is
+// the flag that says so, and every consumer must show it. A comparator exists
+// for each draft kind so that, when an eval is built, "right" is already
+// decided and written down here rather than chosen after seeing the scores.
+
+/**
+ * Comparators for the kinds only draft fields use. Same contract as
+ * COMPARATORS: (predicted, truth), tolerance fixed in advance, non-numbers
+ * never agree. Kept out of COMPARATORS so the eval's object is untouched.
+ */
+export const DRAFT_COMPARATORS = {
+  // A unit count is counted, not measured. 240 units against 241 is a
+  // different building (or a different reading of a unit mix table), and no
+  // marketing convention rounds a unit count.
+  count: (pred, truth) => Number.isInteger(pred) && Number.isInteger(truth) && pred === truth,
+
+  // A contract (note) rate in percentage POINTS. Loans are priced to the basis
+  // point or the eighth and stated exactly, so the band is half a basis point:
+  // wide enough for 5.125 written as 5.13, too narrow for 5.25 against 5.35,
+  // which is a different loan. A fraction (0.0525) is wrong, as for `percent`,
+  // deliberately.
+  rate: (pred, truth) => isNum(pred) && isNum(truth)
+    && Math.abs(pred - truth) <= 0.005 + 1e-9,
+
+  // A duration in YEARS (amortization, loan term, WALT). Memoranda quote these
+  // to a tenth of a year at most, so the band is half a tenth: 5.4 against
+  // 5.42 agrees, 5.4 against 5.5 does not. Months are converted to years before
+  // comparison (120 months is 10); 120 against a truth of 10 is wrong, which is
+  // the point.
+  duration: (pred, truth) => isNum(pred) && isNum(truth)
+    && Math.abs(pred - truth) <= 0.05 + 1e-9,
+};
+
+/**
+ * Underwriting fields an offering memorandum states and this repo's deal model
+ * (src/lib/finance.js runModel) takes, or that an underwriter needs in order to
+ * convert one. Dollar flows are ANNUAL. docs/product-fields.md says what each
+ * maps to, and which map to nothing.
+ */
+export const DRAFT_FIELDS = [
+  { name: 'units', kind: 'count', label: 'Units', unit: 'units', required: false, measured: false },
+  { name: 'grossPotentialRent', kind: 'money', label: 'Gross potential rent', unit: 'USD/yr', required: false, measured: false },
+  { name: 'operatingExpenses', kind: 'money', label: 'Operating expenses', unit: 'USD/yr', required: false, measured: false },
+  { name: 'operatingExpensesIncludeTaxes', kind: 'enum', label: 'Operating expenses include taxes',
+    options: ['includes-taxes', 'excludes-taxes'], required: false, measured: false },
+  { name: 'realEstateTaxes', kind: 'money', label: 'Real estate taxes', unit: 'USD/yr', required: false, measured: false },
+  { name: 'askingPrice', kind: 'money', label: 'Asking price', unit: 'USD', required: false, measured: false },
+  { name: 'loanAmount', kind: 'money', label: 'Loan amount', unit: 'USD', required: false, measured: false },
+  { name: 'interestRate', kind: 'rate', label: 'Interest rate', unit: '%', required: false, measured: false },
+  { name: 'amortizationYears', kind: 'duration', label: 'Amortization', unit: 'years', required: false, measured: false },
+  { name: 'loanTermYears', kind: 'duration', label: 'Loan term to maturity', unit: 'years', required: false, measured: false },
+  { name: 'weightedAverageLeaseTerm', kind: 'duration', label: 'Weighted average lease term', unit: 'years', required: false, measured: false },
+];
+
+const MEASURED_PRESENTATION = {
+  address: { label: 'Address' },
+  propertyType: { label: 'Property type' },
+  squareFeet: { label: 'Square feet', unit: 'sq ft' },
+  yearBuilt: { label: 'Year built' },
+  purchasePrice: { label: 'Purchase price', unit: 'USD' },
+  netOperatingIncome: { label: 'Net operating income', unit: 'USD/yr' },
+  capRate: { label: 'Cap rate', unit: '%' },
+  occupancy: { label: 'Occupancy', unit: '%' },
+};
+
+/**
+ * Contract C3. The first FIELDS.length entries are FIELDS, in order, each with
+ * a label, a unit where it has one, and `measured: true`; the rest are
+ * DRAFT_FIELDS. An eval field with no presentation row throws at import, so a
+ * ninth eval field cannot reach the product unlabelled.
+ */
+export const PRODUCT_FIELDS = [
+  ...FIELDS.map((f) => {
+    const p = MEASURED_PRESENTATION[f.name];
+    if (!p) throw new Error(`no label for eval field: ${f.name}`);
+    return { ...f, ...p, measured: true };
+  }),
+  ...DRAFT_FIELDS,
+];
+
+export const PRODUCT_FIELD_NAMES = PRODUCT_FIELDS.map((f) => f.name);
+
+/** Every comparator a product field may use: the eval's, then the draft kinds'. */
+export const PRODUCT_COMPARATORS = { ...COMPARATORS, ...DRAFT_COMPARATORS };
+
+export function productFieldByName(name) {
+  const f = PRODUCT_FIELDS.find((x) => x.name === name);
+  if (!f) throw new Error(`unknown product field: ${name}`);
+  return f;
+}
+
+/** valuesAgree over PRODUCT_FIELDS. Throws for a kind with no comparator. */
+export function productValuesAgree(fieldName, predicted, truth) {
+  const { kind } = productFieldByName(fieldName);
+  const cmp = PRODUCT_COMPARATORS[kind];
+  if (!cmp) throw new Error(`no comparator for kind: ${kind}`);
+  return cmp(predicted, truth);
+}
