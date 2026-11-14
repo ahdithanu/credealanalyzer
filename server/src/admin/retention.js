@@ -412,6 +412,7 @@ async function offboard({ slug, apply = false, reason = null, log = console.log 
 
     const counts = await db.query(
       `SELECT (SELECT count(*) FROM deals          WHERE tenant_id = $1)::int AS deals,
+              (SELECT count(*) FROM deal_documents WHERE tenant_id = $1)::int AS documents,
               (SELECT count(*) FROM users          WHERE tenant_id = $1)::int AS users,
               (SELECT count(*) FROM firm_defaults  WHERE tenant_id = $1)::int AS "firmDefaults",
               (SELECT count(*) FROM tenant_domains WHERE tenant_id = $1)::int AS domains,
@@ -424,6 +425,7 @@ async function offboard({ slug, apply = false, reason = null, log = console.log 
 
     if (!apply) {
       log(`DRY RUN — offboarding ${slug} would delete ${plan.deals} deal(s), `
+        + `${plan.documents} document(s), `
         + `${plan.users} user(s) and ${plan.domains} domain(s), revoke `
         + `${plan.liveSessions} session(s) and DESTROY the tenant data key. `
         + `${plan.auditEntries} audit entr(ies) would be RETAINED. Pass --apply.`);
@@ -457,7 +459,10 @@ async function offboard({ slug, apply = false, reason = null, log = console.log 
         [tenant.id]);
 
       // 2. Delete the tenant's own rows. Order respects the foreign keys:
-      //    deals reference users, so deals go first.
+      //    deals reference users, so deals go first. Documents are removed
+      //    explicitly ahead of them, rather than left to the ON DELETE CASCADE
+      //    from deals, so the record can say how many went.
+      const documents = await db.query('DELETE FROM deal_documents WHERE tenant_id = $1 RETURNING id', [tenant.id]);
       const deals = await db.query('DELETE FROM deals WHERE tenant_id = $1 RETURNING id', [tenant.id]);
       const defaults = await db.query('DELETE FROM firm_defaults WHERE tenant_id = $1 RETURNING id', [tenant.id]);
       const domains = await db.query('DELETE FROM tenant_domains WHERE tenant_id = $1 RETURNING domain', [tenant.id]);
@@ -507,6 +512,7 @@ async function offboard({ slug, apply = false, reason = null, log = console.log 
         detail: {
           reason: reason || null,
           dealsDeleted: deals.rows.length,
+          documentsDeleted: documents.rows.length,
           usersDeleted: users.rows.length,
           firmDefaultsDeleted: defaults.rows.length,
           domainsRemoved: domains.rows.length,
@@ -546,6 +552,7 @@ async function offboard({ slug, apply = false, reason = null, log = console.log 
         slug,
         dryRun: false,
         deals: deals.rows.length,
+        documents: documents.rows.length,
         users: users.rows.length,
         firmDefaults: defaults.rows.length,
         domains: domains.rows.length,
