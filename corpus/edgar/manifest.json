@@ -1,0 +1,2232 @@
+[
+  {
+    "id": "0000899689-0000899689-26-000009",
+    "company": "VORNADO REALTY TRUST",
+    "cik": "0000899689",
+    "form": "10-K",
+    "accessionNumber": "0000899689-26-000009",
+    "reportDate": "2025-12-31",
+    "filingDate": "2026-02-09",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/899689/000089968926000009/vno-20251231.htm",
+    "localPath": "0000899689-0000899689-26-000009-vno-20251231.htm",
+    "fetchedAt": "2026-11-12T03:02:35.694Z",
+    "groundTruth": null,
+    "subjects": {
+      "populationSource": "Item 2, PROPERTY LISTING (New York and Other segments): every row naming a property; Total / Our Ownership Interest / \"Other (n buildings)\" rows excluded; trailing footnote markers stripped",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
+      "population": [
+        "PENN 1 (ground leased through 2098)",
+        "1290 Avenue of the Americas",
+        "PENN 2",
+        "909 Third Avenue (ground leased through 2063)",
+        "280 Park Avenue",
+        "Independence Plaza, Tribeca (1,328 units)",
+        "770 Broadway",
+        "PENN 11",
+        "100 West 33rd Street",
+        "90 Park Avenue",
+        "One Park Avenue",
+        "888 Seventh Avenue (ground leased through 2067)",
+        "The Farley Building (ground and building leased through 2116)",
+        "330 West 34th Street (65.2% ground leased through 2149)",
+        "85 Tenth Avenue",
+        "350 Park Avenue",
+        "150 East 58th Street",
+        "7 West 34th Street",
+        "623 Fifth Avenue",
+        "595 Madison Avenue",
+        "640 Fifth Avenue",
+        "Sunset Pier 94 Studios (ground and building leased through 2110)",
+        "260 Eleventh Avenue (ground leased through 2114)",
+        "4 Union Square South",
+        "61 Ninth Avenue (2 buildings) (ground leased through 2115)",
+        "825 Seventh Avenue",
+        "1540 Broadway",
+        "1535 Broadway",
+        "689 Fifth Avenue",
+        "150 West 34th Street",
+        "50 West 57th Street",
+        "655 Fifth Avenue",
+        "435 Seventh Avenue",
+        "606 Broadway",
+        "697-703 Fifth Avenue",
+        "1131 Third Avenue",
+        "666 Fifth Avenue",
+        "131-135 West 33rd Street",
+        "715 Lexington Avenue",
+        "537 West 26th Street",
+        "40 East 66th Street (3 units)",
+        "431 Seventh Avenue",
+        "138-142 West 32nd Street",
+        "339 Greenwich Street",
+        "966 Third Avenue",
+        "968 Third Avenue",
+        "137 West 33rd Street",
+        "57th Street",
+        "Eighth Avenue and 34th Street",
+        "Hotel Pennsylvania site (PENN 15)",
+        "731 Lexington Avenue",
+        "Rego Park II, Queens (6.6 acres)",
+        "Rego Park I, Queens (4.8 acres)",
+        "The Alexander Apartment Tower, Queens (312 units)",
+        "Flushing, Queens (1.0 acre ground leased through 2037)",
+        "THE MART, Chicago",
+        "527 West Kinzie, Chicago",
+        "555 California Street, San Francisco",
+        "315 Montgomery Street, San Francisco",
+        "345 Montgomery Street, San Francisco",
+        "Rosslyn Plaza, VA (197 units)",
+        "Fashion Centre Mall / Washington Tower, VA",
+        "Wayne Towne Center, Wayne, NJ (ground leased through 2064)",
+        "Annapolis, MD (ground leased through 2042)",
+        "Atlantic City, NJ (11.3 acres ground leased through 2070 to VICI Properties for a portion of the Borgata Hotel and Casino complex)",
+        "Paramus, NJ (Vornado administrative headquarters)",
+        "650 Madison Avenue(2)(6), New York, NY"
+      ],
+      "items": [
+        {
+          "subject": "Hotel Pennsylvania site (PENN 15)",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 1919,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": "Hotel Pennsylvania site (PENN 15) | 100.0% | Land",
+            "yearBuilt": "324,144 | 402,465 | — | 1919 | 1997"
+          },
+          "notes": [
+            "Item 2 Type is \"Land\"; all three square-feet columns read \"—\", so squareFeet is not stated.",
+            "Occupancy column reads \"(5)\" (footnote: properties under development or to be developed): not stated.",
+            "No street address appears anywhere in the filing for this site.",
+            "Schedule III (rendered and checked) puts 1919 under Date of construction (footnote 3: \"Date of original construction\") and 1997 under Date acquired. Labelled as stated even though the site is now a development site."
+          ]
+        },
+        {
+          "subject": "131-135 West 33rd Street",
+          "set": "dev",
+          "groundTruth": {
+            "address": "131-135 West 33rd Street",
+            "propertyType": "retail",
+            "squareFeet": 22000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "131-135 West 33rd Street | 100.0% | Retail",
+            "propertyType": "131-135 West 33rd Street | 100.0% | Retail",
+            "squareFeet": "Retail | 100.0% | 22,000 | — | 22,000",
+            "occupancy": "Retail | 100.0% | 22,000"
+          },
+          "notes": [
+            "squareFeet is the Total Property column.",
+            "yearBuilt NOT STATED: Schedule III row carries a single year, 2016. Rendering the filing shows it under Date acquired with Date of construction blank. The canonical text drops the blank cell, so an extractor reading the text alone cannot tell; this field tests the converter as much as the extractor."
+          ]
+        },
+        {
+          "subject": "150 West 34th Street",
+          "set": "dev",
+          "groundTruth": {
+            "address": "150 West 34th Street",
+            "propertyType": "retail",
+            "squareFeet": 79000,
+            "yearBuilt": 1900,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "150 West 34th Street | 100.0% | Retail",
+            "propertyType": "150 West 34th Street | 100.0% | Retail",
+            "squareFeet": "Retail | 100.0% | 79,000 | — | 79,000",
+            "occupancy": "Retail | 100.0% | 79,000",
+            "yearBuilt": "268,509 | 388,166 | 71,043 | 1900 | 2015"
+          },
+          "notes": [
+            "Schedule III rendered: 1900 under Date of construction, 2015 under Date acquired.",
+            "Mortgage loan figures elsewhere in the filing are debt, not price."
+          ]
+        },
+        {
+          "subject": "Flushing, Queens (1.0 acre ground leased through 2037)",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "retail",
+            "squareFeet": 167000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "propertyType": "Flushing, Queens (1.0 acre ground leased through 2037)(2) | 32.4% | Retail",
+            "squareFeet": "Retail | 100.0% | 167,000 | — | 167,000",
+            "occupancy": "Retail | 100.0% | 167,000"
+          },
+          "notes": [
+            "Alexander's property, not consolidated: no Schedule III row, so no construction year is stated.",
+            "No street address stated; \"Flushing, Queens\" is a locality."
+          ]
+        },
+        {
+          "subject": "1290 Avenue of the Americas",
+          "set": "dev",
+          "groundTruth": {
+            "address": "1290 Avenue of the Americas",
+            "propertyType": "mixed-use",
+            "squareFeet": 2089000,
+            "yearBuilt": 1963,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 91.3
+          },
+          "evidence": {
+            "address": "1290 Avenue of the Americas | 70.0% | Office / Retail",
+            "propertyType": "1290 Avenue of the Americas | 70.0% | Office / Retail",
+            "squareFeet": "Office / Retail | 91.3% | 2,089,000 | — | 2,089,000",
+            "occupancy": "Office / Retail | 91.3% | 2,089,000",
+            "yearBuilt": "1,816,186 | 553,859 | 1963 | 2007"
+          },
+          "notes": [
+            "Type \"Office / Retail\" maps to mixed-use (two use categories).",
+            "The $950,000 thousand figure is an encumbrance (mortgage), not a price."
+          ]
+        },
+        {
+          "subject": "606 Broadway",
+          "set": "dev",
+          "groundTruth": {
+            "address": "606 Broadway",
+            "propertyType": "mixed-use",
+            "squareFeet": 36000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 24.8
+          },
+          "evidence": {
+            "address": "606 Broadway | 50.0% | Office / Retail",
+            "propertyType": "606 Broadway | 50.0% | Office / Retail",
+            "squareFeet": "Office / Retail | 24.8% | 36,000 | — | 36,000",
+            "occupancy": "Office / Retail | 24.8% | 36,000"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: same short-row case as 131-135 West 33rd Street. Rendered, 2016 sits under Date acquired; construction is blank."
+          ]
+        },
+        {
+          "subject": "4 Union Square South",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "4 Union Square South",
+            "propertyType": "retail",
+            "squareFeet": 204000,
+            "yearBuilt": 1965,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "4 Union Square South | 100.0% | Retail",
+            "propertyType": "4 Union Square South | 100.0% | Retail",
+            "squareFeet": "Retail | 100.0% | 204,000 | — | 204,000",
+            "occupancy": "Retail | 100.0% | 204,000",
+            "yearBuilt": "35,413 | 1965/2004 | 1993"
+          },
+          "notes": [
+            "Schedule III rendered (checked): 1965/2004 under Date of construction (original construction 1965), 1993 under Date acquired.",
+            "The $120,000,000 refinancing is debt, not a price."
+          ]
+        },
+        {
+          "subject": "350 Park Avenue",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "350 Park Avenue",
+            "propertyType": "office",
+            "squareFeet": 585000,
+            "yearBuilt": 1960,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "350 Park Avenue | 100.0% | Office",
+            "propertyType": "350 Park Avenue | 100.0% | Office",
+            "squareFeet": "Office | 100.0% | 585,000 | — | 585,000",
+            "occupancy": "Office | 100.0% | 585,000",
+            "yearBuilt": "203,124 | 1960 | 2006"
+          },
+          "notes": [
+            "The 1,850,000 square foot figure in the business section is a PLANNED tower on the combined 350 Park Site, not this property's size.",
+            "Schedule III rendered (checked): 1960 construction, 2006 acquired."
+          ]
+        },
+        {
+          "subject": "1535 Broadway",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "1535 Broadway",
+            "propertyType": "retail",
+            "squareFeet": 107000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "1535 Broadway(2) | 52.0% | Retail / Theatre",
+            "propertyType": "Retail / Theatre",
+            "squareFeet": "Retail / Theatre | 100.0% | 107,000 | — | 107,000",
+            "occupancy": "Retail / Theatre | 100.0% | 107,000"
+          },
+          "notes": [
+            "Type \"Retail / Theatre\": one use category plus a non-use term maps to retail under the mapping, not mixed-use.",
+            "Unconsolidated (footnote 2): no Schedule III row, yearBuilt NOT STATED.",
+            "The $450,000,000 financing is debt, not a price."
+          ]
+        },
+        {
+          "subject": "138-142 West 32nd Street",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "138-142 West 32nd Street",
+            "propertyType": "retail",
+            "squareFeet": 8000,
+            "yearBuilt": 1920,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 80.3
+          },
+          "evidence": {
+            "address": "138-142 West 32nd Street | 100.0% | Retail",
+            "propertyType": "138-142 West 32nd Street | 100.0% | Retail",
+            "squareFeet": "Retail | 80.3% | 8,000 | — | 8,000",
+            "occupancy": "Retail | 80.3% | 8,000",
+            "yearBuilt": "21,415 | 3,363 | 1920 | 2015"
+          },
+          "notes": [
+            "Schedule III rendered (checked earlier screenshot): 1920 construction, 2015 acquired."
+          ]
+        },
+        {
+          "subject": "770 Broadway",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "770 Broadway",
+            "propertyType": "mixed-use",
+            "squareFeet": 1183000,
+            "yearBuilt": 1907,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "770 Broadway | 100.0% | Office / Retail",
+            "propertyType": "770 Broadway | 100.0% | Office / Retail",
+            "squareFeet": "Office / Retail | 100.0% | 1,183,000 | — | 1,183,000",
+            "occupancy": "Office / Retail | 100.0% | 1,183,000",
+            "yearBuilt": "22,188 | 10,175 | 1907 | 1998"
+          },
+          "notes": [
+            "The $935,000 thousand NYU payment is a prepaid lease payment, not a price. The 1,076,000 square feet is the NYU master-leased area, not the property total."
+          ]
+        },
+        {
+          "subject": "Rosslyn Plaza, VA (197 units)",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "mixed-use",
+            "squareFeet": 989000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 22.5
+          },
+          "evidence": {
+            "propertyType": "Rosslyn Plaza, VA (197 units)(2) | 45.6% | Office / Residential",
+            "squareFeet": "685,000 | 304,000 | 989,000",
+            "occupancy": "Office / Residential | 22.5%"
+          },
+          "notes": [
+            "The row carries an extra footnote cell \"(3)\" after occupancy (Excludes residential occupancy statistics), which shifts every later cell one column right in the text. Total Property is the last cell, 989,000.",
+            "occupancy 22.5 is stated, with the footnote that it excludes residential.",
+            "Unconsolidated: no Schedule III row, yearBuilt NOT STATED. No street address."
+          ]
+        },
+        {
+          "subject": "PENN 2",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "mixed-use",
+            "squareFeet": 1825000,
+            "yearBuilt": 1968,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 79.5
+          },
+          "evidence": {
+            "propertyType": "PENN 2 | 100.0% | Office / Retail",
+            "squareFeet": "Office / Retail | 79.5% | 1,825,000 | — | 1,825,000",
+            "occupancy": "Office / Retail | 79.5% | 1,825,000",
+            "yearBuilt": "1,328,445 | 135,733 | 1968 | 1997"
+          },
+          "notes": [
+            "address NOT STATED: \"located on the west side of Seventh Avenue between 31st and 33rd Street\" has no building number.",
+            "The $750,000,000 is a redevelopment cost estimate, not a price."
+          ]
+        },
+        {
+          "subject": "Annapolis, MD (ground leased through 2042)",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "retail",
+            "squareFeet": 128000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "propertyType": "Annapolis, MD (ground leased through 2042)(1) | 100.0% | Retail",
+            "squareFeet": "Retail | 100.0% | 128,000 | — | 128,000",
+            "occupancy": "Retail | 100.0% | 128,000"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: Schedule III \"Annapolis, Maryland\" carries one year, 2005. Rendered, it sits under Date acquired with construction blank (converter-loss case, like 606 Broadway)."
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "0001515816-0001171520-25-000056",
+    "company": "Plymouth Industrial REIT, Inc.",
+    "cik": "0001515816",
+    "form": "10-K",
+    "accessionNumber": "0001171520-25-000056",
+    "reportDate": "2024-12-31",
+    "filingDate": "2025-03-03",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1515816/000117152025000056/eps11788_plym-r12.htm",
+    "localPath": "0001515816-0001171520-25-000056-eps11788_plym-r12.htm",
+    "fetchedAt": "2026-11-12T03:03:53.991Z",
+    "groundTruth": null,
+    "subjects": {
+      "populationSource": "Item 2, Company Portfolio table: the Property column of every row (129 rows, matching \"Total Company Portfolio | 129\"); trailing footnote markers stripped",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
+      "population": [
+        "1099 Dodds Avenue",
+        "1413 Lovers Lane",
+        "1665 Dogwood Drive SW",
+        "1715 Dogwood Drive",
+        "11236 Harland Drive",
+        "40 Pinyon Road",
+        "32 Dart Road",
+        "Peachtree City",
+        "Peachtree City II",
+        "6739 New Calhoun Highway NE",
+        "6777-6785 New Calhoun Highway NE",
+        "54-56 Milliken",
+        "1570 East P Street Extension",
+        "Cornell Commerce Center",
+        "1220-1230 Hillsmith Drive",
+        "1-45 Techview Drive",
+        "4225-4331 Dues Drive",
+        "613-637 Redna Terrace",
+        "8080 Reading Road",
+        "3741 Port Union Rd",
+        "4115 Thunderbird",
+        "Fisher Industrial Park",
+        "Fairfield Business Center",
+        "7585 Empire Drive",
+        "3825 Symmes Road",
+        "11540-11630 Mosteller",
+        "2700 Kemper Road",
+        "2800 Kemper Road",
+        "1200 Chester Industrial Parkway N",
+        "1200 Chester Industrial Parkway S",
+        "1350 Moore Road",
+        "22209 Rockside Road",
+        "1120 West 130th St",
+        "4211 Shuffel Street NW",
+        "2100 International Parkway",
+        "2210 International Parkway",
+        "14801 County Rd 212",
+        "30339 Diamond Parkway",
+        "Gilchrist Road I",
+        "Gilchrist Road II",
+        "Gilchrist Road III",
+        "1366 Commerce Drive",
+        "1755 Enterprise",
+        "31000 Viking Parkway",
+        "1650-1654 Williams Road",
+        "2120-2138 New World",
+        "2626 Port Road",
+        "8273 Green Meadows",
+        "8288 Green Meadows",
+        "Graphics Way",
+        "Orange Point",
+        "3100 Creekside",
+        "100 Paragon Parkway",
+        "7001 Americana",
+        "2800 Howard Street",
+        "1520 Experiment Farm Road",
+        "2180 Corporate Drive",
+        "952 Dorset Road",
+        "2900 Shadeland",
+        "3035 North Shadeland",
+        "3169 North Shadeland",
+        "3333 N. Franklin Road",
+        "3525 S. Arlington",
+        "6555 E 30th Street",
+        "6575 E 30th Street",
+        "6585 E 30th Street",
+        "6635 E 30th Street",
+        "6701 E 30th Street",
+        "6737 E 30th Street",
+        "6751 E 30th Street",
+        "6951 E 30th Street",
+        "7750 Georgetown Road",
+        "7901 W. 21st Street",
+        "Sam Jones",
+        "3701 David Howarth Drive",
+        "8000-8001 Belfort Parkway",
+        "8451 Western Way",
+        "Center Point Business Park",
+        "Liberty Business Park",
+        "Salisbury Business Park",
+        "265 Industrial Boulevard",
+        "338 Industrial Boulevard",
+        "430 Industrial Boulevard",
+        "7585 AE Beaty Drive/2995 Appling Road",
+        "2950 Brother Boulevard",
+        "210 American",
+        "1590-1680 Century Center Parkway",
+        "1700-1710 Dunn Avenue",
+        "1814 S Third Street",
+        "3635 Knight Road",
+        "3650 Distriplex Drive",
+        "3670 South Perkins Road",
+        "3980 Premier Avenue",
+        "4370-4450 South Mendenhall Road",
+        "4575 Pleasant Hill Road",
+        "4740 Shelby Drive",
+        "5846 Distribution Drive",
+        "6290 Shelby View Drive",
+        "Airport Business Park",
+        "Collins Industrial Memphis",
+        "Outland Center Memphis I",
+        "Outland Center Memphis II",
+        "Outland/Burbank Industrial",
+        "Place Industrial Memphis",
+        "Shelby Distribution",
+        "Shelby Distribution II",
+        "South Park",
+        "Willow Lake Industrial",
+        "10455 Marina Drive",
+        "10682 Ridgewood Road",
+        "7560 Priority Lane",
+        "8970 Deerfield Drive",
+        "5681 Cleveland Road",
+        "South Bend 4491 Mayflower",
+        "South Bend 4955 Ameritech",
+        "South Bend 5855 Carbonmill",
+        "South Bend Brick Road",
+        "9150 Latty Avenue",
+        "160-275 Corporate Woods Place",
+        "3051 Gateway",
+        "349 Gateway",
+        "3919 Lakeview Corporate Drive",
+        "4848 Park 370 Boulevard",
+        "Phantom Drive",
+        "Metro St Louis",
+        "1901-1939 Beltway Dr",
+        "11646 Lakeside Crossing",
+        "Grissom Drive",
+        "St. Louis Commerce Center"
+      ],
+      "items": [
+        {
+          "subject": "6575 E 30th Street",
+          "set": "dev",
+          "groundTruth": {
+            "address": "6575 E 30th Street",
+            "propertyType": "industrial",
+            "squareFeet": 60000,
+            "yearBuilt": 1998,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "6575 E 30th Street | Indianapolis | IN",
+            "propertyType": "6575 E 30th Street | Indianapolis | IN | Warehouse/Distribution",
+            "yearBuilt": "Warehouse/Distribution | 1998 | 60,000 | 100%",
+            "squareFeet": "Warehouse/Distribution | 1998 | 60,000 | 100%",
+            "occupancy": "60,000 | 100% | 331,200"
+          },
+          "notes": [
+            "Schedule III prints the same address as \"6575 East 30th Street\". Labelled as printed in the primary table (Item 2); the comparator does not normalise E/East, by design.",
+            "Occupancy column has no definition footnote; labelled as stated."
+          ]
+        },
+        {
+          "subject": "South Bend 5855 Carbonmill",
+          "set": "dev",
+          "groundTruth": {
+            "address": "5855 West Carbonmill Road",
+            "propertyType": "industrial",
+            "squareFeet": 198000,
+            "yearBuilt": 2002,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "South Bend, IN | 5855 West Carbonmill Road",
+            "propertyType": "South Bend 5855 Carbonmill | South Bend | IN | Warehouse/Distribution",
+            "yearBuilt": "Warehouse/Distribution | 2002 | 198,000 | 100%",
+            "squareFeet": "Warehouse/Distribution | 2002 | 198,000 | 100%",
+            "occupancy": "198,000 | 100% | 920,700"
+          },
+          "notes": [
+            "The Item 2 property cell \"South Bend 5855 Carbonmill\" is a name, not an address. Schedule III's Address column prints \"5855 West Carbonmill Road\" for it: that is the stated address.",
+            "Schedule III also states 2002 as Year Built/Renovated (column order there is Year Acquired, then Year Built)."
+          ]
+        },
+        {
+          "subject": "South Bend Brick Road",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": 101450,
+            "yearBuilt": 1998,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "propertyType": "South Bend Brick Road | South Bend | IN | Warehouse/Distribution",
+            "yearBuilt": "Warehouse/Distribution | 1998 | 101,450 | 100%",
+            "squareFeet": "Warehouse/Distribution | 1998 | 101,450 | 100%",
+            "occupancy": "101,450 | 100% | 368,264"
+          },
+          "notes": [
+            "address NOT STATED: Schedule III prints \"West Brick Road\" with no building number. A street name alone is not a street address under the rules."
+          ]
+        },
+        {
+          "subject": "6290 Shelby View Drive",
+          "set": "dev",
+          "groundTruth": {
+            "address": "6290 Shelby View Drive",
+            "propertyType": "industrial",
+            "squareFeet": 74665,
+            "yearBuilt": 1999,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "6290 Shelby View Drive | Memphis | TN",
+            "propertyType": "6290 Shelby View Drive | Memphis | TN | Warehouse/Distribution",
+            "yearBuilt": "Warehouse/Distribution | 1999/2003 | 74,665",
+            "squareFeet": "1999/2003 | 74,665 | 100%",
+            "occupancy": "74,665 | 100% | 454,357"
+          },
+          "notes": [
+            "\"1999/2003\" is Year Built/Renovated: the first year is the construction year."
+          ]
+        },
+        {
+          "subject": "1590-1680 Century Center Parkway",
+          "set": "dev",
+          "groundTruth": {
+            "address": "1590-1680 Century Center Parkway",
+            "propertyType": "industrial",
+            "squareFeet": 520052,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 95
+          },
+          "evidence": {
+            "address": "1590-1680 Century Center Parkway | Memphis | TN",
+            "propertyType": "1590-1680 Century Center Parkway | Memphis | TN | Warehouse/Distribution",
+            "squareFeet": "1990-2004 | 520,052 | 95%",
+            "occupancy": "520,052 | 95% | 4,949,938"
+          },
+          "notes": [
+            "yearBuilt NOT STATED as a single year: \"1990-2004\" is a range.",
+            "purchasePrice NOT STATED: acquired 2024 as one of 4 Memphis properties for $100,500 thousand in aggregate. A portfolio price is not a property price."
+          ]
+        },
+        {
+          "subject": "11236 Harland Drive",
+          "set": "dev",
+          "groundTruth": {
+            "address": "11236 Harland Drive",
+            "propertyType": "industrial",
+            "squareFeet": 32361,
+            "yearBuilt": 1988,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "11236 Harland Drive | Covington | GA",
+            "propertyType": "11236 Harland Drive | Covington | GA | Warehouse/Distribution",
+            "yearBuilt": "Warehouse/Distribution | 1988 | 32,361 | 100%",
+            "squareFeet": "Warehouse/Distribution | 1988 | 32,361 | 100%",
+            "occupancy": "32,361 | 100% | 161,805"
+          },
+          "notes": []
+        },
+        {
+          "subject": "Outland Center Memphis I",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": 175337,
+            "yearBuilt": 1988,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 86
+          },
+          "evidence": {
+            "propertyType": "Outland Center Memphis I | Memphis | TN | Warehouse/Distribution",
+            "squareFeet": "1988-1989 | 175,337 | 86%",
+            "occupancy": "175,337 | 86% | 698,790",
+            "yearBuilt": "Memphis, TN | Outland Center Memphis I | -(1) | 678 | 9,227 | 1,138 | 678 | 10,365 | 11,043 | 1,523 | 2022 | 1988"
+          },
+          "notes": [
+            "Item 2 (primary) gives the range \"1988-1989\", which states no single year. Schedule III states 1988 (column order Year Acquired 2022, Year Built 1988). Primary-first, falling through to the next table when the primary does not state the field: 1988.",
+            "address NOT STATED: \"Outland Center Memphis I\" is a name, and Schedule III prints the same name in its Address column."
+          ]
+        },
+        {
+          "subject": "3051 Gateway",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "3051 Gateway",
+            "propertyType": "industrial",
+            "squareFeet": 521171,
+            "yearBuilt": 2016,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "3051 Gateway | Edwardsville | IL",
+            "propertyType": "3051 Gateway | Edwardsville | IL | Warehouse/Light Manufacturing",
+            "squareFeet": "Warehouse/Light Manufacturing | 2016 | 521,171 | 100%",
+            "yearBuilt": "Warehouse/Light Manufacturing | 2016 | 521,171",
+            "occupancy": "521,171 | 100% | 2,626,324"
+          },
+          "notes": [
+            "address has a building number and a street name with no suffix; labelled verbatim as printed."
+          ]
+        },
+        {
+          "subject": "2210 International Parkway",
+          "set": "holdout",
+          "groundTruth": {
+            "address": "2210 International Parkway",
+            "propertyType": "industrial",
+            "squareFeet": 350000,
+            "yearBuilt": 2001,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "2210 International Parkway | Canton | OH",
+            "propertyType": "2210 International Parkway | Canton | OH | Warehouse/Distribution",
+            "squareFeet": "Warehouse/Distribution | 2001 | 350,000 | 100%",
+            "yearBuilt": "Warehouse/Distribution | 2001 | 350,000",
+            "occupancy": "350,000 | 100% | 1,568,000"
+          },
+          "notes": []
+        },
+        {
+          "subject": "2100 International Parkway",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "2100 International Parkway",
+            "propertyType": "industrial",
+            "squareFeet": 274464,
+            "yearBuilt": 2000,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 0
+          },
+          "evidence": {
+            "address": "2100 International Parkway | Canton | OH",
+            "propertyType": "2100 International Parkway | Canton | OH | Warehouse/Light Manufacturing",
+            "squareFeet": "Warehouse/Light Manufacturing | 2000 | 274,464 | 0%",
+            "yearBuilt": "Warehouse/Light Manufacturing | 2000 | 274,464",
+            "occupancy": "274,464 | 0% | -"
+          },
+          "notes": [
+            "occupancy is a STATED zero (0%): the building is vacant. Abstaining on it is a miss, not a correct abstention."
+          ]
+        },
+        {
+          "subject": "1715 Dogwood Drive",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "1715 Dogwood Drive",
+            "propertyType": "industrial",
+            "squareFeet": 100000,
+            "yearBuilt": 1973,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "1715 Dogwood Drive | Conyers | GA",
+            "propertyType": "1715 Dogwood Drive | Conyers | GA | Warehouse/Distribution",
+            "squareFeet": "Warehouse/Distribution | 1973 | 100,000 | 100%",
+            "yearBuilt": "Warehouse/Distribution | 1973 | 100,000",
+            "occupancy": "100,000 | 100% | 284,614"
+          },
+          "notes": []
+        },
+        {
+          "subject": "6777-6785 New Calhoun Highway NE",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "6777-6785 New Calhoun Highway NE",
+            "propertyType": "industrial",
+            "squareFeet": 416600,
+            "yearBuilt": 2023,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "6777-6785 New Calhoun Highway NE | Rome | GA",
+            "propertyType": "6777-6785 New Calhoun Highway NE | Rome | GA | Warehouse/Distribution",
+            "squareFeet": "Warehouse/Distribution | 2023 | 416,600 | 100%",
+            "yearBuilt": "Warehouse/Distribution | 2023 | 416,600",
+            "occupancy": "416,600 | 100% | 2,454,346"
+          },
+          "notes": [
+            "CONFLICT: Item 2 Year Built says 2023; Schedule III says Year Acquired 2023, Year Built 2022. Labelled from the primary table: 2023."
+          ]
+        },
+        {
+          "subject": "4211 Shuffel Street NW",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": "4211 Shuffel Street NW",
+            "propertyType": "industrial",
+            "squareFeet": 255000,
+            "yearBuilt": 1994,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 100
+          },
+          "evidence": {
+            "address": "4211 Shuffel Street NW | Canton | OH",
+            "propertyType": "4211 Shuffel Street NW | Canton | OH | Warehouse/Light Manufacturing",
+            "squareFeet": "Warehouse/Light Manufacturing | 1994 | 255,000 | 100%",
+            "yearBuilt": "Warehouse/Light Manufacturing | 1994 | 255,000",
+            "occupancy": "255,000 | 100% | 1,473,502"
+          },
+          "notes": []
+        },
+        {
+          "subject": "Place Industrial Memphis",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": 85631,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 88
+          },
+          "evidence": {
+            "propertyType": "Place Industrial Memphis | Memphis | TN | Warehouse/Distribution",
+            "squareFeet": "1980-1988 | 85,631 | 88%",
+            "occupancy": "85,631 | 88% | 333,811"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: \"1980-1988\" in both tables. address NOT STATED: a name."
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "0000014846-0000014846-26-000007",
+    "company": "BRT Apartments Corp.",
+    "cik": "0000014846",
+    "form": "10-K",
+    "accessionNumber": "0000014846-26-000007",
+    "reportDate": "2025-12-31",
+    "filingDate": "2026-03-13",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/14846/000001484626000007/brt-20251231.htm",
+    "localPath": "0000014846-0000014846-26-000007-brt-20251231.htm",
+    "fetchedAt": "2026-11-12T03:03:56.000Z",
+    "groundTruth": null,
+    "subjects": {
+      "populationSource": "Item 1, Our Multi-Family Properties table: the \"Property Name and Location\" cell of every row; Total row excluded; trailing footnote markers stripped",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
+      "population": [
+        "Silvana Oaks Apartments—N. Charleston, SC",
+        "Avondale Station—Decatur, GA",
+        "Brixworth at Bridge Street—Huntsville, AL",
+        "Newbridge Commons—Columbus, OH",
+        "Crossings of Bellevue—Nashville, TN",
+        "Avalon Apartments—Pensacola, FL",
+        "Parkway Grande—San Marcos, TX",
+        "Woodland Trails—LaGrange, GA",
+        "Grove at River Place — Macon, GA",
+        "Civic Center I—Southaven, MS",
+        "Civic Center II — Southaven, MS",
+        "Verandas at Alamo Ranch—San Antonio, TX",
+        "Kilburn Crossing — Fredericksburg, VA",
+        "Bells Bluff — West Nashville, TN",
+        "Vanguard Heights — Creve Coeur, MO",
+        "Jackson Square — Tallahassee, FL",
+        "Magnolia Pointe at Madison — Madison, AL",
+        "The Woodland Apartments — Boerne, TX",
+        "Somerset at Trussville — Trussville, AL",
+        "Crestmont at Thornblade — Greenville, SC",
+        "Abbotts Run — Wilmington, NC",
+        "The Pointe at Lenox Park— Atlanta, GA",
+        "Canalside Lofts — Columbia, SC",
+        "Canalside Sola — Columbia, SC",
+        "Mercer Crossing — Farmers Branch, TX",
+        "Gateway Oaks — Forney, TX",
+        "Landings of Carrier Parkway — Grand Prairie, TX",
+        "Village at Lakeside — Auburn, AL",
+        "Stono Oaks-Johns Island, SC",
+        "1322 North —Auburn, AL",
+        "Oaks at Victory —Savannah, GA"
+      ],
+      "items": [
+        {
+          "subject": "Vanguard Heights — Creve Coeur, MO",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 2019,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 94
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "yearBuilt": "Creve Coeur, MO | 29,511 | 5,466 | 30,796 | — | 572 | 5,466 | 31,368 | 36,834 | 4,646 | 2019 | April-2022",
+            "occupancy": "1,583 | 94.0 | 94.9"
+          },
+          "notes": [
+            "propertyType from the table heading \"Our Multi-Family Properties\", which the rows sit under.",
+            "occupancy is the 2025 column of \"Average Physical Occupancy (%)\": an annual average, the most recent stated.",
+            "yearBuilt from Schedule III, whose rows are identified only by city; Creve Coeur is unique among the filing's properties. CONFLICT-ADJACENT: Item 1 gives \"Age 9\", which would imply about 2016, but Age is derived and is not a statement of yearBuilt.",
+            "squareFeet NOT STATED: the filing gives units (174), not square feet."
+          ]
+        },
+        {
+          "subject": "Avalon Apartments—Pensacola, FL",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 2008,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 94.2
+          },
+          "evidence": {
+            "propertyType": "Avalon Apartments",
+            "yearBuilt": "Pensacola, FL | — | 2,758 | 25,192 | — | 2,756 | 2,758 | 27,948 | 30,706 | 10,638 | 2008 | Dec-2014",
+            "occupancy": "1,250 | 94.2 | 94.8"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Pensacola unique)."
+          ]
+        },
+        {
+          "subject": "Civic Center I—Southaven, MS",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 2003,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 96.6
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "yearBuilt": "Southaven, MS | 44,785 | 3,646 | 45,535 | — | 2,415 | 3,646 | 47,950 | 51,596 | 6,861 | 2003 | July-2022",
+            "occupancy": "1,021 | 96.6 | 95.8"
+          },
+          "notes": [
+            "yearBuilt by a two-step join: Schedule III has two Southaven rows; the one with encumbrance 44,785 matches the Civic Center I mortgage (44,785) in the mortgage table. The join is identification, not arithmetic, so it is labelled; reviewers may reasonably disagree."
+          ]
+        },
+        {
+          "subject": "Gateway Oaks — Forney, TX",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 94.6
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,181 | 94.6 | 94.3"
+          },
+          "notes": [
+            "Unconsolidated JV (50%): no Schedule III row, so yearBuilt NOT STATED (Age 9 is derived)."
+          ]
+        },
+        {
+          "subject": "Stono Oaks-Johns Island, SC",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 85
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,597 | — | — | — | 85.0"
+          },
+          "notes": [
+            "Unconsolidated JV (17%), in lease-up until September 2025: no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "Mercer Crossing — Farmers Branch, TX",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 94.4
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,374 | 94.4 | 91.4"
+          },
+          "notes": [
+            "Unconsolidated JV (50%): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "The Pointe at Lenox Park— Atlanta, GA",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 93
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,275 | 93.0 | 94.7"
+          },
+          "notes": [
+            "Unconsolidated JV (74%): no Schedule III row, yearBuilt NOT STATED (Age 36 is derived)."
+          ]
+        },
+        {
+          "subject": "1322 North —Auburn, AL",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": 36500000,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 87.7
+          },
+          "evidence": {
+            "propertyType": "a 214 unit multi-family property located in Auburn, AL",
+            "purchasePrice": "The venture acquired the property for $36,500,000",
+            "occupancy": "1,262 | — | — | — | — | 87.7"
+          },
+          "notes": [
+            "purchasePrice STATED: \"The venture acquired the property for $36,500,000 (including a $24,419,000 mortgage)\". This is the price of the whole property paid by the venture, not BRT's 80% share; the mortgage is part of the price, not a separate figure.",
+            "Unconsolidated JV: no Schedule III row, yearBuilt NOT STATED (Age 23 is derived).",
+            "Auburn, AL also hosts Village at Lakeside: a location-only join would be ambiguous here regardless."
+          ]
+        },
+        {
+          "subject": "Landings of Carrier Parkway — Grand Prairie, TX",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 91.5
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,149 | 91.5 | 91.9"
+          },
+          "notes": [
+            "Unconsolidated JV (50%): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "Village at Lakeside — Auburn, AL",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 96.6
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "907 | 96.6 | 97.7"
+          },
+          "notes": [
+            "Unconsolidated JV: no Schedule III row, yearBuilt NOT STATED. Shares Auburn, AL with 1322 North."
+          ]
+        },
+        {
+          "subject": "Magnolia Pointe at Madison — Madison, AL",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 1992,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 94.1
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,036 | 94.1 | 93.2",
+            "yearBuilt": "Madison, AL | 14,236 | 2,054 | 22,018 | — | 1,903 | 2,054 | 23,921 | 25,975 | 3,195 | 1992 | Aug-2022"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Madison, AL unique). Age 34 is derived."
+          ]
+        },
+        {
+          "subject": "Kilburn Crossing — Fredericksburg, VA",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 2005,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 96.9
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,465 | 96.9 | 96.7",
+            "yearBuilt": "Fredericksburg, VA | 24,012 | 7,540 | 32,316 | — | 3,398 | 7,540 | 35,714 | 43,254 | 10,169 | 2005 | Jul-2018"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Fredericksburg unique)."
+          ]
+        },
+        {
+          "subject": "Oaks at Victory —Savannah, GA",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": 23000000,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 88.5
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,375 | — | — | — | — | 88.5",
+            "purchasePrice": "The venture acquired the property for $23,000,000"
+          },
+          "notes": [
+            "purchasePrice STATED for the whole property (including an assumed $15,680,000 mortgage).",
+            "Unconsolidated JV: yearBuilt NOT STATED (Age 57 is derived)."
+          ]
+        },
+        {
+          "subject": "Avondale Station—Decatur, GA",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "multifamily",
+            "squareFeet": null,
+            "yearBuilt": 1954,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": 92.3
+          },
+          "evidence": {
+            "propertyType": "Our Multi-Family Properties",
+            "occupancy": "1,196 | 92.3 | 89.3",
+            "yearBuilt": "Decatur, GA | — | 1,698 | 8,676 | — | 3,431 | 1,698 | 12,107 | 13,805 | 5,688 | 1954 | Nov-2012"
+          },
+          "notes": [
+            "yearBuilt from Schedule III (Decatur unique)."
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "0000034903-0000034903-26-000017",
+    "company": "FEDERAL REALTY INVESTMENT TRUST",
+    "cik": "0000034903",
+    "form": "10-K",
+    "accessionNumber": "0000034903-26-000017",
+    "reportDate": "2025-12-31",
+    "filingDate": "2026-02-12",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/34903/000003490326000017/frt-20251231.htm",
+    "localPath": "0000034903-0000034903-26-000017-frt-20251231.htm",
+    "fetchedAt": "2026-11-12T03:03:58.096Z",
+    "groundTruth": null,
+    "subjects": {
+      "populationSource": "Item 2, Retail and Residential Properties table: the \"Property, City, State, Zip Code\" cell of every row; Total rows excluded; trailing footnote markers stripped",
+      "drawRule": "sampleSubjects(entry.id, population, n) in src/extraction/sample.js; draw positions 0-5 = dev, 6-8 = holdout (v1), 9-13 = holdout2 (v2)",
+      "population": [
+        "Camelback Colonnade Phoenix, AZ 85016",
+        "Chandler Festival Chandler, AZ 85224",
+        "Chandler Gateway Chandler, AZ 85226",
+        "The Shops at Hilton Village Scottsdale, AZ 85250",
+        "Azalea South Gate, CA 90280",
+        "Bell Gardens Bell Gardens, CA 90201",
+        "Colorado Blvd Pasadena, CA 91103",
+        "Crow Canyon Commons San Ramon, CA 94583",
+        "Del Monte Shopping Center Monterey, CA 93940",
+        "East Bay Bridge Emeryville & Oakland, CA 94608",
+        "Escondido Promenade Escondido, CA 92029",
+        "Fourth Street Berkeley, CA 94710",
+        "Freedom Plaza Los Angeles, CA 90002",
+        "Grossmont Center La Mesa, CA 91942",
+        "Hastings Ranch Plaza Pasadena, CA 91107",
+        "La Alameda Walnut Park, CA 90255",
+        "Old Town Center Los Gatos, CA 95030",
+        "Olivo at Mission Hills Mission Hills, CA 91345",
+        "Pinole Vista Crossing Pinole, CA 94564",
+        "Plaza Del Sol South El Monte, CA 91733",
+        "Plaza El Segundo / The Point El Segundo, CA 90245",
+        "San Antonio Center Mountain View, CA 94040",
+        "Santana Row San Jose, CA 95128",
+        "Santana Row Residential San Jose, CA 95128",
+        "Sylmar Towne Center Sylmar, CA 91342",
+        "Westgate Center San Jose, CA 95129",
+        "Darien Commons Darien, CT 06820",
+        "Darien Commons Residential Darien, CT 06820",
+        "Greenwich Avenue Greenwich Avenue, CT 06830",
+        "Friendship Center Washington, DC 20015",
+        "CocoWalk Coconut Grove, FL 33133",
+        "Del Mar Village Boca Raton, FL 33433",
+        "Shops at Pembroke Gardens Pembroke Pines, FL 33027",
+        "Tower Shops Davie, FL 33324",
+        "Crossroads Highland Park, IL 60035",
+        "Finley Square Downers Grove, IL 60515",
+        "Garden Market Western Springs, IL 60558",
+        "Riverpoint Center Chicago, IL 60614",
+        "Town Center Crossing/Town Center Plaza Leawood, KS 66209",
+        "Annapolis Town Center Annapolis, MD 21401",
+        "Bethesda Row Bethesda, MD 20814",
+        "Bethesda Row Residential Bethesda, MD 20814",
+        "Congressional Plaza Rockville, MD 20852",
+        "Congressional Plaza Residential Rockville, MD 20852",
+        "Courthouse Center Rockville, MD 20852",
+        "Federal Plaza Rockville, MD 20852",
+        "Gaithersburg Square Gaithersburg, MD 20878",
+        "Governor Plaza Glen Burnie, MD 21961",
+        "Laurel Laurel, MD 20707",
+        "Montrose Crossing Rockville, MD 20852",
+        "Perring Plaza Baltimore, MD 21134",
+        "Pike & Rose North Bethesda, MD 20852",
+        "Pike & Rose Residential North Bethesda, MD 20852",
+        "Plaza Del Mercado Silver Spring, MD 20906",
+        "Quince Orchard Gaithersburg, MD 20877",
+        "THE AVENUE at White Marsh Baltimore, MD 21236",
+        "The Shoppes at Nottingham Square Baltimore, MD 21236",
+        "White Marsh Other Baltimore, MD 21236",
+        "White Marsh Plaza Baltimore, MD 21236",
+        "Wildwood Bethesda, MD 20814",
+        "Assembly Row/ Assembly Square Marketplace Somerville, MA 02145",
+        "Assembly Row Residential Somerville, MA 02145",
+        "Campus Plaza Bridgewater, MA 02324",
+        "Chelsea Commons Chelsea, MA 02150",
+        "Dedham Plaza Dedham, MA 02026",
+        "Linden Square Wellesley, MA 02481",
+        "North Dartmouth North Dartmouth, MA 02747",
+        "Queen Anne Plaza Norwell, MA 02061",
+        "Gratiot Plaza Roseville, MI 48066",
+        "Village Pointe Omaha, NE 68118",
+        "Brick Plaza Brick Township, NJ 08723",
+        "Brook 35 Sea Grit, NJ 08750",
+        "Ellisburg Cherry Hill, NJ 08034",
+        "Hoboken Hoboken, NJ 07030",
+        "Mercer on One Lawrenceville, NJ 08648",
+        "The Grove at Shrewsbury Shrewsbury, NJ 07702",
+        "Troy Hills Parsippany-Troy, NJ 07054",
+        "Fresh Meadows Queens, NY 11365",
+        "Georgetowne Shopping Center Brooklyn, NY 11234",
+        "Greenlawn Plaza Greenlawn, NY 11743",
+        "Hauppauge Hauppauge, NY 11788",
+        "Huntington Huntington, NY 11746",
+        "Huntington Square East Northport, NY 11731",
+        "Melville Mall Huntington, NY 11747",
+        "Andorra Philadelphia, PA 19128",
+        "Bala Cynwyd on City Avenue Bala Cynwyd, PA 19004",
+        "Bala Cynwyd on City Avenue Residential Bala Cynwyd, PA 19004",
+        "Flourtown Flourtown, PA 19031",
+        "Lancaster Lancaster, PA 17601",
+        "Langhorne Square Levittown, PA 19056",
+        "Lawrence Park Broomall, PA 19008",
+        "Northeast Philadelphia, PA 19114",
+        "Willow Grove Willow Grove, PA 19090",
+        "Wynnewood Wynnewood, PA 19096",
+        "29th Place Charlottesville, VA 22091",
+        "Barcroft Plaza Falls Church, VA 22041",
+        "Barracks Road Charlottesville, VA 22905",
+        "Birch & Broad Falls Church, VA 22046",
+        "Chesterbrook McLean, VA 22101",
+        "Fairfax Junction Fairfax, VA 22030",
+        "Graham Park Plaza Falls Church, VA 22042",
+        "Idylwood Plaza Falls Church, VA 22030",
+        "Kingstowne Towne Center Kingstowne, VA 22315",
+        "Mount Vernon/South Valley/ 7770 Richmond Hwy Alexandria, VA 22306",
+        "Old Keene Mill Springfield, VA 22152",
+        "Pike 7 Plaza Vienna, VA 22180",
+        "Providence Place (formerly Pan Am) Fairfax, VA 22031",
+        "Tower Shopping Center Springfield, VA 22150",
+        "Twinbrooke Centre Fairfax, VA 22032",
+        "Tyson's Station Falls Church, VA 22043",
+        "Village at Shirlington Arlington, VA 22206",
+        "Virginia Gateway Gainesville, VA 20015",
+        "Westpost Arlington, VA 22202"
+      ],
+      "items": [
+        {
+          "subject": "Westpost Arlington, VA 22202",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 298000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Westpost Arlington, VA 22202 | 2001-2002 | 1998/2010 | 298,000"
+          },
+          "notes": [
+            "propertyType NOT STATED: the table is headed \"Retail and Residential Properties\" and assigns no type per row.",
+            "yearBuilt NOT STATED as a single year: Item 2 says \"2001-2002\", Schedule III says \"1999 - 2002\"; both ranges, and they disagree.",
+            "occupancy NOT STATED: the filing reports Percentage Leased, defined in footnote (3) as space \"occupied or subject to a lease\". That is not occupancy.",
+            "squareFeet is GLA of the commercial portion, per footnote (1).",
+            "No street address stated."
+          ]
+        },
+        {
+          "subject": "Fourth Street Berkeley, CA 94710",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 71000,
+            "yearBuilt": 1948,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Fourth Street Berkeley, CA 94710(4) | 1948, 1975 | 2017 | 71,000",
+            "yearBuilt": "Fourth Street Berkeley, CA 94710(4) | 1948, 1975"
+          },
+          "notes": [
+            "\"Fourth Street\" is the property's name, not a street address.",
+            "Year Completed \"1948, 1975\": first listed year is the construction year. Schedule III agrees (\"1948,1975\").",
+            "occupancy NOT STATED (Percentage Leased 47%, see Westpost)."
+          ]
+        },
+        {
+          "subject": "Tower Shopping Center Springfield, VA 22150",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "retail",
+            "squareFeet": 109000,
+            "yearBuilt": 1960,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": "Tower Shopping Center",
+            "squareFeet": "Tower Shopping Center Springfield, VA 22150 | 1960 | 1998 | 109,000",
+            "yearBuilt": "Tower Shopping Center Springfield, VA 22150 | 1960"
+          },
+          "notes": [
+            "propertyType from the name: \"Shopping Center\" is a type term under the rules.",
+            "CONFLICT: Item 2 Year Completed says 1960; Schedule III Date of Construction says \"1953-1960\". Labelled from the primary table (Item 2).",
+            "occupancy NOT STATED (Percentage Leased 99%)."
+          ]
+        },
+        {
+          "subject": "THE AVENUE at White Marsh Baltimore, MD 21236",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 315000,
+            "yearBuilt": 1997,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "THE AVENUE at White Marsh Baltimore, MD 21236(8) | 1997 | 2007 | 315,000",
+            "yearBuilt": "THE AVENUE at White Marsh Baltimore, MD 21236(8) | 1997"
+          },
+          "notes": [
+            "Do not confuse with \"White Marsh Plaza\" and \"White Marsh Other\" (separate rows, separate properties).",
+            "occupancy NOT STATED (Percentage Leased 100%)."
+          ]
+        },
+        {
+          "subject": "29th Place Charlottesville, VA 22091",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 168000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "29th Place Charlottesville, VA 22091 | 1975-2001 | 2007 | 168,000"
+          },
+          "notes": [
+            "yearBuilt NOT STATED as a single year: \"1975-2001\" (both tables).",
+            "occupancy NOT STATED (Percentage Leased 99%)."
+          ]
+        },
+        {
+          "subject": "Lawrence Park Broomall, PA 19008",
+          "set": "dev",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 357000,
+            "yearBuilt": 1972,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Lawrence Park Broomall, PA 19008 | 1972 | 1980/2017 | 357,000",
+            "yearBuilt": "Lawrence Park Broomall, PA 19008 | 1972"
+          },
+          "notes": [
+            "occupancy NOT STATED (Percentage Leased 100%)."
+          ]
+        },
+        {
+          "subject": "San Antonio Center Mountain View, CA 94040",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 213000,
+            "yearBuilt": 1958,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "San Antonio Center Mountain View, CA 94040(7)(8) | 1958, 1964-1965, 1974-1975, 1995-1997 | 2015/2019 | 213,000",
+            "yearBuilt": "San Antonio Center Mountain View, CA 94040(7)(8) | 1958, 1964-1965"
+          },
+          "notes": [
+            "Year Completed starts with the single year 1958; Schedule III agrees.",
+            "occupancy NOT STATED (Percentage Leased 100%). propertyType NOT STATED per row."
+          ]
+        },
+        {
+          "subject": "Hoboken Hoboken, NJ 07030",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 171000,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Hoboken Hoboken, NJ 07030(4)(6)(12) | 1887-2006 | 2019/2020/2022 | 171,000"
+          },
+          "notes": [
+            "yearBuilt NOT STATED: \"1887-2006\" (40 buildings, footnote 12).",
+            "address NOT STATED: footnote 12 says \"along Washington Street and 14th Street\", which names streets, not an address.",
+            "occupancy NOT STATED (Percentage Leased 97%). propertyType NOT STATED per row."
+          ]
+        },
+        {
+          "subject": "Santana Row San Jose, CA 95128",
+          "set": "holdout",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 1521000,
+            "yearBuilt": 2002,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Santana Row San Jose, CA 95128(7)(10) | 2002, 2009, 2016, 2020 | 1997 | 1,521,000",
+            "yearBuilt": "Santana Row San Jose, CA 95128(7)(10) | 2002, 2009"
+          },
+          "notes": [
+            "CONFLICT: Item 2 Year Completed starts 2002; Schedule III starts with the range \"1999-2006\". Labelled from the primary table: 2002.",
+            "\"Santana Row Residential\" (554 units) is a separate row and a separate subject.",
+            "The $73.9 million figure is the sale of one residential building, not a purchase price.",
+            "occupancy NOT STATED (Percentage Leased 98%). propertyType NOT STATED per row."
+          ]
+        },
+        {
+          "subject": "Plaza El Segundo / The Point El Segundo, CA 90245",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 503000,
+            "yearBuilt": 2006,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Plaza El Segundo / The Point El Segundo, CA 90245 (6) | 2006-2007, 2016 | 2011/2013 | 503,000",
+            "yearBuilt": "PLAZA EL SEGUNDO/THE POINT (California) | 124,891 | 62,127 | 153,556 | 95,586 | 64,463 | 246,806 | 311,269 | 100,720 | 2006/2007/ 2016"
+          },
+          "notes": [
+            "DISPUTABLE: Item 2 starts with the range \"2006-2007\" (no single year), so the rule falls through to Schedule III, which writes the same span as \"2006/2007/ 2016\"; its first year is 2006. Mechanically correct; a reader could fairly call both the same range.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy.",
+            "propertyType NOT STATED: no type column, the heading names two categories, and the name carries no type term under the mapping.",
+            "The $125,000 thousand is a mortgage."
+          ]
+        },
+        {
+          "subject": "Grossmont Center La Mesa, CA 91942",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 866000,
+            "yearBuilt": 1961,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Grossmont Center La Mesa, CA 91942(4) | 1961, 1963, 1982-1983, 2002 | 2021 | 866,000",
+            "yearBuilt": "Grossmont Center La Mesa, CA 91942(4) | 1961, 1963"
+          },
+          "notes": [
+            "\"Center\" alone is not a type term; \"Shopping Center\" is.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        },
+        {
+          "subject": "Tower Shops Davie, FL 33324",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 431000,
+            "yearBuilt": 1989,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Tower Shops Davie, FL 33324 | 1989, 2017 | 2011/2014 | 431,000",
+            "yearBuilt": "Tower Shops Davie, FL 33324 | 1989, 2017"
+          },
+          "notes": [
+            "\"Shops\" is not a type term under the written mapping, so propertyType is NOT STATED. An extractor answering retail would score as a hallucination; that is the mapping's strictness, recorded here rather than relaxed after the fact.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        },
+        {
+          "subject": "Troy Hills Parsippany-Troy, NJ 07054",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 211000,
+            "yearBuilt": 1966,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Troy Hills Parsippany-Troy, NJ 07054 | 1966 | 1980 | 211,000",
+            "yearBuilt": "Troy Hills Parsippany-Troy, NJ 07054 | 1966"
+          },
+          "notes": [
+            "propertyType NOT STATED: no type column, the heading names two categories, and the name carries no type term under the mapping.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        },
+        {
+          "subject": "Pike & Rose North Bethesda, MD 20852",
+          "set": "holdout2",
+          "groundTruth": {
+            "address": null,
+            "propertyType": null,
+            "squareFeet": 955000,
+            "yearBuilt": 1963,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "squareFeet": "Pike & Rose North Bethesda, MD 20852(10) | 1963, 2014, 2018, 2020, 2025 | 1982/2007/ 2012 | 955,000",
+            "yearBuilt": "Pike & Rose North Bethesda, MD 20852(10) | 1963, 2014"
+          },
+          "notes": [
+            "\"Phase IV at Pike & Rose is a 272,000 square foot office building ... 249,000 square feet is occupied\" describes one phase, not the property: neither squareFeet nor occupancy for the subject.",
+            "The $125.0 million is the sale of one residential building, not a purchase price. \"Pike & Rose Residential\" is a separate row.",
+            "propertyType NOT STATED: no type column, the heading names two categories, and the name carries no type term under the mapping.",
+            "occupancy NOT STATED: Percentage Leased (footnote 3: \"occupied or subject to a lease\") is not occupancy."
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "0001622194-0001193125-26-064115",
+    "company": "Easterly Government Properties, Inc.",
+    "cik": "0001622194",
+    "form": "10-K",
+    "accessionNumber": "0001193125-26-064115",
+    "reportDate": "2025-12-31",
+    "filingDate": "2026-02-23",
+    "sourceUrl": "https://www.sec.gov/Archives/edgar/data/1622194/000119312526064115/dea-20251231.htm",
+    "localPath": "0001622194-0001193125-26-064115-dea-20251231.htm",
+    "fetchedAt": "2026-11-12T07:23:31.452Z",
+    "groundTruth": null,
+    "subjects": {
+      "populationSource": "Item 2 property table (Wholly Owned U.S. Government, State and Local, Privately Leased, and Unconsolidated JV sections): the Property Name cell of every row with a location; Subtotal / Total rows excluded; trailing footnote markers stripped. 103 rows = 93 wholly owned + 10 JV, matching the filing's own count.",
+      "drawRule": "Fifth-filing holdout, pre-registered in b211833: sampleSubjects(entry.id, population, 12), labelled after v3 was frozen at d37c626",
+      "population": [
+        "VA - Loma Linda",
+        "USCIS - Kansas City",
+        "JSC - Suffolk",
+        "Various GSA - Chicago",
+        "IRS - Fresno",
+        "FBI - Salt Lake",
+        "Various GSA - Portland",
+        "Various GSA - Buffalo",
+        "VA - San Jose",
+        "EPA - Lenexa",
+        "FBI - Tampa",
+        "PTO - Arlington",
+        "FBI - San Antonio",
+        "FDA - Alameda",
+        "FBI / DEA - El Paso",
+        "USCIS - Lincoln",
+        "FEMA - Tracy",
+        "TREAS - Parkersburg",
+        "FBI - Mobile",
+        "FDA - Lenexa",
+        "ICE - Dallas",
+        "FBI - Pittsburgh",
+        "VA - South Bend",
+        "FBI - New Orleans",
+        "FBI - Omaha",
+        "VA - Mobile",
+        "FDA - Atlanta",
+        "USFS II - Albuquerque",
+        "FBI - Albany",
+        "FBI - Birmingham",
+        "EPA - Kansas City",
+        "DOT - Lakewood",
+        "VA - Chico",
+        "ICE - Charleston",
+        "FBI - Richmond",
+        "FBI - Knoxville",
+        "DEA - Sterling",
+        "FBI - Little Rock",
+        "JUD - Del Rio",
+        "DEA - Vista",
+        "USCIS - Tustin",
+        "VA - Orange",
+        "VA - Indianapolis",
+        "ICE - Albuquerque",
+        "SSA - Charleston",
+        "JUD - El Centro",
+        "DEA - Dallas Lab",
+        "DEA - Dallas",
+        "DEA - Pleasanton",
+        "DEA - Upper Marlboro",
+        "DHS - Burlington",
+        "NARA - Broomfield",
+        "TREAS - Birmingham",
+        "DHS - Atlanta",
+        "USAO - Louisville",
+        "JUD - Charleston",
+        "JUD - Jackson",
+        "IRS - Ogden",
+        "Various GSA - Cleveland",
+        "CBP - Savannah",
+        "NWS - Kansas City",
+        "DEA - Santa Ana",
+        "ICE - Orlando",
+        "GSA - Clarksburg",
+        "DEA - North Highlands",
+        "JUD - Aberdeen",
+        "DEA - Riverside",
+        "NPS - Omaha",
+        "VA - Golden",
+        "JUD - Newport News",
+        "USCG - Martinsburg",
+        "VA - Charleston",
+        "USAO - Springfield",
+        "JUD - Council Bluffs",
+        "DEA - Birmingham",
+        "DEA - Albany",
+        "HSI - Orlando",
+        "SSA - Dallas",
+        "JUD - South Bend",
+        "ICE - Louisville",
+        "DEA - San Diego",
+        "DEA - Bakersfield",
+        "SSA - San Diego",
+        "DC - Capitol Plaza",
+        "Wake County III - Cary",
+        "CA - Anaheim",
+        "Wake County II - Cary",
+        "Wake County I - Cary",
+        "NM - Albuquerque",
+        "York Space Systems - Greenwood Village",
+        "Northrop Grumman - Dayton",
+        "Northrop Grumman - Aurora",
+        "501 East Hunter Street - Lummus Corporation",
+        "VA - Phoenix",
+        "VA - San Antonio",
+        "VA - Jacksonville",
+        "VA - Chattanooga",
+        "VA - Lubbock",
+        "VA - Marietta",
+        "VA - Birmingham",
+        "VA - Corpus Christi",
+        "VA - Columbus",
+        "VA - Lenexa"
+      ],
+      "items": [
+        {
+          "subject": "FEMA - Tracy",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": null,
+            "yearBuilt": 2018,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "FEMA - Tracy | Tracy, CA | W",
+              "W=Warehouse"
+            ],
+            "yearBuilt": "Tracy, CA | W | — | 2,678 | 548 | 29,756 | 2,678 | 30,304 | 32,982 | 5,491 | 2018"
+          },
+          "alternateTruth": {
+            "squareFeet": 210373
+          },
+          "alternateEvidence": {
+            "squareFeet": "W | 2038 | 210,373"
+          },
+          "notes": [
+            "Type code W in the row, defined by footnote (1) as Warehouse.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: Schedule III \"Original Construction Date(s)\" for the unique Tracy, CA / W row."
+          ]
+        },
+        {
+          "subject": "DEA - San Diego",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "industrial",
+            "squareFeet": null,
+            "yearBuilt": 1999,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "DEA - San Diego | San Diego, CA | W",
+              "W=Warehouse"
+            ],
+            "yearBuilt": "San Diego, CA | W | — | 3,060 | 510 | 914 | 3,060 | 1,424 | 4,484 | 765 | 1999"
+          },
+          "alternateTruth": {
+            "squareFeet": 16100
+          },
+          "alternateEvidence": {
+            "squareFeet": "W | 2032 | 16,100"
+          },
+          "notes": [
+            "Type code W in the row, defined by footnote (1) as Warehouse.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: two San Diego properties, but only one is W in both tables (SSA - San Diego is SF), so city + code is unique."
+          ]
+        },
+        {
+          "subject": "DHS - Burlington",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 2000,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "DHS - Burlington | Williston, VT | SF",
+              "SF=Specialized Facility"
+            ],
+            "yearBuilt": "Burlington, VT | O | — | 1,278 | 14,611 | 5 | 1,278 | 14,616 | 15,894 | 463 | 2000 | 5/7/2025"
+          },
+          "alternateTruth": {
+            "squareFeet": 74549
+          },
+          "alternateEvidence": {
+            "squareFeet": "SF | 2031 | 74,549"
+          },
+          "notes": [
+            "Type code SF in the row, defined by footnote (1) as Specialized Facility.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "CONFLICT inside the filing: Item 2 says Williston, VT, type SF; the only matching Schedule III row says Burlington, VT, type O. propertyType from the primary table: SF, other.",
+            "DISPUTABLE yearBuilt 2000: joined by a second hop, as Civic Center I was. The Schedule III row's Date Acquired 5/7/2025 matches \"On May 7, 2025, we acquired a 74,549 leased square foot Department of Homeland Security (“DHS”) facility near Burlington, Vermont\", whose 74,549 matches this row. Location and type both disagree, so a reader could fairly call it not stated.",
+            "purchasePrice NOT STATED: the $169.9 million is the aggregate for three properties."
+          ]
+        },
+        {
+          "subject": "TREAS - Birmingham",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "office",
+            "squareFeet": null,
+            "yearBuilt": 2014,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "TREAS - Birmingham | Birmingham, AL | O",
+              "O=Office"
+            ],
+            "yearBuilt": "Birmingham, AL | O | — | 1,410 | 17,276 | 120 | 1,410 | 17,396 | 18,806 | 4,077 | 2014"
+          },
+          "alternateTruth": {
+            "squareFeet": 83676
+          },
+          "alternateEvidence": {
+            "squareFeet": "O | 2029 | 83,676"
+          },
+          "notes": [
+            "Type code O in the row, defined by footnote (1) as Office.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: three Birmingham properties, only one O in both tables."
+          ]
+        },
+        {
+          "subject": "CA - Anaheim",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "office",
+            "squareFeet": null,
+            "yearBuilt": 1991,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "CA - Anaheim | Anaheim, CA | O",
+              "O=Office"
+            ],
+            "yearBuilt": "Anaheim, CA | O | — | 7,081 | 16,346 | 570 | 7,081 | 16,916 | 23,997 | 1,170 | 1991 / 2020"
+          },
+          "alternateTruth": {
+            "squareFeet": 95273
+          },
+          "alternateEvidence": {
+            "squareFeet": "O | 2033 / 2034 | 95,273"
+          },
+          "notes": [
+            "Type code O in the row, defined by footnote (1) as Office.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "\"1991 / 2020\": first listed is original construction (the column is \"Original Construction Date(s)\")."
+          ]
+        },
+        {
+          "subject": "VA - Columbus",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "VA - Columbus (11) | Columbus, GA | OC",
+              "OC=Outpatient Clinic"
+            ]
+          },
+          "alternateTruth": {
+            "squareFeet": 67793
+          },
+          "alternateEvidence": {
+            "squareFeet": "OC | 2042 | 67,793"
+          },
+          "notes": [
+            "Type code OC in the row, defined by footnote (1) as Outpatient Clinic.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "JV property (footnote 11): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "VA - Loma Linda",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 2016,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "VA - Loma Linda | Loma Linda, CA | OC",
+              "OC=Outpatient Clinic"
+            ],
+            "yearBuilt": "Loma Linda, CA | OC | 127,145 | 12,476 | 177,357 | 508 | 12,476 | 177,865 | 190,341 | 38,260 | 2016"
+          },
+          "alternateTruth": {
+            "squareFeet": 327614
+          },
+          "alternateEvidence": {
+            "squareFeet": "OC | 2036 | 327,614"
+          },
+          "notes": [
+            "Type code OC in the row, defined by footnote (1) as Outpatient Clinic.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "The 127,500 figure elsewhere is a mortgage."
+          ]
+        },
+        {
+          "subject": "DOT - Lakewood",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "office",
+            "squareFeet": null,
+            "yearBuilt": 2004,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "DOT - Lakewood | Lakewood, CO | O",
+              "O=Office"
+            ],
+            "yearBuilt": "Lakewood, CO | O | — | 1,521 | 32,865 | 3,241 | 1,521 | 36,106 | 37,627 | 11,524 | 2004"
+          },
+          "alternateTruth": {
+            "squareFeet": 116046
+          },
+          "alternateEvidence": {
+            "squareFeet": "O | 2039 | 116,046"
+          },
+          "notes": [
+            "Type code O in the row, defined by footnote (1) as Office.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city."
+          ]
+        },
+        {
+          "subject": "VA - Phoenix",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "VA - Phoenix (11) | Phoenix, AZ | OC",
+              "OC=Outpatient Clinic"
+            ]
+          },
+          "alternateTruth": {
+            "squareFeet": 257294
+          },
+          "alternateEvidence": {
+            "squareFeet": "OC | 2042 | 257,294"
+          },
+          "notes": [
+            "Type code OC in the row, defined by footnote (1) as Outpatient Clinic.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "JV property (footnote 11): no Schedule III row, yearBuilt NOT STATED."
+          ]
+        },
+        {
+          "subject": "JUD - Jackson",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 1998,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "JUD - Jackson | Jackson, TN | C",
+              "C=Courthouse"
+            ],
+            "yearBuilt": "Jackson, TN | C | — | 332 | 24,324 | 3,285 | 332 | 27,609 | 27,941 | 3,277 | 1998"
+          },
+          "alternateTruth": {
+            "squareFeet": 75043
+          },
+          "alternateEvidence": {
+            "squareFeet": "C | 2043 | 75,043"
+          },
+          "notes": [
+            "Type code C in the row, defined by footnote (1) as Courthouse.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city."
+          ]
+        },
+        {
+          "subject": "FBI - Albany",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": null,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "FBI - Albany | Albany, NY | SF",
+              "SF=Specialized Facility"
+            ]
+          },
+          "alternateTruth": {
+            "squareFeet": 69476
+          },
+          "alternateEvidence": {
+            "squareFeet": "SF | 2036 | 69,476"
+          },
+          "notes": [
+            "Type code SF in the row, defined by footnote (1) as Specialized Facility.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt NOT STATED: two Albany properties, both SF, and two Albany SF Schedule III rows (2004, 1998). Which is which is not stated."
+          ]
+        },
+        {
+          "subject": "ICE - Charleston",
+          "set": "filing5",
+          "groundTruth": {
+            "address": null,
+            "propertyType": "other",
+            "squareFeet": null,
+            "yearBuilt": 1994,
+            "purchasePrice": null,
+            "netOperatingIncome": null,
+            "capRate": null,
+            "occupancy": null
+          },
+          "evidence": {
+            "propertyType": [
+              "ICE - Charleston | North Charleston, SC | SF",
+              "SF=Specialized Facility"
+            ],
+            "yearBuilt": "North Charleston, SC | SF | 8,946 | 963 | 34,987 | 2,010 | 963 | 36,997 | 37,960 | 11,230 | 1994 / 2012"
+          },
+          "alternateTruth": {
+            "squareFeet": 65124
+          },
+          "alternateEvidence": {
+            "squareFeet": "SF | 2027 | 65,124"
+          },
+          "notes": [
+            "Type code SF in the row, defined by footnote (1) as Specialized Facility.",
+            "squareFeet NOT STATED (strict rule): the only per-property size is \"Leased Square Feet\", a lease measure, not the building's size, by the same logic that keeps \"% leased\" from being occupancy. alternateTruth.squareFeet records the leased figure for the sensitivity score.",
+            "occupancy NOT STATED: the filing gives no per-property occupancy. address NOT STATED: names are agency + city.",
+            "yearBuilt: North Charleston has a W and an SF property; city + code unique. \"1994 / 2012\": first listed."
+          ]
+        }
+      ]
+    }
+  }
+]

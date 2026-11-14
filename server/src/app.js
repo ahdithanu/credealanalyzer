@@ -4,6 +4,7 @@ const express = require('express');
 const config = require('./config');
 const { authRoutes } = require('./routes/auth');
 const { dealRoutes } = require('./routes/deals');
+const { documentRoutes } = require('./routes/documents');
 const { auditRoutes } = require('./routes/audit');
 const { exportRoutes } = require('./routes/export');
 const { scimRoutes } = require('./routes/scim');
@@ -38,7 +39,7 @@ function createApp() {
     if (origin && origin === config.appOrigin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Allow-Headers', 'content-type, x-csrf-token');
+      res.setHeader('Access-Control-Allow-Headers', 'content-type, x-csrf-token, x-filename');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader('Vary', 'Origin');
     }
@@ -115,6 +116,9 @@ function createApp() {
   // unauthenticated surface that touches the database, and every call to
   // /auth/start writes a row.
   app.use('/auth', rateLimit({ name: 'auth', limit: config.rateLimits.auth, windowMs: 60_000 }), authRoutes());
+  // Ahead of /api/deals so the deal router's /:id never sees these paths. The
+  // upload route carries its own body parser and limit; see routes/documents.js.
+  app.use('/api/deals/:dealId/documents', requireSession(), documentRoutes());
   app.use('/api/deals', requireSession(), dealRoutes());
   app.use('/api/audit', requireSession(), auditRoutes());
   // Limited far harder than the rest, and limited BEFORE the session lookup so

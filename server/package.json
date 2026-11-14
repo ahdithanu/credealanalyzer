@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "migrate": "node src/db/migrate.js",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "node --test --test-concurrency=1 --test-timeout=60000 test/*.test.js",
     "seed": "node src/admin/seedDemo.js",
     "tenants": "node src/admin/tenants.js",
     "sso:check": "node src/admin/ssoCheck.js",
@@ -19,10 +19,11 @@
   },
   "dependencies": {
     "express": "^4.21.2",
+    "pdfjs-dist": "6.4.299",
     "pg": "^8.13.1"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "optionalDependencies": {
     "@aws-sdk/rds-signer": "^3.700.0"

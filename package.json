@@ -9,6 +9,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.0.1",
     "vite": "^8.3.0",
@@ -21,6 +22,9 @@
     "test": "vitest run",
     "buybox": "node scripts/buybox.mjs",
     "enrich": "node scripts/enrich.mjs",
-    "markets": "node scripts/markets.mjs"
+    "markets": "node scripts/markets.mjs",
+    "edgar": "node scripts/edgar.mjs",
+    "eval": "node scripts/eval.mjs",
+    "extract-model": "NODE_USE_ENV_PROXY=1 node scripts/extract-model.mjs"
   }
 }

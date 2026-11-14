@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { List, Calculator, Table, Split, TrendingUp, Map, FileText, Plus, Download, AlertTriangle } from 'lucide-react';
+import { List, Calculator, Table, Split, TrendingUp, Map, FileText, FileSearch, Plus, Download, AlertTriangle } from 'lucide-react';
 
 import './ui/theme.css';
 import { calculateMetrics } from './lib/finance';
@@ -21,6 +21,7 @@ import Waterfall from './screens/Waterfall';
 import Sensitivity from './screens/Sensitivity';
 import MarketIntelligence from './screens/MarketIntelligence';
 import ICMemo from './screens/ICMemo';
+import DocumentReview from './screens/DocumentReview';
 
 const VIEWS = [
   { key: 'pipeline', label: 'Pipeline',     Icon: List },
@@ -78,7 +79,14 @@ export function blankDeal() {
   };
 }
 
-export default function App() {
+/**
+ * `documentReview`, when given, is { document, predictions, otherSources?,
+ * onApply? } for one real uploaded document (contracts C1 and C2). It is the
+ * only way the Document review screen is reached: there is no extraction
+ * endpoint yet, so index.jsx passes nothing and the rail shows no such button.
+ * No sample document is ever substituted. See docs/document-review.md.
+ */
+export default function App({ documentReview = null } = {}) {
   const [deals, setDeals] = useState([]);
   const [hydrated, setHydrated] = useState(false);
   // Load and write failures are separate facts. Folding them into one `error`
@@ -221,7 +229,8 @@ export default function App() {
   );
 
   const notices = statusNotices({ ...storageState, rejectedWaterfalls, unreadableDeals });
-  const needsDeal = view !== 'pipeline' && !selected;
+  const showDocuments = view === 'documents' && Boolean(documentReview);
+  const needsDeal = view !== 'pipeline' && !showDocuments && !selected;
 
   // ── The gate ─────────────────────────────────────────────────────────────
   //
@@ -253,13 +262,22 @@ export default function App() {
             <Icon size={16} />
           </button>
         ))}
+        {documentReview && (
+          <button
+            className={`rail-btn ${view === 'documents' ? 'on' : ''}`}
+            title="Document review"
+            onClick={() => setView('documents')}
+          >
+            <FileSearch size={16} />
+          </button>
+        )}
         <span className="rail-sp" />
         <button className="rail-btn" title="New deal" onClick={newDeal}><Plus size={16} /></button>
       </nav>
 
       <div className="main">
         <header className="topbar">
-          <h1>{view === 'pipeline' ? 'Pipeline' : selected?.name ?? 'Deal Model'}</h1>
+          <h1>{view === 'pipeline' ? 'Pipeline' : showDocuments ? 'Document review' : selected?.name ?? 'Deal Model'}</h1>
           {view !== 'pipeline' && selected && (
             <span className="sub">
               {selected.location} · {propertyTypes[selected.propertyType]?.name} · {selected.program}
@@ -316,7 +334,9 @@ export default function App() {
         ))}
 
         <main className={`content${view === "memo" ? " flush" : ""}`}>
-          {!deals.length ? (
+          {showDocuments ? (
+            <DocumentReview {...documentReview} />
+          ) : !deals.length ? (
             <div className="empty">
               No deals yet. Create one to begin underwriting.
             </div>

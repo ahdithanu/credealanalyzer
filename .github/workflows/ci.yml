@@ -73,12 +73,23 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: cre_owner
+          # `postgres`, NOT cre_owner, and this is why the server suite never
+          # ran here. test/helpers.js creates cre_owner as an ORDINARY role and
+          # demotes any existing one, because FORCE ROW LEVEL SECURITY does not
+          # bind to a superuser. A role cannot be demoted out from under the
+          # session using it, so naming the service's superuser cre_owner made
+          # that demotion fail — and the fixture then hung for six hours.
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_only
           POSTGRES_DB: postgres
+          # The roles the fixture and the migrations create carry no passwords,
+          # and CI reaches Postgres over TCP, where the official image
+          # authenticates. Trust is right for a container that exists for one
+          # job and is reachable only from it.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U cre_owner"
+          --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
@@ -99,7 +110,159 @@ jobs:
           PGHOST_DIR: localhost
           PGPORT: 5432
           PGPASSWORD: ci_only
-          TEST_PG_USER: cre_owner
+          # Must match POSTGRES_USER above, and must not be cre_owner.
+          TEST_PG_USER: postgres
+
+  extraction-changes:
+    # Decides whether the extraction eval runs. GitHub has no per-job path
+    # filter, so this job is the filter: the eval runs on the weekly schedule
+    # and when a commit touches what the eval's numbers depend on, not on every
+    # push. When the diff cannot be computed (a new branch, a force push) it
+    # says run, because a skipped eval reads as a passing one.
+    name: Extraction eval needed?
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          paths='^(src/extraction/|scripts/eval\.mjs$|scripts/mutation-check\.py$|corpus/edgar/manifest\.json$|\.github/workflows/ci\.yml$)'
+          decide() { echo "run=$1" >> "$GITHUB_OUTPUT"; echo "extraction eval: run=$1 ($2)"; }
+          case "$EVENT" in
+            schedule) decide true schedule; exit 0 ;;
+            pull_request) base="$PR_BASE"; head="$PR_HEAD"; range="$base...$head" ;;
+            *) base="$PUSH_BEFORE"; head="$SHA"; range="$base..$head" ;;
+          esac
+          if [ -z "$base" ] || [ -z "${base//0/}" ] || ! changed=$(git diff --name-only "$range" 2>/dev/null); then
+            decide true "no usable diff for $range"
+            exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -qE "$paths"; then
+            decide true "extraction paths changed"
+            exit 0
+          fi
+          # The mutation check now breaks guards in server/ and the frontend
+          # too. Any file one of its mutations targets is read from the list
+          # itself, so adding a mutation can never leave its file unwatched.
+          mutated=$(python3 -I -c "import importlib.util as u; s = u.spec_from_file_location('m', 'scripts/mutation-check.py'); m = u.module_from_spec(s); s.loader.exec_module(m); print('\n'.join(sorted({p for p, *_ in m.MUTATIONS})))")
+          if printf '%s\n' "$changed" | grep -qxF -f <(printf '%s\n' "$mutated"); then
+            decide true "a file under mutation test changed"
+          else
+            decide false "no extraction paths or mutated files changed"
+          fi
+
+  extraction-eval:
+    # The extraction eval over the labelled EDGAR corpus. `npm run eval`
+    # re-verifies every label's evidence against the refetched documents and
+    # prints every metric, the read-consistency check included; the mutation
+    # check then breaks each guard in src/extraction and requires a test to
+    # fail. No model is called here: model runs are scored from the committed
+    # response cache, and no API key is given to this job.
+    name: Extraction eval and mutation check
+    needs: extraction-changes
+    if: needs.extraction-changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The mutation check breaks server guards too, and the server tests need
+    # Postgres. Without it those mutations report UNRUN and the check fails,
+    # rather than counting a mutation nobody tested as caught. Same service and
+    # settings as the server job above, for the same reasons.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Restore the fetched filings
+        # Filings are immutable once filed, so a document fetched once is
+        # never fetched again while the manifest is unchanged. This keeps the
+        # weekly run from spending SEC's bandwidth on bytes it already has.
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/edgar/*.htm
+          key: edgar-corpus-${{ hashFiles('corpus/edgar/manifest.json') }}
+
+      - name: Fetch the labelled filings from EDGAR
+        if: steps.corpus.outputs.cache-hit != 'true'
+        # scripts/edgar.mjs throttles to SEC's request rate and skips any
+        # filing already in the manifest it writes to, so it fetches into an
+        # empty directory and only the documents the committed manifest names
+        # are copied in. A labelled document that did not arrive fails here,
+        # by name, rather than later as a shorter corpus. --limit=2 because
+        # every labelled filing is its company's latest 10-K today, and the
+        # next annual filing would push it to second; when it reaches third,
+        # this step fails naming it.
+        shell: bash
+        env:
+          EDGAR_USER_AGENT: ${{ vars.EDGAR_USER_AGENT || 'credealanalyzer-ci/0.1 (GitHub Actions extraction eval)' }}
+        run: |
+          set -euo pipefail
+          fetch="$RUNNER_TEMP/edgar"
+          ciks=$(node -e "const m=require('./corpus/edgar/manifest.json'); console.log([...new Set(m.map((e)=>Number(e.cik)))].join(' '))")
+          for cik in $ciks; do
+            npm run edgar -- --cik="$cik" --limit=2 --out="$fetch"
+          done
+          FETCH="$fetch" node -e "
+            const fs = require('fs'), path = require('path');
+            const m = require('./corpus/edgar/manifest.json');
+            const missing = m.filter((e) => !fs.existsSync(path.join(process.env.FETCH, e.localPath)));
+            if (missing.length) {
+              for (const e of missing) console.log('::error::' + e.localPath + ' was not fetched (' + e.sourceUrl + ')');
+              process.exit(1);
+            }
+            for (const e of m) fs.copyFileSync(path.join(process.env.FETCH, e.localPath), path.join('corpus/edgar', e.localPath));
+            console.log(m.length + ' labelled filings in place');
+          "
+
+      - name: Extraction eval
+        run: |
+          set -euo pipefail
+          npm run eval
+          npm run --silent eval -- --json > eval-report.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extraction-eval
+          path: eval-report.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - run: npm ci
+        working-directory: server
+
+      - name: Mutation check
+        run: python3 -I scripts/mutation-check.py
+        env:
+          PGHOST_DIR: localhost
+          PGPORT: 5432
+          PGPASSWORD: ci_only
+          TEST_PG_USER: postgres
 
   infra:
     name: Infrastructure
@@ -218,7 +381,13 @@ jobs:
       - name: Build the API image
         run: docker build -t cre-api:ci ./server
       - name: Scan for OS and library vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        # The tag is v-PREFIXED. The previous pin here was a bare `0.28.0`,
+        # which GitHub could not resolve — the job failed at "Prepare all
+        # required actions", before a single step ran, on every push for
+        # months. An unresolvable action ref fails the job without ever
+        # saying the scan did not happen, which is the same shape of
+        # problem as an alarm written against a pattern nothing emits.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cre-api:ci
           format: table

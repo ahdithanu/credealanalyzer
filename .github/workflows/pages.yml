@@ -78,6 +78,28 @@ jobs:
             exit 1
           fi
 
+      # THIS STEP IS THE ONE THING IN THE DEPLOY THAT THE REPOSITORY CANNOT DO
+      # FOR ITSELF. Pages must already be enabled with "GitHub Actions" as its
+      # source, under Settings -> Pages -> Build and deployment -> Source.
+      # Until it is, every run of this workflow installs, tests, builds and
+      # passes the inline-script assertion, then stops here having published
+      # nothing:
+      #
+      #     Get Pages site failed. Error: Not Found
+      #
+      # `enablement: true` looks like the fix and is not. It was tried, on this
+      # workflow, and the run answered:
+      #
+      #     Create Pages site failed.
+      #     Error: Resource not accessible by integration
+      #
+      # Creating a Pages site needs administration rights on the repository,
+      # which GITHUB_TOKEN does not have and cannot be granted through
+      # `permissions:` — `pages: write` covers publishing to a site that
+      # exists, not bringing one into being. So the parameter is deliberately
+      # absent: there is no token this workflow can hold that would make it
+      # work, and leaving it set would only turn a clear "not enabled" into a
+      # misleading "not accessible".
       - uses: actions/configure-pages@v5
       # vite.config.js sets `base: './'` so the bundle references ./assets/...
       # rather than /assets/... . That is what lets one artefact serve from a
