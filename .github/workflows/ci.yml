@@ -150,8 +150,16 @@ jobs:
           fi
           if printf '%s\n' "$changed" | grep -qE "$paths"; then
             decide true "extraction paths changed"
+            exit 0
+          fi
+          # The mutation check now breaks guards in server/ and the frontend
+          # too. Any file one of its mutations targets is read from the list
+          # itself, so adding a mutation can never leave its file unwatched.
+          mutated=$(python3 -I -c "import importlib.util as u; s = u.spec_from_file_location('m', 'scripts/mutation-check.py'); m = u.module_from_spec(s); s.loader.exec_module(m); print('\n'.join(sorted({p for p, *_ in m.MUTATIONS})))")
+          if printf '%s\n' "$changed" | grep -qxF -f <(printf '%s\n' "$mutated"); then
+            decide true "a file under mutation test changed"
           else
-            decide false "no extraction paths changed"
+            decide false "no extraction paths or mutated files changed"
           fi
 
   extraction-eval:
@@ -165,7 +173,23 @@ jobs:
     needs: extraction-changes
     if: needs.extraction-changes.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    # The mutation check breaks server guards too, and the server tests need
+    # Postgres. Without it those mutations report UNRUN and the check fails,
+    # rather than counting a mutation nobody tested as caught. Same service and
+    # settings as the server job above, for the same reasons.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -229,8 +253,16 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - run: npm ci
+        working-directory: server
+
       - name: Mutation check
         run: python3 -I scripts/mutation-check.py
+        env:
+          PGHOST_DIR: localhost
+          PGPORT: 5432
+          PGPASSWORD: ci_only
+          TEST_PG_USER: postgres
 
   infra:
     name: Infrastructure

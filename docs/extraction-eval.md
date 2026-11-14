@@ -528,6 +528,38 @@ quoted. To run it:
 6. `npm run extract-model -- --set=filing6 --run=run1`, then `--run=run2`,
    then `npm run eval`.
 
+### Document pipeline: first build round
+
+Four tracks were built in parallel, each reviewed by an independent
+adversarial reviewer, and merged after their blocking findings were fixed.
+Each track has its own notes:
+
+- **Intake** (`docs/document-intake.md`): PDF upload per deal, per-page text,
+  tenant-isolated storage with a composite foreign key so a document cannot be
+  attached to another firm's deal, and refusals for non-PDF, oversize,
+  encrypted and corrupt files. A scanned PDF is stored as `textLayer: 'absent'`
+  with no text: there is no OCR.
+- **Review** (`docs/document-review.md`): extraction results enter
+  `listing.js` as a document source, and a review screen shows each value
+  beside the text it was cited from. Ungrounded and unmeasured answers are
+  marked, and nothing reaches the deal without a human confirming it. The
+  reviewer caught confirmed values carrying over between documents; fixed.
+- **Schema** (`docs/product-fields.md`): underwriting fields flagged
+  `measured: false`, a product extractor for multi-page documents, and
+  confirmed values mapped into deal inputs. The eval's fields and prompt hash
+  are pinned by a test. The reviewer caught an operating expense ratio struck
+  on the wrong base, which understated expenses in the model; fixed.
+- **Read check** (`docs/read-check.md`): a check that a cited cell sits under
+  a header compatible with the field. It flags every known misread (Rosslyn
+  Plaza; Easterly leased square feet, 12 of 12 per version) and passed no
+  wrong answer as consistent. Its vocabulary was written knowing those cases,
+  so this shows the mechanism works, not how well it does on a new layout.
+  More than half of answered fields are indeterminate.
+
+Not wired yet: the server endpoint that runs extraction on an uploaded
+document and feeds the review screen. It needs the model key, so it waits for
+the next round.
+
 ## Status
 
 - [x] Schema, comparators and tolerances — `src/extraction/schema.js`
@@ -538,7 +570,7 @@ quoted. To run it:
 - [x] Hand-label it: 68 drawn properties across five filings, 544 field labels, every stated value evidenced
 - [x] Baselines recorded before any extractor
 - [x] A first extractor (tableReader) that beats both degenerates on held-out data
-- [x] Mutation check covers corpus guards and extractor: 37/37, `scripts/mutation-check.py`
+- [x] Mutation check: 72/72 across extraction, frontend and server (server mutations run against Postgres; without one they report UNRUN and fail)
 - [x] v2: the four defects above, scored on a fresh holdout draw (holdout2)
 - [x] v3: footnote-cell column shift; scored on a pre-registered fifth filing it had never seen (coverage 0.000)
 - [x] Model-based extractor pre-registered (e304b71) and built; mutation-checked
