@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { runModel, DEFAULT_DEBT_SIZING } from '../lib/finance';
 import { validate, flagCounts, breakEvenBreach, DEFAULT_COVENANTS } from '../lib/validation';
 import { overrides, firmDefault, FIRM_DEFAULTS } from '../lib/firmDefaults';
@@ -6,6 +6,7 @@ import { propertyTypes, constructionTypes } from '../lib/propertyTypes';
 import { Panel, MetricStrip, FlagList, Seg } from '../ui/components';
 import { irrQualification, irrMarkText, IRR_FOOTNOTE, IRR_SHORT } from './irrQualification';
 import { money, money0, thousands, pct, mult, bps, num, NA } from '../lib/format';
+import { api, isMultiTenant } from '../lib/api';
 
 const GROUPS = [
   { key: 'site',      label: 'Site & program' },
@@ -304,6 +305,11 @@ export default function DealModel({ deal, onChange, posture, onPosture }) {
           </div>
         )}
       </div>
+
+      {/* Only with a server: documents live in the tenant's database, and in
+          single-user mode there is nowhere to put one. No placeholder list is
+          shown instead, because a fake document is a fabricated source. */}
+      {isMultiTenant() && deal?.id && <DealDocuments dealId={deal.id} />}
     </div>
   );
 }
@@ -664,5 +670,115 @@ function DrawCurve({ model }) {
         <span>Construction {C}mo · lease-up {model.timeline.leaseUpMonths}mo · hold {(model.timeline.operatingMonths / 12).toFixed(0)}yr</span>
       </div>
     </div>
+  );
+}
+
+/**
+ * What the server's refusal codes mean, in words an analyst can act on. An
+ * unknown code is shown as itself rather than guessed at.
+ */
+const UPLOAD_ERRORS = {
+  not_pdf: 'That file is not a PDF.',
+  unsupported_media_type: 'That file is not a PDF.',
+  empty: 'That file is empty.',
+  too_large: 'That file is over the 25MB limit.',
+  pdf_encrypted: 'That PDF is password protected. Remove the password and upload it again.',
+  pdf_unreadable: 'That PDF could not be read.',
+  pdf_too_many_pages: 'That PDF has more pages than the limit.',
+  duplicate: 'That file is already attached to this deal.',
+  filename_required: 'The file has no name.',
+  forbidden: 'Your role cannot upload documents.',
+  not_found: 'This deal was not found.',
+};
+const errorText = (err) => UPLOAD_ERRORS[err?.code] || `Upload failed (${err?.code || err?.message || 'unknown error'}).`;
+
+const sizeText = (bytes) => (Number.isFinite(bytes)
+  ? (bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`)
+  : NA);
+
+/**
+ * The deal's documents: an upload control and the list the server returns.
+ * Only rendered in multi-tenant mode. Nothing is extracted here yet; this is
+ * intake only, and the list says what was stored, including when a PDF had no
+ * text layer at all.
+ */
+export function DealDocuments({ dealId }) {
+  // null until the server has answered: an empty array would claim the deal
+  // has no documents before anyone has asked.
+  const [docs, setDocs] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [uploadError, setUploadError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const input = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    setDocs(null);
+    setLoadError(null);
+    api.listDocuments(dealId)
+      .then((list) => { if (live) setDocs(list); })
+      .catch((err) => { if (live) setLoadError(err?.code || 'unreachable'); });
+    return () => { live = false; };
+  }, [dealId]);
+
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    setUploadError(null);
+    try {
+      const meta = await api.uploadDocument(dealId, file);
+      setDocs((prev) => [...(prev || []), meta]);
+    } catch (err) {
+      setUploadError(errorText(err));
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  };
+
+  return (
+    <Panel
+      title="Documents"
+      right={
+        <label className="btn ghost" style={{ height: '24px', fontSize: '11.5px' }}>
+          {busy ? 'Uploading' : 'Upload PDF'}
+          <input
+            ref={input}
+            type="file"
+            accept="application/pdf,.pdf"
+            aria-label="Upload PDF"
+            style={{ display: 'none' }}
+            disabled={busy}
+            onChange={onFile}
+          />
+        </label>
+      }
+      flush
+    >
+      {uploadError && <div className="deal-docs-error neg" role="alert" style={{ padding: '8px 14px', fontSize: '12px' }}>{uploadError}</div>}
+      {loadError && <div className="deal-docs-error neg" style={{ padding: '8px 14px', fontSize: '12px' }}>
+        Documents could not be loaded ({loadError}).
+      </div>}
+      {!loadError && docs === null && <div className="empty">Loading documents</div>}
+      {docs && docs.length === 0 && <div className="empty">No documents uploaded for this deal.</div>}
+      {docs && docs.length > 0 && (
+        <div className="deal-docs-list">
+          {docs.map((d) => (
+            <div key={d.id} className="deal-doc" style={{ display: 'flex', gap: '8px', padding: '6px 14px', fontSize: '12px' }}>
+              <span>{d.filename ?? <span className="dim">name unavailable</span>}</span>
+              <span className="spacer" />
+              <span className="num dim">{d.pageCount} page{d.pageCount === 1 ? '' : 's'}</span>
+              <span className="num dim2">{sizeText(d.byteSize)}</span>
+              {d.textLayer === 'absent' && (
+                <span className="chip warn" title="No page has a text layer. Nothing was OCR'd, so there is no text to extract.">
+                  no text layer
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }

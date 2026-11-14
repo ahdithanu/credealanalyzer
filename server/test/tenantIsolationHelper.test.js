@@ -216,6 +216,10 @@ test('the policy set of every pre-existing table is unchanged by migration 010',
     'audit_log.audit_log_owner_read',
     'audit_log.audit_log_owner_write',
     'audit_log.tenant_isolation',
+    // Added by migration 012 through apply_tenant_isolation(), which is the
+    // helper's intended use: a new tenant table gets exactly these two.
+    'deal_documents.owner_access',
+    'deal_documents.tenant_isolation',
     'deals.owner_access',
     'deals.tenant_isolation',
     'firm_defaults.owner_access',
