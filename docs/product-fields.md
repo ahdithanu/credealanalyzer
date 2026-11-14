@@ -97,6 +97,14 @@ Differences:
   shown as ungrounded, never hidden.
 - A value of the wrong type for its kind (a string for a count, an option not
   in the enum) is dropped and listed in `invalidValues`, never coerced.
+- A confidence outside 0 to 1 is not a probability and is read as null, never
+  clamped.
+- `buildRequest` refuses a document with no pages, misnumbered pages, or a
+  `pageCount` that disagrees with the pages it carries.
+- Known gap, not yet closed: `renderPages` does not escape page text that
+  itself contains `</page>`, `<page number=...>` or `</document>`. Citations are
+  still checked against the real per-page text, so grounding holds, but such a
+  document can mislead the model about page boundaries.
 - A record with no serving model recorded is treated like one from another
   model (`served-by:unknown`). `modelExtractor.js` lets a missing model through;
   this one does not.
@@ -110,27 +118,47 @@ Differences:
 
 ## The deal patch
 
-`toDealInputs(review)` reads only `confirmed` and `edited` values. A pending or
+`toDealInputs(review, deal)` reads only `confirmed` and `edited` values. A pending or
 rejected value never reaches the patch, including as one operand of a
 conversion. The result is a patch for the caller to apply on a human action,
 with `provenance` (which fields and which conversion set each input),
-`notApplied`, `invalid`, `incomplete`, `superseded` and `unmapped` lists.
+`notApplied`, `invalid`, `incomplete`, `superseded`, `unmapped`, `noValue`
+(confirmed or edited with no value) and `assumptions` lists. `assumptions`
+holds inputs set by an underwriting choice or from a figure whose definition
+may not match the engine's; a UI must show them as such.
 Nothing is defaulted and nothing is written as 0: an input without an applied
 source value is simply absent from the patch.
 
 Conversions:
 
-- `operatingExpenseRatio` = 100 x (expenses excluding property tax) / gross
-  potential rent. The engine charges property tax separately, so when the
-  document's total includes taxes, `realEstateTaxes` is subtracted first. With
-  no `operatingExpensesIncludeTaxes`, no gross potential rent, or taxes larger
-  than the total, no ratio is written and `incomplete` says why.
+- `operatingExpenseRatio` = 100 x (expenses excluding property tax) /
+  (gross potential rent x house occupancy). runModel applies the ratio to gross
+  potential rent at the firm's house occupancy for the property type (95% for
+  multifamily, 90% for office, 93% for retail), so at stabilization its opex
+  is GPR x ratio x house occupancy. Dividing by GPR alone would understate the
+  document's expenses by the house vacancy; a test runs the patch through
+  runModel and checks the stated total comes back. The property type is the
+  one the patch sets, else the `deal` argument's; with neither, no ratio is
+  written. The engine charges property tax separately, so when the document's
+  total includes taxes, `realEstateTaxes` is subtracted first. With no
+  `operatingExpensesIncludeTaxes`, no gross potential rent, no property type,
+  or taxes larger than the total, no ratio is written and `incomplete` says
+  why.
+- `grossPotentialRent` maps to `grossRevenue`. For retail, industrial and
+  office the engine's `grossRevenue` is base rent only, with reimbursements
+  modelled through `expenseRecoveryRate`; the prompt does not tell the model to
+  exclude recoveries, so for those types the mapping is listed in
+  `assumptions` for the reviewer to check.
+- With no applied `purchasePrice`, an `askingPrice` is used as the purchase
+  price and listed in `assumptions`: that is an underwriting choice, not a unit
+  conversion.
 - A contract `purchasePrice` supersedes an `askingPrice`; the ask is reported in
   `superseded`, not averaged.
 - `propertyType` maps only to the engine's types (multifamily, office, retail,
   industrial). mixed-use and other are reported unmapped.
 - Rates in (0, 1) are rejected as fractions written where percentage points
-  belong.
+  belong. An interest rate or cap rate of exactly 0 is rejected, as is any rate
+  or percent outside 0 to 100.
 
 Fields with no deal input (`NO_DEAL_INPUT`), each with its reason in the code:
 address, yearBuilt, netOperatingIncome, occupancy, realEstateTaxes,

@@ -80,6 +80,9 @@ describe('buildRequest', () => {
     expect(() => buildRequest({ document: { ...DOC, textLayer: 'absent' } })).toThrow(/no text layer/);
     expect(() => buildRequest({ document: { ...DOC, pages: [DOC.pages[1], DOC.pages[0]] } })).toThrow(/malformed/);
     expect(() => buildRequest({ document: {} })).toThrow(/no pages/);
+    expect(() => buildRequest({ document: { ...DOC, pages: [], pageCount: 0 } })).toThrow(/no pages/);
+    expect(() => buildRequest({ document: { ...DOC, pageCount: 4 } })).toThrow(/says 4 pages and carries 3/);
+    expect(() => buildRequest({ document: { ...DOC, pageCount: null } })).not.toThrow();
   });
 
   it('has its own prompt hash, distinct from the eval prompt, and stable', () => {
@@ -173,6 +176,19 @@ describe('parseRecord (contract C2)', () => {
     expect(invalidValues).toEqual(['units', 'operatingExpensesIncludeTaxes']);
     expect(prediction.interestRate.confidence).toBeNull();
     expect(parseRecord(record({}), DOC).prediction).toEqual({});
+  });
+
+  it('reads a confidence outside 0 to 1 as unknown, never clamped', () => {
+    const { prediction } = parseRecord(record({
+      units: { value: 120, page: 1, quote: 'Units: 120', confidence: 1.7 },
+      interestRate: { value: 4.25, page: 3, quote: 'Interest Rate | 4.25%', confidence: -0.2 },
+      loanAmount: { value: 11_000_000, page: 3, quote: 'Loan Amount | $11,000,000', confidence: 1 },
+      grossPotentialRent: { value: 2_160_000, page: 2, quote: 'Gross Potential Rent | $2,160,000', confidence: 0 },
+    }), DOC);
+    expect(prediction.units.confidence).toBeNull();
+    expect(prediction.interestRate.confidence).toBeNull();
+    expect(prediction.loanAmount.confidence).toBe(1);
+    expect(prediction.grossPotentialRent.confidence).toBe(0);
   });
 
   it('abstains on everything for a refusal, a truncation, unparseable output, or another model, and says which', () => {

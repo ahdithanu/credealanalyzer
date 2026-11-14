@@ -139,13 +139,18 @@ export function renderPages(pages) {
 }
 
 function checkPages(document) {
-  if (!document || !Array.isArray(document.pages)) throw new Error('document has no pages');
+  if (!document || !Array.isArray(document.pages) || document.pages.length === 0) {
+    throw new Error('document has no pages');
+  }
   if (document.textLayer === 'absent') throw new Error('document has no text layer');
   document.pages.forEach((p, i) => {
     if (p.page !== i + 1 || typeof p.text !== 'string') {
       throw new Error(`page ${i + 1} is malformed: pages must be numbered 1..n in order with text`);
     }
   });
+  if (Number.isInteger(document.pageCount) && document.pageCount !== document.pages.length) {
+    throw new Error(`document says ${document.pageCount} pages and carries ${document.pages.length}`);
+  }
 }
 
 /**
@@ -233,6 +238,8 @@ export function validValue(field, v) {
   }
 }
 
+const isProbability = (c) => typeof c === 'number' && Number.isFinite(c) && c >= 0 && c <= 1;
+
 const abstain = (error) => ({ prediction: {}, error, unlocatedQuotes: [], invalidValues: [] });
 
 /**
@@ -279,7 +286,8 @@ export function parseRecord(record, document) {
     prediction[f.name] = {
       value: a.value,
       quality: 'sourced',
-      confidence: typeof a.confidence === 'number' && Number.isFinite(a.confidence) ? a.confidence : null,
+      // A probability outside [0, 1] is not one. Null (unknown), never clamped.
+      confidence: isProbability(a.confidence) ? a.confidence : null,
       citation,
     };
   }
