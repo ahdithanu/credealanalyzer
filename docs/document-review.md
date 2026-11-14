@@ -110,6 +110,21 @@ Confirm, Reject, Edit / Enter manually and Undo drive C4 state. "Apply N
 reviewed values" is disabled until something is confirmed or edited, and calls
 `onApply(appliedValues(review), review)`.
 
+Review state belongs to one document and one extraction of it. The exported
+component keys its body on `reviewKey(document, predictions)` (document id,
+sha256 and the predictions' JSON), so passing a different document, or a new
+extraction of the same document, remounts the screen with fresh state. A
+decision made on document A can therefore never show on document B or be
+applied as B's value. Re-rendering with equal content keeps the review. An
+`initial` review passed in is used as given and is not checked against the
+predictions; the caller owns that pairing.
+
+Conflict rows format each source's value the same way as the rest of the
+screen (units and separators, for example "11,200 SF").
+
+An extraction that names a field the field list does not define gets a notice
+and no form, rather than a form that silently drops some answers.
+
 ## Reachability
 
 There is no extraction endpoint yet (that is a later round), so there is no

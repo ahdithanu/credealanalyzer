@@ -115,7 +115,7 @@ function Citation({ document, prediction }) {
   );
 }
 
-function ConflictRows({ conflict }) {
+function ConflictRows({ conflict, field }) {
   const rows = [conflict.leading, ...conflict.dissenting];
   return (
     <div className="dr-conflict" data-testid="conflict">
@@ -130,7 +130,7 @@ function ConflictRows({ conflict }) {
       <ul>
         {rows.map((r) => (
           <li key={`${r.source}:${String(r.value)}`}>
-            <b>{String(r.value)}</b> from {r.source} ({r.kind}
+            <b>{formatValue(field, r.value)}</b> from {r.source} ({r.kind}
             {isUnreviewedSourceName(r.source) ? ', not yet reviewed' : ''})
             {r === conflict.leading ? ' leads' : ''}
           </li>
@@ -197,7 +197,7 @@ function FieldRow({ field, document, prediction, entry, conflict, onAction }) {
           </div>
         )}
 
-        {conflict && <ConflictRows conflict={conflict} />}
+        {conflict && <ConflictRows conflict={conflict} field={field} />}
 
         <div className="dr-actions">
           {prediction && (
@@ -221,7 +221,22 @@ function FieldRow({ field, document, prediction, entry, conflict, onAction }) {
   );
 }
 
-export default function DocumentReview({
+/**
+ * The identity of what is under review: the document and the predictions made
+ * from it. Review state belongs to exactly one such pair. When either changes,
+ * the screen is remounted with fresh state, so a decision made on one document
+ * (or on an earlier extraction of it) can never show on, or be applied from,
+ * another.
+ */
+export function reviewKey(document, predictions) {
+  return `${document?.id ?? ''}\u0000${document?.sha256 ?? ''}\u0000${JSON.stringify(predictions ?? {})}`;
+}
+
+export default function DocumentReview(props) {
+  return <DocumentReviewBody key={reviewKey(props.document, props.predictions)} {...props} />;
+}
+
+function DocumentReviewBody({
   document, predictions = {}, fields: fieldsProp, otherSources = [], initial, onReviewChange, onApply,
 }) {
   const fields = fieldsProp ?? productFields();

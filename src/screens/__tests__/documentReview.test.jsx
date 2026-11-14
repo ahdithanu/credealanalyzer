@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import { createRoot } from 'react-dom/client';
 import { vi } from 'vitest';
 
 import DocumentReview, { productFields, resolveCitation } from '../DocumentReview';
@@ -112,8 +113,8 @@ describe('conflicts', () => {
       (c) => {
         const conflict = row(c, 'squareFeet').querySelector('[data-testid="conflict"]');
         expect(conflict).not.toBeNull();
-        expect(conflict.textContent).toMatch(/11200 from fixture assessor \(public\) leads/);
-        expect(conflict.textContent).toMatch(/12400 from fixture-offering-memo\.pdf \(unreviewed extraction\) \(estimate, not yet reviewed\)/);
+        expect(conflict.textContent).toMatch(/11,200 SF from fixture assessor \(public\) leads/);
+        expect(conflict.textContent).toMatch(/12,400 SF from fixture-offering-memo\.pdf \(unreviewed extraction\) \(estimate, not yet reviewed\)/);
         expect(row(c, 'address').querySelector('[data-testid="conflict"]')).toBeNull();
       },
     );
@@ -125,7 +126,7 @@ describe('conflicts', () => {
       (c) => {
         click(btn(row(c, 'squareFeet'), /^Confirm$/));
         const conflict = row(c, 'squareFeet').querySelector('[data-testid="conflict"]');
-        expect(conflict.textContent).toMatch(/12400 from fixture-offering-memo\.pdf \(document\)/);
+        expect(conflict.textContent).toMatch(/12,400 SF from fixture-offering-memo\.pdf \(document\)/);
         expect(conflict.textContent).not.toMatch(/not yet reviewed/);
       },
     );
@@ -195,6 +196,80 @@ describe('nothing applies without a human', () => {
     click(btn(row(c, 'address'), /^Undo$/));
     expect(row(c, 'address').querySelector('[data-testid="status"]').textContent).toBe('pending');
     expect(applyButton(c).disabled).toBe(true);
+  });
+});
+
+describe('review state belongs to one document', () => {
+  // A root that can be re-rendered with new props, as App would when its
+  // documentReview prop changes. renderScreen mounts once, so this test owns
+  // its root.
+  const mount = () => {
+    window.IS_REACT_ACT_ENVIRONMENT = true;
+    const act = React.act;
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    return {
+      container,
+      act,
+      render: (el) => act(() => { root.render(el); }),
+      unmount: () => act(() => { root.unmount(); }),
+    };
+  };
+
+  it('swapping to another document drops decisions made on the first', () => {
+    const onApply = vi.fn();
+    const m = mount();
+    try {
+      m.render(<DocumentReview document={FIXTURE_DOCUMENT} predictions={fixturePredictions()} onApply={onApply} />);
+      m.act(() => { btn(row(m.container, 'squareFeet'), /^Confirm$/).click(); });
+      expect(row(m.container, 'squareFeet').querySelector('[data-testid="status"]').textContent).toBe('confirmed');
+
+      const other = { ...FIXTURE_DOCUMENT, id: 'fixture-other', filename: 'fixture-other.pdf' };
+      m.render(<DocumentReview document={other} predictions={{}} onApply={onApply} />);
+      const r = row(m.container, 'squareFeet');
+      expect(r.querySelector('[data-testid="abstained"]')).not.toBeNull();
+      expect(r.querySelector('[data-testid="status"]').textContent).toBe('no value');
+      expect(applyButton(m.container).textContent).toMatch(/^Apply 0 reviewed values/);
+      expect(applyButton(m.container).disabled).toBe(true);
+      m.act(() => { applyButton(m.container).click(); });
+      expect(onApply).not.toHaveBeenCalled();
+    } finally { m.unmount(); }
+  });
+
+  it('a new extraction of the same document starts its review afresh', () => {
+    const m = mount();
+    try {
+      m.render(<DocumentReview document={FIXTURE_DOCUMENT} predictions={fixturePredictions()} onApply={vi.fn()} />);
+      m.act(() => { btn(row(m.container, 'squareFeet'), /^Confirm$/).click(); });
+      const rerun = fixturePredictions();
+      rerun.squareFeet = { ...rerun.squareFeet, value: 12500 };
+      m.render(<DocumentReview document={FIXTURE_DOCUMENT} predictions={rerun} onApply={vi.fn()} />);
+      expect(row(m.container, 'squareFeet').querySelector('[data-testid="status"]').textContent).toBe('pending');
+      expect(applyButton(m.container).disabled).toBe(true);
+    } finally { m.unmount(); }
+  });
+
+  it('re-rendering with the same document and predictions keeps the review', () => {
+    const m = mount();
+    try {
+      m.render(<DocumentReview document={FIXTURE_DOCUMENT} predictions={fixturePredictions()} onApply={vi.fn()} />);
+      m.act(() => { btn(row(m.container, 'squareFeet'), /^Confirm$/).click(); });
+      // equal content, new object identities, as a parent re-render produces
+      m.render(<DocumentReview document={{ ...FIXTURE_DOCUMENT }} predictions={fixturePredictions()} onApply={vi.fn()} />);
+      expect(row(m.container, 'squareFeet').querySelector('[data-testid="status"]').textContent).toBe('confirmed');
+    } finally { m.unmount(); }
+  });
+});
+
+describe('unknown fields', () => {
+  it('an extraction naming an undefined field gets a notice, not a partial form', () => {
+    const predictions = { ...fixturePredictions(), notAField: { value: 1, quality: 'sourced', confidence: null, citation: null } };
+    withScreen(<DocumentReview document={FIXTURE_DOCUMENT} predictions={predictions} onApply={vi.fn()} />, (c) => {
+      expect(c.querySelector('[data-testid="unknown-fields"]').textContent).toMatch(/notAField/);
+      expect(c.querySelector('[data-field]')).toBeNull();
+      expect(applyButton(c)).toBeUndefined();
+    });
   });
 });
 
